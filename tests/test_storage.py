@@ -13,6 +13,7 @@ Each method has: normal case(s), edge case(s), error case.
 Plus 5 complex integration scenarios at the bottom.
 """
 
+import contextlib
 import os
 import sqlite3
 import threading
@@ -23,7 +24,6 @@ import pytest
 
 from errors import StorageError
 from storage import BaseStorageManager, BufferedStorageManager
-import contextlib
 
 # ── Shared test schema ────────────────────────────────────────────────────────
 

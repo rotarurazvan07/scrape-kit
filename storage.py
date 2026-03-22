@@ -4,8 +4,8 @@ import logging
 import os
 import sqlite3
 import threading
-from typing import Any
 from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import pandas as pd
 
