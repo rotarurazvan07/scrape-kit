@@ -90,20 +90,8 @@ class WebScraper:
         """
         Initialization allows passing custom retry and blocking identifiers.
         """
-        self.retry_indicators = retry_indicators or [
-            "403 Forbidden", "Access Denied", "429 Too Many Requests",
-            "Too Many Requests", "rate limit exceeded", "rate limited",
-            "Request throttled", "Service Unavailable", "503 Service Unavailable",
-            "Temporarily Unavailable", "overloaded", "quota exceeded",
-            "Just a moment", "Checking your browser", "verify you are a human",
-            "turnstile", "cf-chl-widget", "Cloudflare"
-        ]
-
-        self.block_indicators = block_indicators or [
-            "verify you are a human", "403 Forbidden",
-            "429 Too Many Requests", "Attention Required!",
-            "Access Denied", "Checking your browser"
-        ]
+        self.retry_indicators = retry_indicators or []
+        self.block_indicators = block_indicators or []
 
     def fetch(self, url: str, stealthy_headers: bool = False,
               retries: int = 3, backoff: float = 5.0) -> str:
