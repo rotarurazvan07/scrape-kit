@@ -505,9 +505,9 @@ class TestBufferedExists:
 
 class TestBufferedInsert:
     def test_normal_insert_grows_buffer(self, buffered_db):
-        before = len(buffered_db._ensure_buffer())
+        before = len(buffered_db.ensure_buffer())
         buffered_db.insert({"id": 3, "name": "gamma", "value": "g"})
-        assert len(buffered_db._ensure_buffer()) == before + 1
+        assert len(buffered_db.ensure_buffer()) == before + 1
 
     def test_normal_insert_marks_buffer_dirty(self, buffered_db):
         assert buffered_db._dirty is False
@@ -517,7 +517,7 @@ class TestBufferedInsert:
     def test_edge_multiple_inserts_all_in_buffer(self, buffered_db):
         for i in range(10):
             buffered_db.insert({"id": 100 + i, "name": f"item_{i}", "value": str(i)})
-        assert len(buffered_db._ensure_buffer()) == 12  # 2 pre-existing + 10
+        assert len(buffered_db.ensure_buffer()) == 12  # 2 pre-existing + 10
 
     def test_normal_flush_writes_inserted_rows_to_disk(self, buffered_db):
         buffered_db.insert({"id": 3, "name": "flushed", "value": "f"})
@@ -569,7 +569,7 @@ class TestBufferedClearDatabase:
         # Create a second table
         buffered_db.conn.execute("CREATE TABLE other (x INTEGER)")
         buffered_db.conn.commit()
-        _ = buffered_db._ensure_buffer()
+        _ = buffered_db.ensure_buffer()
         buffered_db.clear_database("other")
         # Buffer for 'items' must be untouched
         assert buffered_db._buffer is not None
@@ -580,7 +580,7 @@ class TestBufferedClearDatabase:
 
 class TestBufferedReopenIfChanged:
     def test_normal_mtime_change_clears_buffer(self, buffered_db):
-        _ = buffered_db._ensure_buffer()
+        _ = buffered_db.ensure_buffer()
         assert buffered_db._buffer is not None
         time.sleep(0.05)
         os.utime(buffered_db.db_path, None)
@@ -588,7 +588,7 @@ class TestBufferedReopenIfChanged:
         assert buffered_db._buffer is None
 
     def test_edge_unchanged_file_keeps_buffer(self, buffered_db):
-        _ = buffered_db._ensure_buffer()
+        _ = buffered_db.ensure_buffer()
         before = id(buffered_db._buffer)
         buffered_db.reopen_if_changed()
         assert id(buffered_db._buffer) == before
