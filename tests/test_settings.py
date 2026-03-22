@@ -10,10 +10,11 @@ Plus 5 complex integration scenarios at the bottom.
 
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
-from unittest.mock import patch
+
 from scrape_kit.errors import SettingsError
 from scrape_kit.settings import SettingsManager
 
@@ -79,9 +80,8 @@ class TestInit:
         cfg = tmp_path / "config"
         cfg.mkdir()
         (cfg / "locked.yaml").write_text("x: 1")
-        with patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")):
-            with pytest.raises(SettingsError):
-                SettingsManager(str(cfg))
+        with patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")), pytest.raises(SettingsError):
+            SettingsManager(str(cfg))
 
 
 # ── get ───────────────────────────────────────────────────────────────────────

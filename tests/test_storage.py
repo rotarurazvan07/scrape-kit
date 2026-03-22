@@ -21,8 +21,7 @@ import time
 
 import pandas as pd
 import pytest
-import sqlite3
-from unittest.mock import patch
+
 from scrape_kit.errors import StorageError
 from scrape_kit.storage import BaseStorageManager, BufferedStorageManager
 
@@ -442,6 +441,7 @@ class TestReopenIfChanged:
         manager.flush_and_close()  # release Windows file lock before removing
         os.remove(path)
         manager.reopen_if_changed()  # should not raise
+
 
 # ── flush_and_close ───────────────────────────────────────────────────────────
 
