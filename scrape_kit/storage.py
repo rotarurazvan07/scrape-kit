@@ -26,22 +26,20 @@ def _qi(name: str) -> str:
 
 
 class BaseStorageManager:
-    """Core Generic Storage Orchestrator using SQLite in WAL mode with fast bulk inserts."""
+    """Core Generic Storage Orchestrator using SQLite in WAL mode."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.row_factory = sqlite3.Row
         self.db_lock = threading.Lock()
-
         self._file_mtime = os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
         self._create_tables()
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
-    def _serialize_json(self, obj: Any) -> str | None:
-        """Generic JSON serializer for complex rows."""
+    def serialize_json(self, obj: Any) -> str | None:
         if obj is None:
             return None
         try:
@@ -51,18 +49,16 @@ class BaseStorageManager:
         except (TypeError, ValueError) as e:
             raise StorageError(f"Serialization failed for {type(obj).__name__}: {e}") from e
 
-    def _deserialize_json(self, json_str: str | None) -> Any:
-        """Generic JSON deserializer for complex rows."""
-        if not json_str:
+    def deserialize_json(self, json_str: str | None) -> Any:
+        if json_str is None or json_str == "" or (isinstance(json_str, float) and json_str != json_str):
             return None
         try:
             return json.loads(json_str)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, TypeError) as e:
             logger.warning("Deserialization error: %s", e)
             return None
 
-    def _row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
-        """Convert a sqlite3.Row object to a standard dictionary."""
+    def row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         return dict(row)
 
     # ── Data Fetching ─────────────────────────────────────────────────────────
@@ -106,7 +102,7 @@ class BaseStorageManager:
         rows = self.fetch_rows(query, params)
         if mapper:
             return [mapper(row) for row in rows]
-        return [self._row_to_dict(row) for row in rows]
+        return [self.row_to_dict(row) for row in rows]
 
     # ── Writing & Indexing ────────────────────────────────────────────────────
 
@@ -166,9 +162,8 @@ class BaseStorageManager:
 
     # ── Merging ───────────────────────────────────────────────────────────────
 
-    def merge_databases(self, input_dir: str, table_name: str):
-        """Merge multiple .db chunks into the current database via SQL ATTACH."""
-        db_files: list[str] = self._get_chunk_files(input_dir, skip_file=self.db_path)
+    def merge_databases(self, input_dir: str, table_name: str) -> None:
+        db_files = self.get_chunk_files(input_dir, skip_file=self.db_path)
         if not db_files:
             return
 
@@ -207,13 +202,8 @@ class BaseStorageManager:
         table_name: str,
         row_callback: Callable[[sqlite3.Row], None],
         flush_callback: Callable[[], None] | None = None,
-    ):
-        """Row-by-row merge for tables that require per-row logic (e.g. similarity checks)."""
-        db_files: list[str] = self._get_chunk_files(input_dir, skip_file=self.db_path)
-        if not db_files:
-            return
-
-        for db_file in db_files:
+    ) -> None:
+        for db_file in self.get_chunk_files(input_dir, skip_file=self.db_path):
             if not (os.path.exists(db_file) and os.path.getsize(db_file) > 100):
                 continue
             try:
@@ -235,10 +225,10 @@ class BaseStorageManager:
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
-    def _create_tables(self):
+    def _create_tables(self) -> None:
         """Override to create application-specific tables."""
 
-    def reopen_if_changed(self):
+    def reopen_if_changed(self) -> None:
         """Reopen the connection if the underlying file was modified externally."""
         try:
             current_mtime = os.path.getmtime(self.db_path)
@@ -260,7 +250,7 @@ class BaseStorageManager:
             self._file_mtime = current_mtime
 
     @staticmethod
-    def _get_chunk_files(input_dir: str, skip_file: str | None = None) -> list[str]:
+    def get_chunk_files(input_dir: str, skip_file: str | None = None) -> list[str]:
         candidates = [os.path.abspath(f) for f in glob.glob(os.path.join(input_dir, "*.db"))]
         if skip_file:
             skip_abs = os.path.abspath(skip_file)
@@ -291,13 +281,13 @@ class BaseStorageManager:
 class BufferedStorageManager(BaseStorageManager):
     """Storage manager with an in-memory pandas buffer for high-speed lookups."""
 
-    def __init__(self, db_path: str, table_name: str):
+    def __init__(self, db_path: str, table_name: str) -> None:
         self._table_name = table_name
         self._buffer: pd.DataFrame | None = None
         self._dirty: bool = False
         super().__init__(db_path)
 
-    def _ensure_buffer(self) -> pd.DataFrame:
+    def ensure_buffer(self) -> pd.DataFrame:
         """Lazy-load the entire table into a DataFrame if not already cached."""
         if self._buffer is not None:
             return self._buffer
@@ -319,26 +309,24 @@ class BufferedStorageManager(BaseStorageManager):
                 raise StorageError(f"Buffer flush failed: {e}") from e
 
     def exists(self, column: str, value: Any) -> bool:
-        """In-memory check — O(n) scan of the buffer, avoids SQL round-trip."""
-        df = self._ensure_buffer()
+        df = self.ensure_buffer()
         if df.empty:
             return False
         return value in df[column].values
 
-    def insert(self, data: Mapping[str, Any]):
-        """Append to the in-memory buffer and mark dirty."""
-        df = self._ensure_buffer()
+    def insert(self, data: Mapping[str, Any]) -> None:
+        df = self.ensure_buffer()
         self._buffer = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
         self._dirty = True
 
-    def clear_database(self, table_name: str):
+    def clear_database(self, table_name: str) -> None:
         """Clear SQL table and reset the buffer if it matches."""
         super().clear_database(table_name)
         if table_name == self._table_name:
             self._buffer = None
             self._dirty = False
 
-    def reopen_if_changed(self):
+    def reopen_if_changed(self) -> None:
         """Reopen + invalidate buffer so fresh data is loaded on next access."""
         prev_mtime = self._file_mtime
         super().reopen_if_changed()
@@ -346,6 +334,6 @@ class BufferedStorageManager(BaseStorageManager):
             self._buffer = None
             self._dirty = False
 
-    def close(self):
+    def close(self) -> None:
         self.flush()
         self.flush_and_close()

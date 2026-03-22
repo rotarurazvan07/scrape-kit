@@ -14,7 +14,7 @@ logger = logging.getLogger("scrape_kit.settings")
 class SettingsManager:
     """Recursively loads all YAML files in a directory and provides atomic writes."""
 
-    def __init__(self, directory: str):
+    def __init__(self, directory: str) -> None:
         self._directory = Path(directory)
         self.settings: dict[str, Any] = {}
         self._load()

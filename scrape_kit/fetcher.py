@@ -32,7 +32,7 @@ class ScrapeMode:
 class InteractiveSession:
     """Wrapper around Scrapling session to provide persistent page and JS execution."""
 
-    def __init__(self, session: DynamicSession | StealthySession):
+    def __init__(self, session: DynamicSession | StealthySession) -> None:
         self.session = session
         self.page = None
 
@@ -102,7 +102,7 @@ class WebFetcher:
     Supports both class initiation for state holding, or usage as a configured module.
     """
 
-    def __init__(self, retry_indicators: list[str] = None, block_indicators: list[str] = None):
+    def __init__(self, retry_indicators: list[str] = None, block_indicators: list[str] = None) -> None:
         """
         Initialization allows passing custom retry and blocking identifiers.
         """
@@ -207,7 +207,7 @@ class WebFetcher:
         callback: Callable,
         mode: str = ScrapeMode.FAST,
         max_concurrency: int = 1,
-    ):
+    ) -> None:
         """Batch scrape URLs with concurrency."""
         if not urls:
             return
@@ -217,12 +217,12 @@ class WebFetcher:
         elif mode == ScrapeMode.STEALTH:
             self._scrape_stealth(urls, callback, max_concurrency)
 
-    def _scrape_fast(self, urls: list[str], callback: Callable, max_concurrency: int):
+    def _scrape_fast(self, urls: list[str], callback: Callable, max_concurrency: int) -> None:
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
             # Using partial or wrapping to pass state
             pool.map(lambda u: self._fetch_worker_fast(u, callback), urls)
 
-    def _fetch_worker_fast(self, url: str, callback: Callable):
+    def _fetch_worker_fast(self, url: str, callback: Callable) -> None:
         try:
             html = self.fetch(url, stealthy_headers=False)
             if not self.is_blocked(html):
@@ -235,10 +235,10 @@ class WebFetcher:
         except Exception as e:
             logger.error(f"[scrape/fast] Error on {url}: {e}")
 
-    def _scrape_stealth(self, urls: list[str], callback: Callable, max_concurrency: int):
+    def _scrape_stealth(self, urls: list[str], callback: Callable, max_concurrency: int) -> None:
         asyncio.run(self._async_stealth_loop(urls, callback, max_concurrency))
 
-    async def _async_stealth_loop(self, urls: list[str], callback: Callable, max_concurrency: int):
+    async def _async_stealth_loop(self, urls: list[str], callback: Callable, max_concurrency: int) -> None:
         async with AsyncStealthySession(max_pages=max_concurrency, headless=True, solve_cloudflare=True) as session:
             sem = asyncio.Semaphore(max_concurrency)
             await asyncio.gather(*[self._fetch_one_stealth(url, session, sem, callback) for url in urls])

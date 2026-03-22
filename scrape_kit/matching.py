@@ -14,7 +14,7 @@ class SimilarityEngine:
     # If you want singleton behavior per-app, manage the instance from the app level.
     # Leaving out the strict __new__ singleton forces callers to instantiate properly and pass config.
 
-    def __init__(self, cfg: dict[str, Any]):
+    def __init__(self, cfg: dict[str, Any]) -> None:
         """
         Configuration accepts:
           acronyms: dict for generic sub-string replacement
