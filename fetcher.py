@@ -51,13 +51,9 @@ class InteractiveSession:
             raise FetcherError(f"Cleanup failed: {e}") from e
         self.session.close()
 
-    def fetch(
-        self, url: str, timeout: int = 90000, wait_until: str = "load"
-    ) -> SimpleNamespace:
+    def fetch(self, url: str, timeout: int = 90000, wait_until: str = "load") -> SimpleNamespace:
         if not self.page:
-            raise RuntimeError(
-                "Session not started. Use 'with WebFetcher.browser(...) as session:'"
-            )
+            raise RuntimeError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
 
         self.page.goto(url, wait_until=wait_until, timeout=timeout)
         self.page.wait_for_timeout(2000)
@@ -106,9 +102,7 @@ class WebFetcher:
     Supports both class initiation for state holding, or usage as a configured module.
     """
 
-    def __init__(
-        self, retry_indicators: list[str] = None, block_indicators: list[str] = None
-    ):
+    def __init__(self, retry_indicators: list[str] = None, block_indicators: list[str] = None):
         """
         Initialization allows passing custom retry and blocking identifiers.
         """
@@ -133,19 +127,13 @@ class WebFetcher:
                 status = getattr(page, "status", getattr(page, "status_code", 200))
                 if status in [403, 429, 503]:
                     wait = backoff * attempt
-                    logger.warning(
-                        f"Status {status} on {url} — retrying in {wait:.0f}s (attempt {attempt}/{retries})"
-                    )
+                    logger.warning(f"Status {status} on {url} — retrying in {wait:.0f}s (attempt {attempt}/{retries})")
                     time.sleep(wait)
                     continue
 
                 html = page.html_content
                 matched = next(
-                    (
-                        ind
-                        for ind in self.retry_indicators
-                        if ind.lower() in html.lower()
-                    ),
+                    (ind for ind in self.retry_indicators if ind.lower() in html.lower()),
                     None,
                 )
 
@@ -166,27 +154,19 @@ class WebFetcher:
             except Exception as e:
                 if attempt < retries:
                     wait = backoff * attempt
-                    logger.warning(
-                        f"Error on {url}: {e} — retrying in {wait:.0f}s (attempt {attempt}/{retries})"
-                    )
+                    logger.warning(f"Error on {url}: {e} — retrying in {wait:.0f}s (attempt {attempt}/{retries})")
                     time.sleep(wait)
                 else:
                     logger.error(f"Failed after {retries} attempts on {url}: {e}")
-                    raise FetcherError(
-                        f"Fetch failed after {retries} attempts: {e}"
-                    ) from e
+                    raise FetcherError(f"Fetch failed after {retries} attempts: {e}") from e
 
         return ""
 
     def _escalate_to_browser(self, url: str, blocked_by: str) -> str:
         """Uses a real browser to solve more complex challenges (Cloudflare)."""
-        logger.info(
-            f"'{blocked_by}' detected on {url} — Escalating to browser for challenge solving..."
-        )
+        logger.info(f"'{blocked_by}' detected on {url} — Escalating to browser for challenge solving...")
         try:
-            with self.browser(
-                solve_cloudflare=True, headless=True, interactive=True
-            ) as session:
+            with self.browser(solve_cloudflare=True, headless=True, interactive=True) as session:
                 resp = session.fetch(url, timeout=120000)  # Simple fetch
                 if resp and hasattr(resp, "html_content"):
                     logger.info(f"Browser successfully bypassed challenge for {url}")
@@ -200,9 +180,7 @@ class WebFetcher:
         """Helper to detect shadowbans or Cloudflare blocks based on registered identifiers."""
         if not html:
             return True
-        return any(
-            indicator.lower() in html.lower() for indicator in self.block_indicators
-        )
+        return any(indicator.lower() in html.lower() for indicator in self.block_indicators)
 
     def browser(
         self,
@@ -217,9 +195,7 @@ class WebFetcher:
         kwargs.setdefault("wait_until", "load")
 
         if solve_cloudflare:
-            session = StealthySession(
-                headless=headless, solve_cloudflare=True, **kwargs
-            )
+            session = StealthySession(headless=headless, solve_cloudflare=True, **kwargs)
         else:
             session = DynamicSession(headless=headless, **kwargs)
 
@@ -259,42 +235,26 @@ class WebFetcher:
         except Exception as e:
             logger.error(f"[scrape/fast] Error on {url}: {e}")
 
-    def _scrape_stealth(
-        self, urls: list[str], callback: Callable, max_concurrency: int
-    ):
+    def _scrape_stealth(self, urls: list[str], callback: Callable, max_concurrency: int):
         asyncio.run(self._async_stealth_loop(urls, callback, max_concurrency))
 
-    async def _async_stealth_loop(
-        self, urls: list[str], callback: Callable, max_concurrency: int
-    ):
-        async with AsyncStealthySession(
-            max_pages=max_concurrency, headless=True, solve_cloudflare=True
-        ) as session:
+    async def _async_stealth_loop(self, urls: list[str], callback: Callable, max_concurrency: int):
+        async with AsyncStealthySession(max_pages=max_concurrency, headless=True, solve_cloudflare=True) as session:
             sem = asyncio.Semaphore(max_concurrency)
-            await asyncio.gather(
-                *[self._fetch_one_stealth(url, session, sem, callback) for url in urls]
-            )
+            await asyncio.gather(*[self._fetch_one_stealth(url, session, sem, callback) for url in urls])
 
-    async def _fetch_one_stealth(
-        self, url: str, session: Any, sem: asyncio.Semaphore, callback: Callable
-    ):
+    async def _fetch_one_stealth(self, url: str, session: Any, sem: asyncio.Semaphore, callback: Callable):
         async with sem:
             for attempt in range(1, 4):
                 try:
-                    page = await session.fetch(
-                        url, disable_resources=False, network_idle=True, timeout=90000
-                    )
+                    page = await session.fetch(url, disable_resources=False, network_idle=True, timeout=90000)
                     callback(url, page.html_content)
                     return
                 except Exception as e:
                     if attempt < 3:
                         wait = 15 * attempt
-                        logger.warning(
-                            f"Challenge/Timeout on {url} (attempt {attempt}) — retrying in {wait}s..."
-                        )
+                        logger.warning(f"Challenge/Timeout on {url} (attempt {attempt}) — retrying in {wait}s...")
                         await asyncio.sleep(wait)
                     else:
                         logger.error(f"Failed persistently on {url}: {e}")
-                        raise FetcherError(
-                            f"Stealth fetch failed after retries: {e}"
-                        ) from e
+                        raise FetcherError(f"Stealth fetch failed after retries: {e}") from e

@@ -58,9 +58,8 @@ class SimilarityEngine:
         soundex_code = name[0]
         for char in name[1:]:
             for key, value in replacements.items():
-                if char in key:
-                    if soundex_code[-1] != value:
-                        soundex_code += value
+                if char in key and soundex_code[-1] != value:
+                    soundex_code += value
         soundex_code = soundex_code[:4].ljust(4, "0")
         res = soundex_code[:4]
         self._soundex_cache[orig_name] = res

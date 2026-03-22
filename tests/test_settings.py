@@ -99,9 +99,7 @@ class TestGet:
         assert manager.get("config", "db", "port") == 5432
 
     def test_normal_fallback_depth_first_search_by_last_key(self, tmp_path):
-        cfg = make_cfg(
-            tmp_path, {"section/hidden.yaml": "secret_token: abc123\ndepth: 5"}
-        )
+        cfg = make_cfg(tmp_path, {"section/hidden.yaml": "secret_token: abc123\ndepth: 5"})
         manager = SettingsManager(str(cfg))
         # Caller only knows the leaf key, not the full path
         assert manager.get("secret_token") == "abc123"
@@ -291,9 +289,7 @@ class TestSettingsScenarios:
         assert manager.get("feature_flags")["new_ui"] is True
         assert manager.get("feature_flags")["dark_mode"] is False
 
-    def test_scenario_multiple_files_same_leaf_key_fallback_returns_first(
-        self, tmp_path
-    ):
+    def test_scenario_multiple_files_same_leaf_key_fallback_returns_first(self, tmp_path):
         """When two files share a key, fallback DFS returns whichever is found first
         (alphabetical due to sorted rglob). Both are accessible via full path."""
         cfg = make_cfg(
@@ -312,11 +308,7 @@ class TestSettingsScenarios:
         """YAML with unicode, floats, and list values round-trips correctly."""
         cfg = make_cfg(
             tmp_path,
-            {
-                "intl.yaml": (
-                    "greeting: Héllo Wörld\npi: 3.14159\ntags:\n  - alpha\n  - beta\n"
-                )
-            },
+            {"intl.yaml": ("greeting: Héllo Wörld\npi: 3.14159\ntags:\n  - alpha\n  - beta\n")},
         )
         manager = SettingsManager(str(cfg))
         assert manager.get("greeting") == "Héllo Wörld"
@@ -349,7 +341,5 @@ class TestSettingsScenarios:
         assert len(list(cfg.glob("worker_*.yaml"))) == 10
         # Verify content integrity for each file
         for i in range(10):
-            data = yaml.safe_load(
-                (cfg / f"worker_{i}.yaml").read_text(encoding="utf-8")
-            )
+            data = yaml.safe_load((cfg / f"worker_{i}.yaml").read_text(encoding="utf-8"))
             assert data["id"] == i

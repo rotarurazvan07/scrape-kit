@@ -27,14 +27,10 @@ class SettingsManager:
                 data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError as e:
                 logger.error(f"Load error for {yaml_file}: {e}")
-                raise SettingsError(
-                    f"Failed to load settings file {yaml_file}: {e}"
-                ) from e
+                raise SettingsError(f"Failed to load settings file {yaml_file}: {e}") from e
             except OSError as e:
                 logger.error(f"File access error for {yaml_file}: {e}")
-                raise SettingsError(
-                    f"File system access failed for {yaml_file}: {e}"
-                ) from e
+                raise SettingsError(f"File system access failed for {yaml_file}: {e}") from e
 
             node = self.settings
             # relative_to gets the path from self._directory.parent

@@ -61,9 +61,7 @@ class TestScrapeMode:
 
 class TestWebFetcherInit:
     def test_normal_custom_indicators_stored(self):
-        fetcher = WebFetcher(
-            retry_indicators=["retry_me"], block_indicators=["blocked"]
-        )
+        fetcher = WebFetcher(retry_indicators=["retry_me"], block_indicators=["blocked"])
         assert fetcher.retry_indicators == ["retry_me"]
         assert fetcher.block_indicators == ["blocked"]
 
@@ -99,9 +97,7 @@ class TestIsBlocked:
         assert fetcher.is_blocked("<html>Access Denied</html>") is True
 
     def test_normal_any_indicator_triggers_block(self):
-        fetcher = WebFetcher(
-            block_indicators=["rate limited", "cloudflare", "forbidden"]
-        )
+        fetcher = WebFetcher(block_indicators=["rate limited", "cloudflare", "forbidden"])
         assert fetcher.is_blocked("page: Cloudflare Ray ID: 123") is True
         assert fetcher.is_blocked("Error: Rate Limited") is True
         assert fetcher.is_blocked("Just a normal page") is False
@@ -181,9 +177,7 @@ class TestFetch:
 
     @patch("fetcher.Fetcher")
     @patch.object(WebFetcher, "_escalate_to_browser")
-    def test_normal_escalates_when_indicator_persists_all_retries(
-        self, mock_escalate, MockFetcher
-    ):
+    def test_normal_escalates_when_indicator_persists_all_retries(self, mock_escalate, MockFetcher):
         mock_escalate.return_value = "<html>Bypassed</html>"
         MockFetcher.get.return_value = make_page("<html>just a moment</html>")
         fetcher = WebFetcher(retry_indicators=["just a moment"])
@@ -316,9 +310,8 @@ class TestInteractiveSessionContextManager:
     def test_edge_page_close_exception_handled_and_reraises(self):
         mock_session, mock_page = make_interactive_session()
         mock_page.close.side_effect = RuntimeError("browser crash")
-        with pytest.raises(FetcherError):
-            with InteractiveSession(mock_session):
-                pass
+        with pytest.raises(FetcherError), InteractiveSession(mock_session):
+            pass
 
 
 class TestInteractiveSessionFetch:
@@ -343,9 +336,7 @@ class TestInteractiveSessionFetch:
         session = InteractiveSession(mock_session)
         session.__enter__()
         session.fetch("http://example.com", timeout=5000, wait_until="networkidle")
-        mock_page.goto.assert_called_once_with(
-            "http://example.com", wait_until="networkidle", timeout=5000
-        )
+        mock_page.goto.assert_called_once_with("http://example.com", wait_until="networkidle", timeout=5000)
 
 
 class TestInteractiveSessionExecuteScript:
@@ -362,9 +353,7 @@ class TestInteractiveSessionExecuteScript:
         session = InteractiveSession(mock_session)
         session.__enter__()
         result = session.execute_script("return document.title.length")
-        mock_page.evaluate.assert_called_once_with(
-            "() => { return document.title.length }"
-        )
+        mock_page.evaluate.assert_called_once_with("() => { return document.title.length }")
         assert result == 42
 
     def test_edge_execute_without_enter_raises(self):
@@ -398,9 +387,7 @@ class TestInteractiveSessionHelpers:
         mock_session, mock_page = make_interactive_session()
         session = self._started(mock_session, mock_page)
         session.wait_for_function("() => window.ready", timeout=10000)
-        mock_page.wait_for_function.assert_called_once_with(
-            "() => window.ready", timeout=10000
-        )
+        mock_page.wait_for_function.assert_called_once_with("() => window.ready", timeout=10000)
 
     def test_normal_click_delegates(self):
         mock_session, mock_page = make_interactive_session()
@@ -452,9 +439,7 @@ class TestFetcherScenarios:
 
     @patch("fetcher.Fetcher")
     @patch.object(WebFetcher, "_escalate_to_browser")
-    def test_scenario_retry_indicator_exhausts_and_escalates(
-        self, mock_escalate, MockFetcher
-    ):
+    def test_scenario_retry_indicator_exhausts_and_escalates(self, mock_escalate, MockFetcher):
         """Retry indicator on every attempt → escalation called exactly once."""
         mock_escalate.return_value = "<html>Solved via browser</html>"
         MockFetcher.get.return_value = make_page("<html>just a moment</html>")
@@ -479,13 +464,9 @@ class TestFetcherScenarios:
         assert sorted(results) == sorted(urls)
 
     @patch("fetcher.Fetcher")
-    def test_scenario_multiple_block_indicators_individually_detected(
-        self, MockFetcher
-    ):
+    def test_scenario_multiple_block_indicators_individually_detected(self, MockFetcher):
         """Each distinct block indicator triggers is_blocked independently."""
-        fetcher = WebFetcher(
-            block_indicators=["rate limited", "access denied", "captcha required"]
-        )
+        fetcher = WebFetcher(block_indicators=["rate limited", "access denied", "captcha required"])
         assert fetcher.is_blocked("Sorry, rate limited right now") is True
         assert fetcher.is_blocked("<h1>Access Denied</h1>") is True
         assert fetcher.is_blocked("Please complete the captcha required") is True
@@ -503,8 +484,6 @@ class TestFetcherScenarios:
 
         assert resp.html_content == "<html><title>Scraped</title></html>"
         assert title == "Scraped"
-        mock_page.goto.assert_called_once_with(
-            "http://test.com", wait_until="load", timeout=30000
-        )
+        mock_page.goto.assert_called_once_with("http://test.com", wait_until="load", timeout=30000)
         mock_page.close.assert_called_once()
         mock_session.close.assert_called_once()

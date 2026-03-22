@@ -23,6 +23,7 @@ import pytest
 
 from errors import StorageError
 from storage import BaseStorageManager, BufferedStorageManager
+import contextlib
 
 # ── Shared test schema ────────────────────────────────────────────────────────
 
@@ -56,10 +57,8 @@ class MockDB(BaseStorageManager):
 def db(tmp_path):
     manager = MockDB(str(tmp_path / "test.db"))
     yield manager
-    try:
+    with contextlib.suppress(Exception):
         manager.flush_and_close()
-    except Exception:
-        pass
 
 
 @pytest.fixture
@@ -71,35 +70,27 @@ def populated_db(tmp_path):
     )
     manager.conn.commit()
     yield manager
-    try:
+    with contextlib.suppress(Exception):
         manager.flush_and_close()
-    except Exception:
-        pass
 
 
 @pytest.fixture
 def buffered_db(tmp_path):
     conn = sqlite3.connect(str(tmp_path / "buffer.db"))
     conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
-    conn.executemany(
-        "INSERT INTO items VALUES (?, ?, ?)", [(1, "alpha", "a"), (2, "beta", "b")]
-    )
+    conn.executemany("INSERT INTO items VALUES (?, ?, ?)", [(1, "alpha", "a"), (2, "beta", "b")])
     conn.commit()
     conn.close()
     manager = BufferedStorageManager(str(tmp_path / "buffer.db"), "items")
     yield manager
-    try:
+    with contextlib.suppress(Exception):
         manager.close()
-    except Exception:
-        pass
 
 
 def make_chunk(path, rows, table="items"):
     """Helper: create a standalone .db chunk with the items schema."""
     conn = sqlite3.connect(str(path))
-    conn.execute(
-        f"CREATE TABLE {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)"
-    )
+    conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)")
     conn.executemany(f"INSERT INTO {table} (name, value) VALUES (?, ?)", rows)
     conn.commit()
     conn.close()
@@ -155,9 +146,7 @@ class TestFetchDataframe:
         assert list(df["name"]) == ["alpha", "beta", "gamma"]
 
     def test_normal_parameterized_query(self, populated_db):
-        df = populated_db.fetch_dataframe(
-            "SELECT * FROM items WHERE name = ?", ("beta",)
-        )
+        df = populated_db.fetch_dataframe("SELECT * FROM items WHERE name = ?", ("beta",))
         assert len(df) == 1
         assert df.iloc[0]["name"] == "beta"
 
@@ -241,16 +230,12 @@ class TestExecuteBatch:
 class TestCreateIndex:
     def test_normal_creates_single_column_index(self, db):
         db.create_index("items", ["name"])
-        cursor = db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_items_name'"
-        )
+        cursor = db.conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_items_name'")
         assert cursor.fetchone() is not None
 
     def test_normal_creates_unique_multicolumn_index(self, db):
         db.create_index("items", ["name", "value"], unique=True)
-        cursor = db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_items_name_value'"
-        )
+        cursor = db.conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_items_name_value'")
         assert cursor.fetchone() is not None
 
     def test_edge_create_same_index_twice_is_idempotent(self, db):
@@ -361,9 +346,7 @@ class TestMergeDatabases:
         chunk_dir = tmp_path / "chunks"
         chunk_dir.mkdir()
         for i in range(3):
-            make_chunk(
-                chunk_dir / f"c{i}.db", [(f"item_{i}_{j}", str(j)) for j in range(4)]
-            )
+            make_chunk(chunk_dir / f"c{i}.db", [(f"item_{i}_{j}", str(j)) for j in range(4)])
         db.merge_databases(str(chunk_dir), "items")
         rows = db.fetch_rows("SELECT * FROM staging_items")
         assert len(rows) == 12
@@ -393,9 +376,7 @@ class TestMergeRowByRow:
         chunk_dir.mkdir()
         make_chunk(chunk_dir / "c1.db", [("r1", "v1"), ("r2", "v2")])
         collected = []
-        db.merge_row_by_row(
-            str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"])
-        )
+        db.merge_row_by_row(str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"]))
         assert sorted(collected) == ["r1", "r2"]
 
     def test_normal_flush_callback_invoked_once_per_chunk(self, db, tmp_path):
@@ -416,9 +397,7 @@ class TestMergeRowByRow:
         empty = tmp_path / "empty"
         empty.mkdir()
         called = []
-        db.merge_row_by_row(
-            str(empty), "items", row_callback=lambda r: called.append(r)
-        )
+        db.merge_row_by_row(str(empty), "items", row_callback=lambda r: called.append(r))
         assert called == []
 
     def test_edge_corrupt_chunk_skipped_gracefully(self, db, tmp_path):
@@ -429,9 +408,7 @@ class TestMergeRowByRow:
         # A tiny corrupt file (too small, filtered by size check)
         (chunk_dir / "corrupt.db").write_bytes(b"not a db")
         collected = []
-        db.merge_row_by_row(
-            str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"])
-        )
+        db.merge_row_by_row(str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"]))
         assert "valid" in collected
 
 
@@ -546,9 +523,7 @@ class TestBufferedInsert:
     def test_normal_flush_writes_inserted_rows_to_disk(self, buffered_db):
         buffered_db.insert({"id": 3, "name": "flushed", "value": "f"})
         buffered_db.flush()
-        rows = buffered_db.fetch_rows(
-            "SELECT * FROM items WHERE name = ?", ("flushed",)
-        )
+        rows = buffered_db.fetch_rows("SELECT * FROM items WHERE name = ?", ("flushed",))
         assert len(rows) == 1
 
 
@@ -641,9 +616,7 @@ class TestStorageScenarios:
         chunk_dir = tmp_path / "chunks"
         chunk_dir.mkdir()
         for i in range(4):
-            make_chunk(
-                chunk_dir / f"c{i}.db", [(f"node_{i}_{j}", str(j)) for j in range(5)]
-            )
+            make_chunk(chunk_dir / f"c{i}.db", [(f"node_{i}_{j}", str(j)) for j in range(5)])
         db.merge_databases(str(chunk_dir), "items")
         df = db.fetch_dataframe("SELECT * FROM staging_items")
         assert len(df) == 20
@@ -675,9 +648,7 @@ class TestStorageScenarios:
 
         def writer():
             try:
-                db.execute_batch(
-                    "INSERT INTO items (name, value) VALUES (?, ?)", params
-                )
+                db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", params)
             except Exception as e:
                 errors.append(("writer", e))
 
@@ -687,9 +658,7 @@ class TestStorageScenarios:
             except Exception as e:
                 errors.append(("reader", e))
 
-        threads = [threading.Thread(target=writer)] + [
-            threading.Thread(target=reader) for _ in range(6)
-        ]
+        threads = [threading.Thread(target=writer)] + [threading.Thread(target=reader) for _ in range(6)]
         for t in threads:
             t.start()
         for t in threads:
@@ -702,9 +671,7 @@ class TestStorageScenarios:
         assert populated_db.fetch_rows("SELECT * FROM items") == []
 
         new_data = [("x", "10"), ("y", "20"), ("z", "30")]
-        populated_db.execute_batch(
-            "INSERT INTO items (name, value) VALUES (?, ?)", new_data
-        )
+        populated_db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", new_data)
         rows = populated_db.fetch_rows("SELECT name FROM items ORDER BY name")
         assert [r["name"] for r in rows] == ["x", "y", "z"]
         # Old names must be gone
