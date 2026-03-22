@@ -20,11 +20,9 @@ class SimilarityEngine:
           synonyms: exact match replacement dict (e.g. "teamA": "teamB")
           weights: token, substr, phonetic, ratio
           threshold: integer threshold for is_similar
-          normalize_vs: if true, forces 'v' or 'vs' into a standard format
         """
         self.acronyms = cfg.get('acronyms', {})
         self.synonyms = cfg.get('synonyms', {})
-        self.normalize_vs = cfg.get('normalize_vs', False)
 
         # weights for hybrid matching
         weights = cfg.get('weights', {})
@@ -71,10 +69,6 @@ class SimilarityEngine:
         name = unicodedata.normalize('NFD', match_name)
         name = ''.join(ch for ch in name if unicodedata.category(ch) != 'Mn')
         name = re.sub(r"[(),.`]", "", name)
-
-        if self.normalize_vs:
-            name = re.sub(r"\s[v](?=[A-Z])", " vs ", name)
-            name = re.sub(r"\b\s?(vs|v|-|:|,|@)\s?\b", " vs ", name, flags=re.IGNORECASE)
 
         name = " ".join(name.split()).lower()
 
