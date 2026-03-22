@@ -15,25 +15,19 @@ env:
 
 # ════════════════════════════════════════════════════════════════════════════
 # PHILOSOPHY
-#   auto-fix  — runs first, commits any formatting/lint/type fixes back to
-#               the branch so you never touch them manually.
-#   test       — the ONLY job you need to care about. Fails only on real
-#               logic/correctness problems.
-#   audit      — informational scans (security, complexity, dead code).
-#               Results uploaded as artifacts; non-blocking by default.
-#   ci-gate    — requires auto-fix + test to pass. audit is advisory only.
+#   auto-fix  — runs first, commits formatting/lint fixes back to the branch.
+#               You never touch style manually.
+#   test      — the ONLY job you need to read. Fails on logic bugs only.
+#   audit     — security / complexity scans. Informational, never blocks.
+#   ci-gate   — the single required status check for branch protection.
 # ════════════════════════════════════════════════════════════════════════════
 
 jobs:
 
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
-  # Runs ruff format, ruff --fix, isort, and pyupgrade.
-  # If anything changed it commits directly back to the branch.
-  # You never see a formatting failure — it is just fixed for you.
   auto-fix:
-    name: "Auto-fix (format · lint · types)"
+    name: "Auto-fix (format · lint)"
     runs-on: ubuntu-latest
-    # Only push events can commit back. PRs from forks cannot write — skip.
     if: github.event_name == 'push'
     permissions:
       contents: write
@@ -41,9 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Use a PAT named AUTO_FIX_TOKEN in repo secrets so that the
-          # commit triggers follow-up workflow runs. Falls back to
-          # GITHUB_TOKEN (works, but the follow-up run will not fire).
+          # PAT named AUTO_FIX_TOKEN triggers a follow-up run after the commit.
+          # Falls back to GITHUB_TOKEN (commit still happens, no follow-up run).
           token: ${{ secrets.AUTO_FIX_TOKEN || secrets.GITHUB_TOKEN }}
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
@@ -55,14 +48,7 @@ jobs:
 
       - name: Install auto-fix tools
         run: |
-          pip install \
-            ruff \
-            isort \
-            pyupgrade \
-            autoflake
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      # ── Fixes applied in safe order ──────────────────────────────────────
+          pip install ruff isort pyupgrade autoflake
 
       - name: autoflake — remove unused imports and variables
         run: |
@@ -75,47 +61,36 @@ jobs:
             .
 
       - name: pyupgrade — modernise syntax to Python 3.10+
-        # Rewrites old-style type hints (List -> list, Optional[x] -> x | None),
-        # f-string upgrades, super() calls, etc.
+        # Exit code 1 means files were rewritten (expected).
+        # xargs surfaces that as 123. Both are normal — swallow with || true.
         run: |
           find . -name "*.py" \
             -not -path "./.venv/*" \
             -not -path "./__pycache__/*" \
             | xargs pyupgrade --py310-plus || true
-          # pyupgrade exits 1 when it rewrites files (intended behaviour).
-          # xargs then surfaces that as exit code 123. Both are normal —
-          # the rewrite is exactly what we want, so we swallow the code.
 
       - name: isort — sort imports
         run: isort .
 
-      - name: ruff format — apply Black-compatible formatting
+      - name: ruff format
+        # quote-style = "double" in pyproject.toml prevents ruff from
+        # rewriting f-string escape sequences into Python 3.12-only
+        # nested-same-quote syntax (PEP 701).
         run: ruff format .
 
-      - name: ruff lint --fix — apply all safe auto-fixes
-        # --unsafe-fixes applies fixes that change behaviour in rare edge
-        # cases. Remove that flag if you want conservative-only fixes.
-        run: |
-          ruff check \
-            --fix \
-            --unsafe-fixes \
-            --output-format=github \
-            . || true
-            # non-zero exit means unfixable issues remain (e.g. logic errors).
-            # Those are caught separately in the test job, not here.
-
-      # ── Commit anything that changed ─────────────────────────────────────
+      - name: ruff lint --fix
+        # UP rules are excluded in pyproject.toml for the same reason above.
+        run: ruff check --fix --unsafe-fixes --output-format=github . || true
 
       - name: Commit fixes (if any)
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           if git diff --quiet; then
             echo "Nothing to fix — working tree is clean."
           else
             git add -A
-            git commit -m "chore: auto-fix formatting, imports, and lint [skip ci]"
+            git commit -m "chore: auto-fix formatting and lint [skip ci]"
             git push
             echo "Fixes committed and pushed."
           fi
@@ -123,13 +98,10 @@ jobs:
   # ── 2. TESTS ─────────────────────────────────────────────────────────────
   # This is the ONLY job you need to read.
   # A failure here = real logic bug or broken behaviour.
-  # Everything style/format related is automated above.
   test:
     name: "Test (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
-    # Wait for auto-fix to push its commit so tests run on clean code.
     needs: [auto-fix]
-    # Run on both push (after auto-fix) and PRs (where auto-fix is skipped).
     if: always()
     strategy:
       fail-fast: false
@@ -139,8 +111,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Always check out the latest commit on the branch,
-          # which may be the auto-fix commit.
           ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: actions/setup-python@v5
@@ -150,9 +120,15 @@ jobs:
 
       - name: Install project and test deps
         run: |
+          # pip install -e . reads pyproject.toml and installs all declared
+          # dependencies (PyYAML, rapidfuzz, scrapling, pandas) in one step.
           pip install -e .
           pip install pytest pytest-cov pytest-xdist pytest-timeout
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: scrapling install (browser binaries)
+        # scrapling requires a one-time post-install step to download the
+        # browser binaries it wraps. Must run after pip install -e .
+        run: scrapling install
 
       - name: Run tests
         run: |
@@ -184,8 +160,7 @@ jobs:
           retention-days: 14
 
   # ── 3. AUDIT ─────────────────────────────────────────────────────────────
-  # Informational only. Results are uploaded as artifacts and printed in the
-  # log, but they NEVER block merging. Read them when you have time.
+  # Informational only — never blocks merging.
   audit:
     name: "Audit (security · complexity · dead code)"
     runs-on: ubuntu-latest
@@ -206,7 +181,6 @@ jobs:
         run: |
           pip install -e .
           pip install bandit pip-audit radon vulture
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: bandit — security SAST
         run: |
@@ -217,12 +191,12 @@ jobs:
           bandit -r . -ll -ii \
             --exclude ./tests,./.venv || true
 
-      - name: pip-audit — CVE scan on dependencies
-        run: pip-audit -r requirements.txt || true
+      - name: pip-audit — CVE scan
+        run: pip-audit || true
 
-      - name: radon — cyclomatic complexity report
+      - name: radon — complexity report
         run: |
-          echo "── Cyclomatic Complexity (C+ = worth refactoring) ─────────"
+          echo "── Cyclomatic Complexity (C+ = worth refactoring) ──────────"
           radon cc . --min C --show-complexity --average || true
           echo ""
           echo "── Maintainability Index ────────────────────────────────────"
@@ -240,8 +214,7 @@ jobs:
           retention-days: 30
 
   # ── GATE ─────────────────────────────────────────────────────────────────
-  # Set THIS job as the required status check in branch protection settings.
-  # Only auto-fix + test are required. Audit is always advisory.
+  # Set THIS as the required status check in branch protection settings.
   ci-gate:
     name: "CI Gate"
     if: always()
@@ -252,13 +225,10 @@ jobs:
         run: |
           python3 -c "
           import sys
-
-          # audit is intentionally excluded — it is advisory only
           required = {
-            'auto-fix': '${{ needs.auto-fix.result }}',
-            'test':     '${{ needs.test.result }}',
+              'auto-fix': '${{ needs.auto-fix.result }}',
+              'test':     '${{ needs.test.result }}',
           }
-
           failures = [
               name for name, result in required.items()
               if result not in ('success', 'skipped')
@@ -266,7 +236,6 @@ jobs:
           if failures:
               print('Blocking failures in:', ', '.join(failures))
               sys.exit(1)
-
           print('All required jobs passed.')
           print('Audit result (advisory):', '${{ needs.audit.result }}')
           "

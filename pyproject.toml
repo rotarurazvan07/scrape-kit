@@ -6,13 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "scrape-kit"
 version = "0.1.0"
 requires-python = ">=3.10"
-# Move your requirements.txt entries here when ready.
-# For now pip install -r requirements.txt still works alongside this.
-dependencies = []
+dependencies = [
+    "PyYAML",
+    "rapidfuzz",
+    "scrapling[fetchers]",
+    "pandas",
+]
 
 [tool.setuptools]
-# Register each root-level module individually.
-# This is the correct approach for flat layouts — no subdirectory needed.
+# Flat layout: register each root-level module individually.
+# If you ever move to a subdirectory, switch to:
+#   [tool.setuptools.packages.find]
+#   where = ["."]
 py-modules = [
     "errors",
     "fetcher",
@@ -29,7 +34,18 @@ line-length = 127
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "C", "SIM", "UP"]
+select = ["E", "F", "B", "C", "SIM"]
+# UP (pyupgrade rules) is intentionally excluded.
+# ruff format + UP --unsafe-fixes rewrites f-string escape sequences into
+# Python 3.12-only nested-same-quote syntax (PEP 701), which breaks the
+# 3.10 and 3.11 matrix jobs.  Syntax modernisation is handled by pyupgrade
+# directly in the auto-fix job, which respects --py310-plus correctly.
+ignore = ["UP"]
+
+[tool.ruff.format]
+# Keeping double-quote style prevents the formatter from swapping quote
+# types inside f-string expressions and producing 3.12-only syntax.
+quote-style = "double"
 
 [tool.isort]
 profile = "black"
