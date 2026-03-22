@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from errors import StorageError
+from .errors import StorageError
 
 logger = logging.getLogger("scrape_kit.storage")
 

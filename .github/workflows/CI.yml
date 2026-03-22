@@ -47,8 +47,7 @@ jobs:
           cache: pip
 
       - name: Install auto-fix tools
-        run: |
-          pip install ruff isort pyupgrade autoflake
+        run: pip install ruff isort pyupgrade autoflake
 
       - name: autoflake — remove unused imports and variables
         run: |
@@ -58,29 +57,25 @@ jobs:
             --remove-all-unused-imports \
             --remove-unused-variables \
             --exclude .venv,__pycache__ \
-            .
+            scrape_kit/ tests/
 
       - name: pyupgrade — modernise syntax to Python 3.10+
         # Exit code 1 means files were rewritten (expected).
         # xargs surfaces that as 123. Both are normal — swallow with || true.
         run: |
-          find . -name "*.py" \
-            -not -path "./.venv/*" \
-            -not -path "./__pycache__/*" \
-            | xargs pyupgrade --py310-plus || true
+          find scrape_kit tests -name "*.py" | xargs pyupgrade --py310-plus || true
 
       - name: isort — sort imports
-        run: isort .
+        run: isort scrape_kit/ tests/
 
       - name: ruff format
         # quote-style = "double" in pyproject.toml prevents ruff from
-        # rewriting f-string escape sequences into Python 3.12-only
-        # nested-same-quote syntax (PEP 701).
-        run: ruff format .
+        # rewriting f-string escapes into Python 3.12-only syntax (PEP 701).
+        run: ruff format scrape_kit/ tests/
 
       - name: ruff lint --fix
-        # UP rules are excluded in pyproject.toml for the same reason above.
-        run: ruff check --fix --unsafe-fixes --output-format=github . || true
+        # UP rules excluded in pyproject.toml — see comment there.
+        run: ruff check --fix --unsafe-fixes --output-format=github scrape_kit/ tests/ || true
 
       - name: Commit fixes (if any)
         run: |
@@ -120,20 +115,18 @@ jobs:
 
       - name: Install project and test deps
         run: |
-          # pip install -e . reads pyproject.toml and installs all declared
-          # dependencies (PyYAML, rapidfuzz, scrapling, pandas) in one step.
           pip install -e .
           pip install pytest pytest-cov pytest-xdist pytest-timeout
 
       - name: scrapling install (browser binaries)
-        # scrapling requires a one-time post-install step to download the
-        # browser binaries it wraps. Must run after pip install -e .
+        # scrapling[fetchers] provides the CLI. This downloads the actual
+        # browser binaries. Must run after pip install -e .
         run: scrapling install
 
       - name: Run tests
         run: |
           pytest \
-            --cov=. \
+            --cov=scrape_kit \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
@@ -184,12 +177,10 @@ jobs:
 
       - name: bandit — security SAST
         run: |
-          bandit -r . -ll -ii \
-            --exclude ./tests,./.venv \
+          bandit -r scrape_kit/ -ll -ii \
             --format json \
             --output bandit-report.json || true
-          bandit -r . -ll -ii \
-            --exclude ./tests,./.venv || true
+          bandit -r scrape_kit/ -ll -ii || true
 
       - name: pip-audit — CVE scan
         run: pip-audit || true
@@ -197,13 +188,13 @@ jobs:
       - name: radon — complexity report
         run: |
           echo "── Cyclomatic Complexity (C+ = worth refactoring) ──────────"
-          radon cc . --min C --show-complexity --average || true
+          radon cc scrape_kit/ --min C --show-complexity --average || true
           echo ""
           echo "── Maintainability Index ────────────────────────────────────"
-          radon mi . --show --min B || true
+          radon mi scrape_kit/ --show --min B || true
 
       - name: vulture — dead code detection
-        run: vulture . --min-confidence 80 --exclude ".venv,tests" || true
+        run: vulture scrape_kit/ --min-confidence 80 || true
 
       - name: Upload bandit report
         if: always()

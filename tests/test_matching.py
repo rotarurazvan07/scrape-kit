@@ -11,7 +11,7 @@ Plus 5 complex integration scenarios at the bottom.
 
 import pytest
 
-from matching import SimilarityEngine
+from scrape_kit.matching import SimilarityEngine
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-
-from errors import SettingsError
-from settings import SettingsManager
+from unittest.mock import patch
+from scrape_kit.errors import SettingsError
+from scrape_kit.settings import SettingsManager
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,14 +78,10 @@ class TestInit:
     def test_error_unreadable_yaml_raises_settings_error(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
-        yaml_file = cfg / "locked.yaml"
-        yaml_file.write_text("x: 1")
-        yaml_file.chmod(0o000)
-        try:
+        (cfg / "locked.yaml").write_text("x: 1")
+        with patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")):
             with pytest.raises(SettingsError):
                 SettingsManager(str(cfg))
-        finally:
-            yaml_file.chmod(0o644)  # restore so tmp_path cleanup works
 
 
 # ── get ───────────────────────────────────────────────────────────────────────

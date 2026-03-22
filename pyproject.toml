@@ -13,21 +13,19 @@ dependencies = [
     "pandas",
 ]
 
-[tool.setuptools]
-# Flat layout: register each root-level module individually.
-# If you ever move to a subdirectory, switch to:
-#   [tool.setuptools.packages.find]
-#   where = ["."]
-py-modules = [
-    "errors",
-    "fetcher",
-    "matching",
-    "settings",
-    "storage",
-]
+[tool.setuptools.packages.find]
+# Discovers scrape_kit/ automatically.
+# When you add sub-packages (e.g. scrape_kit/fetchers/) they are picked
+# up without any changes here.
+where = ["."]
+include = ["scrape_kit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["scrape_kit"]
+omit = ["tests/*"]
 
 [tool.ruff]
 line-length = 127
@@ -35,16 +33,15 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "C", "SIM"]
-# UP (pyupgrade rules) is intentionally excluded.
-# ruff format + UP --unsafe-fixes rewrites f-string escape sequences into
-# Python 3.12-only nested-same-quote syntax (PEP 701), which breaks the
-# 3.10 and 3.11 matrix jobs.  Syntax modernisation is handled by pyupgrade
-# directly in the auto-fix job, which respects --py310-plus correctly.
+# UP (pyupgrade rules) intentionally excluded — ruff + UP --unsafe-fixes
+# rewrites f-string escapes into Python 3.12-only nested-quote syntax
+# (PEP 701), breaking the 3.10/3.11 matrix jobs. pyupgrade --py310-plus
+# in the auto-fix job handles modernisation correctly instead.
 ignore = ["UP"]
 
 [tool.ruff.format]
-# Keeping double-quote style prevents the formatter from swapping quote
-# types inside f-string expressions and producing 3.12-only syntax.
+# double-quote style prevents the formatter swapping quote types inside
+# f-string expressions and producing 3.12-only syntax.
 quote-style = "double"
 
 [tool.isort]

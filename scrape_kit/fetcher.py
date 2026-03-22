@@ -14,7 +14,7 @@ from scrapling.fetchers import (
     StealthySession,
 )
 
-from errors import FetcherError
+from .errors import FetcherError
 
 # Configure structured logging
 logger = logging.getLogger("scrape_kit.fetcher")

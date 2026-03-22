@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from errors import SettingsError
+from .errors import SettingsError
 
 # Configure structured logging
 logger = logging.getLogger("scrape_kit.settings")

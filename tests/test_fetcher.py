@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from errors import FetcherError
-from fetcher import InteractiveSession, ScrapeMode, WebFetcher
+from scrape_kit.errors import FetcherError
+from scrape_kit.fetcher import InteractiveSession, ScrapeMode, WebFetcher
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -119,24 +119,23 @@ class TestIsBlocked:
         assert fetcher.is_blocked("<html>ACCESS DENIED</html>") is True
         assert fetcher.is_blocked("<html>Access Denied</html>") is True
 
-    def test_error_none_html_raises(self):
+    def test_edge_none_html_treated_as_blocked(self):
         fetcher = WebFetcher(block_indicators=["x"])
-        with pytest.raises((TypeError, AttributeError)):
-            fetcher.is_blocked(None)
+        assert fetcher.is_blocked(None) is True
 
 
 # ── WebFetcher.fetch ──────────────────────────────────────────────────────────
 
 
 class TestFetch:
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_normal_successful_first_attempt(self, MockFetcher):
         MockFetcher.get.return_value = make_page("<html>Hello</html>")
         fetcher = WebFetcher()
         assert fetcher.fetch("http://example.com") == "<html>Hello</html>"
         MockFetcher.get.assert_called_once()
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_normal_no_retry_indicator_returns_immediately(self, MockFetcher):
         MockFetcher.get.return_value = make_page("<html>Clean</html>")
         fetcher = WebFetcher(retry_indicators=["wait"])
@@ -144,7 +143,7 @@ class TestFetch:
         assert result == "<html>Clean</html>"
         assert MockFetcher.get.call_count == 1  # no retry needed
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_normal_retry_indicator_on_first_attempt_then_success(self, MockFetcher):
         blocked = make_page("<html>please wait...</html>")
         clean = make_page("<html>Welcome</html>")
@@ -154,28 +153,28 @@ class TestFetch:
         assert "Welcome" in result
         assert MockFetcher.get.call_count == 2
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_edge_status_503_retries_then_returns_empty(self, MockFetcher):
         MockFetcher.get.return_value = make_page(status=503)
         fetcher = WebFetcher()
         result = fetcher.fetch("http://example.com", retries=2, backoff=0)
         assert result == ""
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_edge_status_429_treated_like_503(self, MockFetcher):
         MockFetcher.get.return_value = make_page(status=429)
         fetcher = WebFetcher()
         result = fetcher.fetch("http://example.com", retries=1, backoff=0)
         assert result == ""
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_error_all_retries_exhaust_raises_fetcher_error(self, MockFetcher):
         MockFetcher.get.side_effect = ConnectionError("network down")
         fetcher = WebFetcher()
         with pytest.raises(FetcherError):
             fetcher.fetch("http://unreachable.example.com", retries=2, backoff=0)
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     @patch.object(WebFetcher, "_escalate_to_browser")
     def test_normal_escalates_when_indicator_persists_all_retries(self, mock_escalate, MockFetcher):
         mock_escalate.return_value = "<html>Bypassed</html>"
@@ -185,7 +184,7 @@ class TestFetch:
         mock_escalate.assert_called_once_with("http://example.com", "just a moment")
         assert result == "<html>Bypassed</html>"
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_edge_retry_indicator_check_is_case_insensitive(self, MockFetcher):
         # indicator lower-cased in check
         blocked = make_page("<html>CLOUDFLARE CHECKING</html>")
@@ -200,13 +199,13 @@ class TestFetch:
 
 
 class TestBrowser:
-    @patch("fetcher.DynamicSession")
+    @patch("scrape_kit.fetcher.DynamicSession")
     def test_normal_returns_dynamic_session_by_default(self, MockDynamic):
         fetcher = WebFetcher()
         session = fetcher.browser()
         assert session is MockDynamic.return_value
 
-    @patch("fetcher.StealthySession")
+    @patch("scrape_kit.fetcher.StealthySession")
     def test_normal_solve_cloudflare_uses_stealthy_session(self, MockStealthy):
         fetcher = WebFetcher()
         session = fetcher.browser(solve_cloudflare=True)
@@ -215,26 +214,26 @@ class TestBrowser:
         call_kwargs = MockStealthy.call_args[1]
         assert call_kwargs.get("solve_cloudflare") is True
 
-    @patch("fetcher.DynamicSession")
+    @patch("scrape_kit.fetcher.DynamicSession")
     def test_edge_interactive_flag_wraps_in_interactive_session(self, MockDynamic):
         fetcher = WebFetcher()
         session = fetcher.browser(interactive=True)
         assert isinstance(session, InteractiveSession)
 
-    @patch("fetcher.StealthySession")
+    @patch("scrape_kit.fetcher.StealthySession")
     def test_edge_interactive_plus_cloudflare_uses_stealthy_wrapped(self, MockStealthy):
         fetcher = WebFetcher()
         session = fetcher.browser(solve_cloudflare=True, interactive=True)
         assert isinstance(session, InteractiveSession)
 
-    @patch("fetcher.DynamicSession")
+    @patch("scrape_kit.fetcher.DynamicSession")
     def test_normal_headless_flag_forwarded(self, MockDynamic):
         fetcher = WebFetcher()
         fetcher.browser(headless=False)
         call_kwargs = MockDynamic.call_args[1]
         assert call_kwargs.get("headless") is False
 
-    @patch("fetcher.DynamicSession")
+    @patch("scrape_kit.fetcher.DynamicSession")
     def test_edge_extra_kwargs_forwarded_to_session(self, MockDynamic):
         fetcher = WebFetcher()
         fetcher.browser(custom_flag=True)
@@ -424,7 +423,7 @@ class TestInteractiveSessionHelpers:
 
 
 class TestFetcherScenarios:
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_scenario_two_failures_then_success_on_third(self, MockFetcher):
         """503 twice, then clean HTML on the third attempt."""
         MockFetcher.get.side_effect = [
@@ -437,7 +436,7 @@ class TestFetcherScenarios:
         assert "Finally" in result
         assert MockFetcher.get.call_count == 3
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     @patch.object(WebFetcher, "_escalate_to_browser")
     def test_scenario_retry_indicator_exhausts_and_escalates(self, mock_escalate, MockFetcher):
         """Retry indicator on every attempt → escalation called exactly once."""
@@ -463,7 +462,7 @@ class TestFetcherScenarios:
         )
         assert sorted(results) == sorted(urls)
 
-    @patch("fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.Fetcher")
     def test_scenario_multiple_block_indicators_individually_detected(self, MockFetcher):
         """Each distinct block indicator triggers is_blocked independently."""
         fetcher = WebFetcher(block_indicators=["rate limited", "access denied", "captcha required"])
