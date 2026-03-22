@@ -150,12 +150,13 @@ jobs:
 
       - name: Install project and test deps
         run: |
+          pip install -e .
           pip install pytest pytest-cov pytest-xdist pytest-timeout
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run tests
         run: |
-          pytest tests/ \
+          pytest \
             --cov=. \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
@@ -203,6 +204,7 @@ jobs:
 
       - name: Install audit tools
         run: |
+          pip install -e .
           pip install bandit pip-audit radon vulture
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
