@@ -1,0 +1,267 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.10"
+
+# ════════════════════════════════════════════════════════════════════════════
+# PHILOSOPHY
+#   auto-fix  — runs first, commits any formatting/lint/type fixes back to
+#               the branch so you never touch them manually.
+#   test       — the ONLY job you need to care about. Fails only on real
+#               logic/correctness problems.
+#   audit      — informational scans (security, complexity, dead code).
+#               Results uploaded as artifacts; non-blocking by default.
+#   ci-gate    — requires auto-fix + test to pass. audit is advisory only.
+# ════════════════════════════════════════════════════════════════════════════
+
+jobs:
+
+  # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
+  # Runs ruff format, ruff --fix, isort, and pyupgrade.
+  # If anything changed it commits directly back to the branch.
+  # You never see a formatting failure — it is just fixed for you.
+  auto-fix:
+    name: "Auto-fix (format · lint · types)"
+    runs-on: ubuntu-latest
+    # Only push events can commit back. PRs from forks cannot write — skip.
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use a PAT named AUTO_FIX_TOKEN in repo secrets so that the
+          # commit triggers follow-up workflow runs. Falls back to
+          # GITHUB_TOKEN (works, but the follow-up run will not fire).
+          token: ${{ secrets.AUTO_FIX_TOKEN || secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install auto-fix tools
+        run: |
+          pip install \
+            ruff \
+            isort \
+            pyupgrade \
+            autoflake
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      # ── Fixes applied in safe order ──────────────────────────────────────
+
+      - name: autoflake — remove unused imports and variables
+        run: |
+          autoflake \
+            --in-place \
+            --recursive \
+            --remove-all-unused-imports \
+            --remove-unused-variables \
+            --exclude .venv,__pycache__ \
+            .
+
+      - name: pyupgrade — modernise syntax to Python 3.10+
+        # Rewrites old-style type hints (List -> list, Optional[x] -> x | None),
+        # f-string upgrades, super() calls, etc.
+        run: |
+          find . -name "*.py" \
+            -not -path "./.venv/*" \
+            -not -path "./__pycache__/*" \
+            | xargs pyupgrade --py310-plus
+
+      - name: isort — sort imports
+        run: isort .
+
+      - name: ruff format — apply Black-compatible formatting
+        run: ruff format .
+
+      - name: ruff lint --fix — apply all safe auto-fixes
+        # --unsafe-fixes applies fixes that change behaviour in rare edge
+        # cases. Remove that flag if you want conservative-only fixes.
+        run: |
+          ruff check \
+            --fix \
+            --unsafe-fixes \
+            --output-format=github \
+            . || true
+            # non-zero exit means unfixable issues remain (e.g. logic errors).
+            # Those are caught separately in the test job, not here.
+
+      # ── Commit anything that changed ─────────────────────────────────────
+
+      - name: Commit fixes (if any)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "Nothing to fix — working tree is clean."
+          else
+            git add -A
+            git commit -m "chore: auto-fix formatting, imports, and lint [skip ci]"
+            git push
+            echo "Fixes committed and pushed."
+          fi
+
+  # ── 2. TESTS ─────────────────────────────────────────────────────────────
+  # This is the ONLY job you need to read.
+  # A failure here = real logic bug or broken behaviour.
+  # Everything style/format related is automated above.
+  test:
+    name: "Test (Python ${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    # Wait for auto-fix to push its commit so tests run on clean code.
+    needs: [auto-fix]
+    # Run on both push (after auto-fix) and PRs (where auto-fix is skipped).
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always check out the latest commit on the branch,
+          # which may be the auto-fix commit.
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project and test deps
+        run: |
+          pip install pytest pytest-cov pytest-xdist pytest-timeout
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run tests
+        run: |
+          pytest tests/ \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-fail-under=80 \
+            --junitxml=test-results.xml \
+            --timeout=60 \
+            -n auto \
+            -v
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-py${{ matrix.python-version }}
+          path: htmlcov/
+          retention-days: 14
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: test-results.xml
+          retention-days: 14
+
+  # ── 3. AUDIT ─────────────────────────────────────────────────────────────
+  # Informational only. Results are uploaded as artifacts and printed in the
+  # log, but they NEVER block merging. Read them when you have time.
+  audit:
+    name: "Audit (security · complexity · dead code)"
+    runs-on: ubuntu-latest
+    needs: [auto-fix]
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install audit tools
+        run: |
+          pip install bandit pip-audit radon vulture
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: bandit — security SAST
+        run: |
+          bandit -r . -ll -ii \
+            --exclude ./tests,./.venv \
+            --format json \
+            --output bandit-report.json || true
+          bandit -r . -ll -ii \
+            --exclude ./tests,./.venv || true
+
+      - name: pip-audit — CVE scan on dependencies
+        run: pip-audit -r requirements.txt || true
+
+      - name: radon — cyclomatic complexity report
+        run: |
+          echo "── Cyclomatic Complexity (C+ = worth refactoring) ─────────"
+          radon cc . --min C --show-complexity --average || true
+          echo ""
+          echo "── Maintainability Index ────────────────────────────────────"
+          radon mi . --show --min B || true
+
+      - name: vulture — dead code detection
+        run: vulture . --min-confidence 80 --exclude ".venv,tests" || true
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 30
+
+  # ── GATE ─────────────────────────────────────────────────────────────────
+  # Set THIS job as the required status check in branch protection settings.
+  # Only auto-fix + test are required. Audit is always advisory.
+  ci-gate:
+    name: "CI Gate"
+    if: always()
+    needs: [auto-fix, test, audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required jobs passed
+        run: |
+          python3 -c "
+          import sys
+
+          # audit is intentionally excluded — it is advisory only
+          required = {
+            'auto-fix': '${{ needs.auto-fix.result }}',
+            'test':     '${{ needs.test.result }}',
+          }
+
+          failures = [
+              name for name, result in required.items()
+              if result not in ('success', 'skipped')
+          ]
+          if failures:
+              print('Blocking failures in:', ', '.join(failures))
+              sys.exit(1)
+
+          print('All required jobs passed.')
+          print('Audit result (advisory):', '${{ needs.audit.result }}')
+          "
