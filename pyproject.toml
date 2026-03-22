@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "scrape-kit"
+version = "0.1.0"
+requires-python = ">=3.10"
+# Move your requirements.txt entries here when ready.
+# For now pip install -r requirements.txt still works alongside this.
+dependencies = []
+
+[tool.setuptools]
+# Register each root-level module individually.
+# This is the correct approach for flat layouts — no subdirectory needed.
+py-modules = [
+    "errors",
+    "fetcher",
+    "matching",
+    "settings",
+    "storage",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 127
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "C", "SIM", "UP"]
+
+[tool.isort]
+profile = "black"
+line_length = 127
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
