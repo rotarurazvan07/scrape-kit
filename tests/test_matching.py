@@ -1,5 +1,4 @@
-import pytest
-from scrape_kit.similarity import SimilarityEngine
+from matching import SimilarityEngine
 
 def test_similarity_basic():
     cfg = {"threshold": 70}

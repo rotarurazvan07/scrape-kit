@@ -3,12 +3,16 @@ import glob
 import json
 import sqlite3
 import threading
+import logging
 import pandas as pd
-from typing import List, Any, Optional, Dict, Union, Callable
-from .exceptions import DatabaseError
+from typing import List, Any, Optional, Dict, Union, Callable, Sequence, Mapping
+from errors import StorageError
 
-class BaseDatabaseManager:
-    """Core Generic Database Orchestrator using SQLite in WAL mode with fast bulk inserts."""
+# Configure structured logging
+logger = logging.getLogger("scrape_kit.storage")
+
+class BaseStorageManager:
+    """Core Generic Storage Orchestrator using SQLite in WAL mode with fast bulk inserts."""
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -32,7 +36,7 @@ class BaseDatabaseManager:
                 return json.dumps(obj.__dict__)
             return json.dumps(obj)
         except (TypeError, ValueError) as e:
-            raise DatabaseError(f"Serialization failed for {type(obj).__name__}: {e}")
+            raise StorageError(f"Serialization failed for {type(obj).__name__}: {e}") from e
 
     def _deserialize_json(self, json_str: Optional[str]) -> Any:
         """Generic JSON deserializer for complex rows."""
@@ -50,7 +54,7 @@ class BaseDatabaseManager:
 
     # ── Data Fetching ──────────────────────────────────────────────────────────
 
-    def fetch_rows(self, query: str, params: Optional[Union[list, tuple]] = None) -> List[sqlite3.Row]:
+    def fetch_rows(self, query: str, params: Optional[Sequence[Any]] = None) -> List[sqlite3.Row]:
         """Execute a query and return all results as sqlite3.Row objects."""
         params = params or ()
         self.reopen_if_changed()
@@ -59,9 +63,9 @@ class BaseDatabaseManager:
                 cursor = self.conn.execute(query, params)
                 return cursor.fetchall()
             except sqlite3.Error as e:
-                raise DatabaseError(f"Query [{query}] failed: {e}")
+                raise StorageError(f"Query [{query}] failed: {e}") from e
 
-    def fetch_dataframe(self, query: str, params: Optional[Union[list, tuple]] = None) -> pd.DataFrame:
+    def fetch_dataframe(self, query: str, params: Optional[Sequence[Any]] = None) -> pd.DataFrame:
         """Execute a query and return results directly as a pandas DataFrame."""
         params = params or ()
         self.reopen_if_changed()
@@ -69,9 +73,9 @@ class BaseDatabaseManager:
             try:
                 return pd.read_sql_query(query, self.conn, params=params)
             except Exception as e:
-                raise DatabaseError(f"DataFrame fetch failed for [{query}]: {e}")
+                raise StorageError(f"DataFrame fetch failed for [{query}]: {e}") from e
 
-    def fetch_objs(self, query: str, params: Optional[Union[list, tuple]] = None,
+    def fetch_objs(self, query: str, params: Optional[Sequence[Any]] = None,
                   mapper: Optional[Callable[[sqlite3.Row], Any]] = None) -> List[Any]:
         """Fetch rows and automatically map them to objects using a provided callback."""
         rows = self.fetch_rows(query, params)
@@ -81,7 +85,7 @@ class BaseDatabaseManager:
 
     # ── Writing & Indexing ──────────────────────────────────────────────────────
 
-    def execute_batch(self, query: str, params_list: List[Union[list, tuple]]):
+    def execute_batch(self, query: str, params_list: Sequence[Union[Sequence[Any], Mapping[str, Any]]]):
         """Execute multiple inserts/updates in a single transaction for performance."""
         if not params_list:
             return
@@ -91,7 +95,7 @@ class BaseDatabaseManager:
                 self.conn.commit()
             except sqlite3.Error as e:
                 self.conn.rollback()
-                raise DatabaseError(f"Batch execution failed: {e}")
+                raise StorageError(f"Batch execution failed: {e}") from e
 
     def create_index(self, table_name: str, columns: List[str], unique: bool = False):
         """Helper to safely create indexes on tables."""
@@ -103,37 +107,106 @@ class BaseDatabaseManager:
                 self.conn.execute(query)
                 self.conn.commit()
             except sqlite3.Error as e:
-                raise DatabaseError(f"Index creation failed on {table_name}: {e}")
+                raise StorageError(f"Index creation failed on {table_name}: {e}") from e
+
+    def exists(self, table_name: str, column: str, value: Any) -> bool:
+        """Check if a value exists in a specific column of a table."""
+        safe_table = f'"{table_name.replace("\"", "\"\"")}"'
+        safe_column = f'"{column.replace("\"", "\"\"")}"'
+        query = f"SELECT 1 FROM {safe_table} WHERE {safe_column} = ? LIMIT 1" # nosec B608
+        rows = self.fetch_rows(query, (value,))
+        return len(rows) > 0
+
+    def insert(self, table_name: str, data: Mapping[str, Any]):
+        """Insert a single dictionary as a row into the specified table."""
+        safe_table = f'"{table_name.replace("\"", "\"\"")}"'
+        columns = list(data.keys())
+        placeholders = ["?" for _ in columns]
+        safe_cols = [f'"{c.replace("\"", "\"\"")}"' for c in columns]
+
+        query = f'INSERT INTO {safe_table} ({", ".join(safe_cols)}) VALUES ({", ".join(placeholders)})' # nosec B608
+        with self.db_lock:
+            try:
+                self.conn.execute(query, list(data.values()))
+                self.conn.commit()
+            except sqlite3.Error as e:
+                raise StorageError(f"Insert failed on {table_name}: {e}") from e
 
     # ── Internal Orchestration & Merging ────────────────────────────────────────
 
-    def merge_databases(self, input_dir: str, table_name: str, staging_table: Optional[str] = None):
+    def merge_databases(self, input_dir: str, table_name: str):
         """
-        Generic high-speed merge of multiple .db files using SQL ATTACH.
-        This follows the 'staging -> deduplicate -> final' pattern.
+        Merge multiple .db chunks into the current database using SQL-based ATTACH strategy.
+        Significantly faster than row-by-row merging for bulk data.
         """
-        db_files = self._get_chunk_files(input_dir, skip_file=self.db_path)
+        db_files: List[str] = self._get_chunk_files(input_dir, skip_file=self.db_path)
         if not db_files:
             return
 
-        staging = staging_table or f"staging_{table_name}"
+        # Escaping identifiers for security
+        safe_table: str = f'"{table_name.replace("\"", "\"\"")}"'
+        staging: str = f"staging_{table_name}"
+        safe_staging: str = f'"{staging.replace("\"", "\"\"")}"'
 
         with self.db_lock:
             try:
                 # 1. Create staging table from master schema
-                self.conn.execute(f"CREATE TABLE IF NOT EXISTS {staging} AS SELECT * FROM {table_name} WHERE 0")
+                self.conn.execute(f"CREATE TABLE IF NOT EXISTS {safe_staging} AS SELECT * FROM {safe_table} WHERE 0") # nosec B608
 
-                # 2. Attach and dump all chunks
                 for db_file in db_files:
-                    if os.path.exists(db_file) and os.path.getsize(db_file) > 100:
+                    try:
                         self.conn.execute("ATTACH DATABASE ? AS chunk", (db_file,))
-                        self.conn.execute(f"INSERT INTO {staging} SELECT * FROM chunk.{table_name}")
+                        self.conn.execute(f"INSERT INTO {safe_staging} SELECT * FROM chunk.{safe_table}") # nosec B608
                         self.conn.commit()
                         self.conn.execute("DETACH DATABASE chunk")
+                    except sqlite3.Error as e:
+                        logger.error(f"Skip {db_file}: {e}")
+                        try:
+                            self.conn.execute("DETACH DATABASE chunk")
+                        except sqlite3.Error as detach_e:
+                            logger.error(f"Error detaching database after merge failure: {detach_e}")
 
-                print(f"[BaseDatabaseManager] Merged {len(db_files)} chunks into {staging}")
+                print(f"[BaseStorageManager] Merged {len(db_files)} chunks into {staging}")
             except sqlite3.Error as e:
-                raise DatabaseError(f"Merge failed: {e}")
+                raise StorageError(f"Merge failed: {e}") from e
+
+    def merge_row_by_row(self, input_dir: str, table_name: str,
+                         row_callback: Callable[[sqlite3.Row], None],
+                         flush_callback: Optional[Callable[[], None]] = None):
+        """
+        Merging strategy for logic-heavy tables (like matches needing similarity checks).
+        Iterates over rows of every chunk and passes them to the provided callback.
+        """
+        db_files: List[str] = self._get_chunk_files(input_dir, skip_file=self.db_path)
+        if not db_files:
+            return
+
+        for db_file in db_files:
+            if not (os.path.exists(db_file) and os.path.getsize(db_file) > 100):
+                continue
+
+            try:
+                # Use a separate temporary connection to avoid locking the main one
+                # Use safe table naming
+                safe_table = f'"{table_name.replace("\"", "\"\"")}"'
+                temp_conn = sqlite3.connect(db_file)
+                temp_conn.row_factory = sqlite3.Row
+                cursor = temp_conn.execute(f"SELECT * FROM {safe_table}") # nosec B608
+                chunk_rows = cursor.fetchall()
+                temp_conn.close()
+
+                for row in chunk_rows:
+                    row_callback(row)
+
+                # Periodic flush to disk to keep memory stable
+                if flush_callback:
+                    flush_callback()
+
+            except sqlite3.Error as e:
+                logger.error(f"Skipping chunk {db_file} due to error: {e}")
+                continue
+
+    # ── Internal Orchestration ──────────────────────────────────────────────────
 
     def _create_tables(self):
         """Override this method to create application-specific tables"""
@@ -152,8 +225,8 @@ class BaseDatabaseManager:
         with self.db_lock:
             try:
                 self.conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Cleanup error: {e}")
 
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.execute('PRAGMA journal_mode=WAL')
@@ -180,21 +253,22 @@ class BaseDatabaseManager:
                 self.conn.execute("PRAGMA journal_mode=DELETE;")
                 self.conn.close()
         except sqlite3.Error as e:
-            raise DatabaseError(f"Fatal error during database shutdown / cleanup: {e}")
+            raise StorageError(f"Fatal error during database shutdown / cleanup: {e}")
 
     def clear_database(self, table_name: str):
         """Clear all records from a specified database table generically."""
+        safe_table = f'"{table_name.replace("\"", "\"\"")}"'
         with self.db_lock:
             try:
-                self.conn.execute(f'DELETE FROM {table_name}')
+                self.conn.execute(f'DELETE FROM {safe_table}') # nosec B608
                 self.conn.commit()
             except sqlite3.Error as e:
-                raise DatabaseError(f"Clearing failed on {table_name}: {e}")
+                raise StorageError(f"Clearing failed on {table_name}: {e}") from e
 
 
-class BufferedDatabaseManager(BaseDatabaseManager):
+class BufferedStorageManager(BaseStorageManager):
     """
-    Advanced Database Manager with an in-memory pandas buffer.
+    Advanced Storage Manager with an in-memory pandas buffer.
     Perfect for high-speed lookups and batch-flushing on large scrapers.
     """
 
@@ -209,7 +283,8 @@ class BufferedDatabaseManager(BaseDatabaseManager):
         if self._buffer is not None:
             return self._buffer
 
-        self._buffer = self.fetch_dataframe(f"SELECT * FROM {self._table_name}")
+        safe_table = f'"{self._table_name.replace("\"", "\"\"")}"'
+        self._buffer = self.fetch_dataframe(f"SELECT * FROM {safe_table}") # nosec B608
         return self._buffer
 
     def flush(self):
@@ -223,7 +298,21 @@ class BufferedDatabaseManager(BaseDatabaseManager):
                 self.conn.commit()
                 self._dirty = False
             except Exception as e:
-                raise DatabaseError(f"Buffer flush failed: {e}")
+                raise StorageError(f"Buffer flush failed: {e}") from e
+
+    def exists(self, column: str, value: Any) -> bool:
+        """High-performance in-memory check if a value exists in the buffered table."""
+        df = self._ensure_buffer()
+        if df.empty:
+            return False
+        return value in df[column].values
+
+    def insert(self, data: Mapping[str, Any]):
+        """Append a record to the in-memory buffer. Mark dirty for later flushing."""
+        df = self._ensure_buffer()
+        new_row = pd.DataFrame([data])
+        self._buffer = pd.concat([df, new_row], ignore_index=True)
+        self._dirty = True
 
     def clear_database(self, table_name: str):
         """Standard clear + buffer reset."""

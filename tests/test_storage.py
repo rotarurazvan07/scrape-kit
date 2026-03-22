@@ -1,10 +1,9 @@
-import pytest
 import os
 import sqlite3
-from scrape_kit.db import BaseDatabaseManager, BufferedDatabaseManager
+from storage import BaseStorageManager, BufferedStorageManager
 import time
 
-class MockDB(BaseDatabaseManager):
+class MockDB(BaseStorageManager):
     """Subclass of BaseDatabaseManager to test schema and inserts."""
     def _create_tables(self):
         with self.db_lock:
@@ -110,7 +109,7 @@ def test_db_manager_reopen(tmp_path):
 
 def test_buffered_db_manager(tmp_path):
     db_file = tmp_path / "buffer.db"
-    manager = BufferedDatabaseManager(str(db_file), "items")
+    manager = BufferedStorageManager(str(db_file), "items")
     # Setup table since super init calls it
     with manager.db_lock:
         manager.conn.execute("CREATE TABLE items (id INTEGER, data TEXT)")
@@ -163,6 +162,35 @@ def test_db_merge_databases(tmp_path):
 
     master.flush_and_close()
 
+def test_db_merge_row_by_row(tmp_path):
+    master_path = tmp_path / "master_row.db"
+    chunk_dir = tmp_path / "chunks"
+    chunk_dir.mkdir(exist_ok=True)
+
+    # 1. Setup Chunk
+    chunk_path = chunk_dir / "chunk2.db"
+    c_conn = sqlite3.connect(chunk_path)
+    c_conn.execute("CREATE TABLE items (id INTEGER, data TEXT)")
+    c_conn.execute("INSERT INTO items VALUES (1, 'row1'), (2, 'row2')")
+    c_conn.commit()
+    c_conn.close()
+
+    # 2. Master with callback logic
+    master = MockDB(str(master_path))
+    processed_data = []
+
+    def my_callback(row):
+        processed_data.append(row['data'])
+
+    # 3. Merge
+    master.merge_row_by_row(str(chunk_dir), "items", row_callback=my_callback)
+
+    assert len(processed_data) == 2
+    assert "row1" in processed_data
+    assert "row2" in processed_data
+
+    master.flush_and_close()
+
 def test_get_chunk_files(tmp_path):
     # Setup some .db files
     (tmp_path / "chunk1.db").touch()
@@ -179,3 +207,50 @@ def test_get_chunk_files(tmp_path):
     assert str(tmp_path / "master.db") not in chunks
 
     manager.flush_and_close()
+
+def test_storage_speed_comparison(tmp_path):
+    # Benchmarking SQL-based deduplication vs Buffered deduplication
+    db_file = tmp_path / "benchmark.db"
+    count = 10000
+
+    # 1. Setup a pre-populated DB
+    manager = MockDB(str(db_file))
+    with manager.db_lock:
+        data_list = [(i, f"item_{i}") for i in range(count)]
+        manager.conn.executemany("INSERT INTO items (id, data) VALUES (?, ?)", data_list)
+        manager.conn.commit()
+
+    try:
+        # 2. Benchmark Case A: Individual SQL SELECTs
+        start_sql = time.perf_counter()
+        for i in range(count):
+            cursor = manager.conn.execute("SELECT 1 FROM items WHERE id = ?", (i,))
+            cursor.fetchone()
+        end_sql = time.perf_counter()
+        duration_sql = end_sql - start_sql
+
+        # 3. Close the seeder to allow fresh access for buffered
+        manager.flush_and_close()
+
+        # 4. Benchmark Case B: Buffered Lookup
+        buffered = BufferedStorageManager(str(db_file), "items")
+        start_buf = time.perf_counter()
+        df = buffered._ensure_buffer()
+        df = df.set_index('id')
+        for i in range(count):
+            _ = i in df.index
+        end_buf = time.perf_counter()
+        duration_buf = end_buf - start_buf
+
+        print(f"\n🚀 STORAGE BENCHMARK (N={count})")
+        print(f"   SQL Individual SELECTs: {duration_sql:.4f}s")
+        print(f"   Buffered In-Memory:    {duration_buf:.4f}s")
+
+        # At N=10,000, Buffered is typically 2-3x faster due to avoids SQL/IPC overhead
+        assert duration_buf < duration_sql
+
+    finally:
+        try:
+            buffered.close()
+        except Exception:
+            pass

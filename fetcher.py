@@ -1,7 +1,8 @@
 import asyncio
-import time
 import sys
-from typing import List, Optional, Callable
+import time
+import logging
+from typing import List, Callable, Any, Union, TypeVar
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -11,7 +12,12 @@ from scrapling.fetchers import (
     StealthySession,
     AsyncStealthySession,
 )
-from .exceptions import ScraperError
+from errors import FetcherError
+
+# Configure structured logging
+logger = logging.getLogger("scrape_kit.fetcher")
+
+T = TypeVar("T", bound="InteractiveSession")
 
 class ScrapeMode:
     """Scraping mode constants."""
@@ -21,7 +27,7 @@ class ScrapeMode:
 
 class InteractiveSession:
     """Wrapper around Scrapling session to provide persistent page and JS execution."""
-    def __init__(self, session):
+    def __init__(self, session: Union[DynamicSession, StealthySession]):
         self.session = session
         self.page = None
 
@@ -35,19 +41,20 @@ class InteractiveSession:
         try:
             if self.page:
                 self.page.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            raise FetcherError(f"Cleanup failed: {e}") from e
         self.session.close()
 
-    def fetch(self, url, timeout=90000, wait_until="load"):
+    def fetch(self, url: str, timeout: int = 90000, wait_until: str = "load") -> SimpleNamespace:
         if not self.page:
-            raise RuntimeError("Session not started. Use 'with WebScraper.browser(...) as session:'")
+            raise RuntimeError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
 
         self.page.goto(url, wait_until=wait_until, timeout=timeout)
         self.page.wait_for_timeout(2000)
         return SimpleNamespace(html_content=self.page.content())
 
-    def execute_script(self, script):
+    def execute_script(self, script: str) -> Any:
         if not self.page:
             raise RuntimeError("Call fetch() first")
 
@@ -57,23 +64,27 @@ class InteractiveSession:
                 return self.page.evaluate(f"() => {{ {clean_script} }}")
             return self.page.evaluate(script)
         except Exception as e:
-            print(f"[InteractiveSession] Script Execution Error: {e}", file=sys.stderr)
+            logger.error(f"Script Execution Error: {e}")
             raise
 
-    def wait_for_selector(self, selector, timeout=30000):
-        if not self.page: raise RuntimeError("Call fetch() first")
+    def wait_for_selector(self, selector: str, timeout: int = 30000) -> None:
+        if not self.page:
+            raise RuntimeError("Call fetch() first")
         self.page.wait_for_selector(selector, timeout=timeout)
 
-    def wait_for_function(self, expression, timeout=30000):
-        if not self.page: raise RuntimeError("Call fetch() first")
+    def wait_for_function(self, expression: str, timeout: int = 30000) -> None:
+        if not self.page:
+            raise RuntimeError("Call fetch() first")
         self.page.wait_for_function(expression, timeout=timeout)
 
-    def click(self, selector, timeout=30000):
-        if not self.page: raise RuntimeError("Call fetch() first")
+    def click(self, selector: str, timeout: int = 30000) -> None:
+        if not self.page:
+            raise RuntimeError("Call fetch() first")
         self.page.click(selector, timeout=timeout)
 
-    def wait_for_timeout(self, ms):
-        if not self.page: raise RuntimeError("Call fetch() first")
+    def wait_for_timeout(self, ms: int) -> None:
+        if not self.page:
+            raise RuntimeError("Call fetch() first")
         self.page.wait_for_timeout(ms)
 
     def __getattr__(self, name):
@@ -81,8 +92,8 @@ class InteractiveSession:
         return getattr(self.session, name)
 
 
-class WebScraper:
-    """Web Scraping framework wrapped over scrapling.
+class WebFetcher:
+    """Web Fetching framework wrapped over scrapling.
     Supports both class initiation for state holding, or usage as a configured module.
     """
 
@@ -106,7 +117,7 @@ class WebScraper:
                 status = getattr(page, "status", getattr(page, "status_code", 200))
                 if status in [403, 429, 503]:
                     wait = backoff * attempt
-                    print(f"[fetch] Status {status} on {url} — retrying in {wait:.0f}s (attempt {attempt}/{retries})", file=sys.stderr)
+                    logger.warning(f"Status {status} on {url} — retrying in {wait:.0f}s (attempt {attempt}/{retries})")
                     time.sleep(wait)
                     continue
 
@@ -127,26 +138,26 @@ class WebScraper:
             except Exception as e:
                 if attempt < retries:
                     wait = backoff * attempt
-                    print(f"[fetch] Error on {url}: {e} — retrying in {wait:.0f}s (attempt {attempt}/{retries})", file=sys.stderr)
+                    logger.warning(f"Error on {url}: {e} — retrying in {wait:.0f}s (attempt {attempt}/{retries})")
                     time.sleep(wait)
                 else:
-                    print(f"[fetch] Failed after {retries} attempts on {url}: {e}", file=sys.stderr)
-                    return ""
+                    logger.error(f"Failed after {retries} attempts on {url}: {e}")
+                    raise FetcherError(f"Fetch failed after {retries} attempts: {e}") from e
 
         return ""
 
     def _escalate_to_browser(self, url: str, blocked_by: str) -> str:
         """Uses a real browser to solve more complex challenges (Cloudflare)."""
-        print(f"[fetch] '{blocked_by}' on {url} — Escalating to browser for challenge solving...", file=sys.stderr)
+        logger.info(f"'{blocked_by}' detected on {url} — Escalating to browser for challenge solving...")
         try:
             with self.browser(solve_cloudflare=True, headless=True, interactive=True) as session:
-                resp = session.fetch(url, timeout=120000, wait_until="networkidle")
+                resp = session.fetch(url, timeout=120000) # Simple fetch
                 if resp and hasattr(resp, "html_content"):
-                    print(f"[fetch] Browser successfully bypassed challenge for {url}", file=sys.stderr)
+                    logger.info(f"Browser successfully bypassed challenge for {url}")
                     return resp.html_content
         except Exception as browser_e:
-            print(f"[fetch] Browser escalation failed for {url}: {browser_e}", file=sys.stderr)
-            raise ScraperError(f"Escalation failed: {browser_e}")
+            logger.error(f"Browser escalation failed for {url}: {browser_e}")
+            raise FetcherError(f"Escalation failed: {browser_e}") from browser_e
         return ""
 
     def is_blocked(self, html: str) -> bool:
@@ -155,7 +166,8 @@ class WebScraper:
             return True
         return any(indicator.lower() in html.lower() for indicator in self.block_indicators)
 
-    def browser(self, headless: bool = True, solve_cloudflare: bool = False, interactive: bool = False, **kwargs):
+    def browser(self, headless: bool = True, solve_cloudflare: bool = False,
+                interactive: bool = False, **kwargs: Any) -> Union[DynamicSession, StealthySession, InteractiveSession]:
         """Get a browser session as a context manager."""
         kwargs.setdefault("disable_resources", not interactive and not solve_cloudflare)
         kwargs.setdefault("network_idle", interactive or solve_cloudflare)
@@ -170,50 +182,52 @@ class WebScraper:
 
     def scrape(self, urls: List[str], callback: Callable, mode: str = ScrapeMode.FAST, max_concurrency: int = 1):
         """Batch scrape URLs with concurrency."""
-        if not urls: return
+        if not urls:
+            return
 
         if mode == ScrapeMode.FAST:
             self._scrape_fast(urls, callback, max_concurrency)
         elif mode == ScrapeMode.STEALTH:
             self._scrape_stealth(urls, callback, max_concurrency)
 
-    def _scrape_fast(self, urls, callback, max_concurrency):
-        def _fetch_worker(url):
-            try:
-                html = self.fetch(url, stealthy_headers=False)
-                if not self.is_blocked(html):
-                    callback(url, html)
-                    return
-                html = self.fetch(url, stealthy_headers=True)
-                if not self.is_blocked(html):
-                    callback(url, html)
-                    return
-            except Exception as e:
-                print(f"[scrape/fast] Error on {url}: {e}", file=sys.stderr)
-
+    def _scrape_fast(self, urls: List[str], callback: Callable, max_concurrency: int):
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
-            pool.map(_fetch_worker, urls)
+            # Using partial or wrapping to pass state
+            pool.map(lambda u: self._fetch_worker_fast(u, callback), urls)
 
-    def _scrape_stealth(self, urls, callback, max_concurrency):
-        async def _async_worker():
-            async with AsyncStealthySession(max_pages=max_concurrency, headless=True, solve_cloudflare=True) as session:
-                sem = asyncio.Semaphore(max_concurrency)
+    def _fetch_worker_fast(self, url: str, callback: Callable):
+        try:
+            html = self.fetch(url, stealthy_headers=False)
+            if not self.is_blocked(html):
+                callback(url, html)
+                return
+            html = self.fetch(url, stealthy_headers=True)
+            if not self.is_blocked(html):
+                callback(url, html)
+                return
+        except Exception as e:
+            logger.error(f"[scrape/fast] Error on {url}: {e}")
 
-                async def _fetch_one(url):
-                    async with sem:
-                        for attempt in range(1, 4):
-                            try:
-                                page = await session.fetch(url, disable_resources=False, network_idle=True, timeout=90000)
-                                callback(url, page.html_content)
-                                return
-                            except Exception as e:
-                                if attempt < 3:
-                                    wait = 15 * attempt
-                                    print(f"[scrape/stealth] Challenge/Timeout on {url} (attempt {attempt}) — retrying in {wait}s...", file=sys.stderr)
-                                    await asyncio.sleep(wait)
-                                else:
-                                    print(f"[scrape/stealth] Failed persistently on {url}: {e}", file=sys.stderr)
+    def _scrape_stealth(self, urls: List[str], callback: Callable, max_concurrency: int):
+        asyncio.run(self._async_stealth_loop(urls, callback, max_concurrency))
 
-                await asyncio.gather(*[_fetch_one(u) for u in urls])
+    async def _async_stealth_loop(self, urls: List[str], callback: Callable, max_concurrency: int):
+        async with AsyncStealthySession(max_pages=max_concurrency, headless=True, solve_cloudflare=True) as session:
+            sem = asyncio.Semaphore(max_concurrency)
+            await asyncio.gather(*[self._fetch_one_stealth(url, session, sem, callback) for url in urls])
 
-        asyncio.run(_async_worker())
+    async def _fetch_one_stealth(self, url: str, session: Any, sem: asyncio.Semaphore, callback: Callable):
+        async with sem:
+            for attempt in range(1, 4):
+                try:
+                    page = await session.fetch(url, disable_resources=False, network_idle=True, timeout=90000)
+                    callback(url, page.html_content)
+                    return
+                except Exception as e:
+                    if attempt < 3:
+                        wait = 15 * attempt
+                        logger.warning(f"Challenge/Timeout on {url} (attempt {attempt}) — retrying in {wait}s...")
+                        await asyncio.sleep(wait)
+                    else:
+                        logger.error(f"Failed persistently on {url}: {e}")
+                        raise FetcherError(f"Stealth fetch failed after retries: {e}") from e

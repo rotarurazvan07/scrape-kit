@@ -1,7 +1,12 @@
 import os
 import yaml
+import logging
 from pathlib import Path
 from typing import Any, Optional, Dict
+from errors import SettingsError
+
+# Configure structured logging
+logger = logging.getLogger("scrape_kit.settings")
 
 class SettingsManager:
     """Recursively loads all YAML files in a directory and provides atomic writes."""
@@ -17,8 +22,12 @@ class SettingsManager:
         for yaml_file in sorted(self._directory.rglob("*.yaml")):
             try:
                 data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
-            except Exception as e:
-                data = {"_load_error": str(e)}
+            except yaml.YAMLError as e:
+                logger.error(f"Load error for {yaml_file}: {e}")
+                raise SettingsError(f"Failed to load settings file {yaml_file}: {e}") from e
+            except OSError as e:
+                logger.error(f"File access error for {yaml_file}: {e}")
+                raise SettingsError(f"File system access failed for {yaml_file}: {e}") from e
 
             node = self.settings
             # relative_to gets the path from self._directory.parent
@@ -64,8 +73,8 @@ class SettingsManager:
             temp_path.write_text(yaml.dump(data), encoding="utf-8")
             os.replace(temp_path, p)
             return True
-        except Exception as e:
-            print(f"[SettingsManager] write failed for {name}: {e}")
+        except (OSError, yaml.YAMLError) as e:
+            logger.error(f"write failed for {name}: {e}")
             return False
 
     def delete(self, directory: str, name: str) -> bool:
@@ -75,6 +84,6 @@ class SettingsManager:
             if p.exists():
                 p.unlink()
             return True
-        except Exception as e:
-            print(f"[SettingsManager] delete failed for {name}: {e}")
+        except OSError as e:
+            logger.error(f"delete failed for {name}: {e}")
             return False

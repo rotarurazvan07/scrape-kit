@@ -1,22 +1,20 @@
-import pytest
-from scrape_kit.scraper import WebScraper, ScrapeMode
-from scrape_kit.exceptions import ScraperError
+from fetcher import WebFetcher, ScrapeMode
 
 def test_scraper_init_defaults():
     # Verify defaults are now empty by user request
-    scraper = WebScraper()
+    scraper = WebFetcher()
     assert scraper.retry_indicators == []
     assert scraper.block_indicators == []
 
 def test_scraper_init_custom():
     retry = ["403 Forbidden"]
     block = ["Access Denied"]
-    scraper = WebScraper(retry_indicators=retry, block_indicators=block)
+    scraper = WebFetcher(retry_indicators=retry, block_indicators=block)
     assert scraper.retry_indicators == retry
     assert scraper.block_indicators == block
 
 def test_scraper_is_blocked():
-    scraper = WebScraper(block_indicators=["Blocked", "Access Denied"])
+    scraper = WebFetcher(block_indicators=["Blocked", "Access Denied"])
 
     assert scraper.is_blocked("Access Denied on this server") is True
     assert scraper.is_blocked("Welcome to our site") is False

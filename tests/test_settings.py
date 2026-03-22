@@ -1,8 +1,5 @@
-import pytest
-import os
 import yaml
-from pathlib import Path
-from scrape_kit.config import SettingsManager
+from settings import SettingsManager
 
 def test_settings_manager_load(tmp_path):
     # Setup tmp config structure
