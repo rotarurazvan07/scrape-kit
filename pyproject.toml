@@ -32,7 +32,14 @@ line-length = 127
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "C", "SIM"]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "B",    # flake8-bugbear
+    "C",    # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "PERF", # perflint — catches performance anti-patterns in loops
+]
 # UP (pyupgrade rules) intentionally excluded — ruff + UP --unsafe-fixes
 # rewrites f-string escapes into Python 3.12-only nested-quote syntax
 # (PEP 701), breaking the 3.10/3.11 matrix jobs. pyupgrade --py310-plus

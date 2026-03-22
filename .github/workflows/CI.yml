@@ -15,8 +15,14 @@ env:
 
 # ════════════════════════════════════════════════════════════════════════════
 # PHILOSOPHY
-#   auto-fix  — runs first, commits formatting/lint fixes back to the branch.
-#               You never touch style manually.
+#   auto-fix  — runs first, commits ALL mechanical improvements back to the
+#               branch so you never do them manually:
+#                 · removes unused imports/vars      (autoflake)
+#                 · modernises syntax                (pyupgrade)
+#                 · adds trivial type annotations    (autotyping)
+#                 · sorts imports                    (isort)
+#                 · formats code                     (ruff format)
+#                 · fixes lint + perf anti-patterns  (ruff --fix)
 #   test      — the ONLY job you need to read. Fails on logic bugs only.
 #   audit     — security / complexity scans. Informational, never blocks.
 #   ci-gate   — the single required status check for branch protection.
@@ -26,7 +32,7 @@ jobs:
 
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
   auto-fix:
-    name: "Auto-fix (format · lint)"
+    name: "Auto-fix"
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:
@@ -47,8 +53,15 @@ jobs:
           cache: pip
 
       - name: Install auto-fix tools
-        run: pip install ruff isort pyupgrade autoflake
+        run: |
+          pip install \
+            ruff \
+            isort \
+            pyupgrade \
+            autoflake \
+            autotyping
 
+      # ── Step 1: Remove dead code ──────────────────────────────────────────
       - name: autoflake — remove unused imports and variables
         run: |
           autoflake \
@@ -59,24 +72,43 @@ jobs:
             --exclude .venv,__pycache__ \
             scrape_kit/ tests/
 
+      # ── Step 2: Modernise syntax ──────────────────────────────────────────
       - name: pyupgrade — modernise syntax to Python 3.10+
-        # Exit code 1 means files were rewritten (expected).
-        # xargs surfaces that as 123. Both are normal — swallow with || true.
+        # Exit 1 = files were rewritten (expected). xargs surfaces as 123.
+        # Both are normal — swallow with || true.
         run: |
           find scrape_kit tests -name "*.py" | xargs pyupgrade --py310-plus || true
 
+      # ── Step 3: Add trivial type annotations ──────────────────────────────
+      - name: autotyping — infer and add trivial return type annotations
+        # Adds -> None, -> bool, -> str, -> int only when 100% certain.
+        # Never touches complex return types or parameter annotations.
+        run: |
+          python -m autotyping \
+            --none-return \
+            --scalar-return \
+            --bool-param \
+            scrape_kit/
+
+      # ── Step 4: Sort imports ──────────────────────────────────────────────
       - name: isort — sort imports
+        # Runs after autotyping in case it added new imports.
         run: isort scrape_kit/ tests/
 
+      # ── Step 5: Format ────────────────────────────────────────────────────
       - name: ruff format
         # quote-style = "double" in pyproject.toml prevents ruff from
         # rewriting f-string escapes into Python 3.12-only syntax (PEP 701).
         run: ruff format scrape_kit/ tests/
 
+      # ── Step 6: Lint + performance fixes ─────────────────────────────────
       - name: ruff lint --fix
-        # UP rules excluded in pyproject.toml — see comment there.
+        # Includes PERF rules (perflint) — catches performance anti-patterns
+        # such as unnecessary list() calls in loops, .keys() iteration, etc.
+        # UP rules excluded — see pyproject.toml comment.
         run: ruff check --fix --unsafe-fixes --output-format=github scrape_kit/ tests/ || true
 
+      # ── Commit everything that changed ────────────────────────────────────
       - name: Commit fixes (if any)
         run: |
           git config user.name  "github-actions[bot]"
@@ -85,7 +117,7 @@ jobs:
             echo "Nothing to fix — working tree is clean."
           else
             git add -A
-            git commit -m "chore: auto-fix formatting and lint [skip ci]"
+            git commit -m "chore: auto-fix (types · lint · perf) [skip ci]"
             git push
             echo "Fixes committed and pushed."
           fi
@@ -106,6 +138,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Always test the latest commit — may include auto-fix changes.
           ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: actions/setup-python@v5
@@ -183,26 +216,36 @@ jobs:
           bandit -r scrape_kit/ -ll -ii || true
 
       - name: pip-audit — CVE scan
-        run: pip-audit || true
+        run: |
+          pip-audit --format json --output pip-audit-report.json || true
+          pip-audit || true
 
       - name: radon — complexity report
         run: |
-          echo "── Cyclomatic Complexity (C+ = worth refactoring) ──────────"
+          echo "── Cyclomatic Complexity ────────────────────────────────────"
+          radon cc scrape_kit/ --show-complexity --average --json \
+            > radon-cc-report.json || true
           radon cc scrape_kit/ --min C --show-complexity --average || true
           echo ""
           echo "── Maintainability Index ────────────────────────────────────"
+          radon mi scrape_kit/ --json > radon-mi-report.json || true
           radon mi scrape_kit/ --show --min B || true
 
       - name: vulture — dead code detection
-        run: vulture scrape_kit/ --min-confidence 80 || true
+        run: vulture scrape_kit/ --min-confidence 80 | tee vulture-report.txt || true
 
-      - name: Upload bandit report
+      - name: Upload all audit reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bandit-report
-          path: bandit-report.json
+          name: audit-reports
           retention-days: 30
+          path: |
+            bandit-report.json
+            pip-audit-report.json
+            radon-cc-report.json
+            radon-mi-report.json
+            vulture-report.txt
 
   # ── GATE ─────────────────────────────────────────────────────────────────
   # Set THIS as the required status check in branch protection settings.
