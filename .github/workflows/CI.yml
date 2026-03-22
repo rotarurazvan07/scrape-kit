@@ -81,7 +81,10 @@ jobs:
           find . -name "*.py" \
             -not -path "./.venv/*" \
             -not -path "./__pycache__/*" \
-            | xargs pyupgrade --py310-plus
+            | xargs pyupgrade --py310-plus || true
+          # pyupgrade exits 1 when it rewrites files (intended behaviour).
+          # xargs then surfaces that as exit code 123. Both are normal —
+          # the rewrite is exactly what we want, so we swallow the code.
 
       - name: isort — sort imports
         run: isort .
