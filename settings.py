@@ -1,19 +1,22 @@
-import os
-import yaml
 import logging
+import os
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any
+
+import yaml
+
 from errors import SettingsError
 
 # Configure structured logging
 logger = logging.getLogger("scrape_kit.settings")
+
 
 class SettingsManager:
     """Recursively loads all YAML files in a directory and provides atomic writes."""
 
     def __init__(self, directory: str):
         self._directory = Path(directory)
-        self.settings: Dict[str, Any] = {}
+        self.settings: dict[str, Any] = {}
         self._load()
 
     def _load(self) -> None:
@@ -24,10 +27,14 @@ class SettingsManager:
                 data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError as e:
                 logger.error(f"Load error for {yaml_file}: {e}")
-                raise SettingsError(f"Failed to load settings file {yaml_file}: {e}") from e
+                raise SettingsError(
+                    f"Failed to load settings file {yaml_file}: {e}"
+                ) from e
             except OSError as e:
                 logger.error(f"File access error for {yaml_file}: {e}")
-                raise SettingsError(f"File system access failed for {yaml_file}: {e}") from e
+                raise SettingsError(
+                    f"File system access failed for {yaml_file}: {e}"
+                ) from e
 
             node = self.settings
             # relative_to gets the path from self._directory.parent
@@ -37,7 +44,7 @@ class SettingsManager:
                 node = node.setdefault(part, {})
             node[yaml_file.stem] = data
 
-    def get(self, *keys: str) -> Optional[Any]:
+    def get(self, *keys: str) -> Any | None:
         """Fetch a value using dict paths: get('nested', 'key'). Reloads before fetch."""
         self._load()
 
@@ -51,7 +58,7 @@ class SettingsManager:
                 return node
 
         # Fallback to a global depth-first search for the last key
-        def _search(d: dict, target: str) -> Optional[Any]:
+        def _search(d: dict, target: str) -> Any | None:
             if target in d:
                 return d[target]
             for v in d.values():
@@ -63,7 +70,7 @@ class SettingsManager:
 
         return _search(self.settings, keys[-1])
 
-    def write(self, directory: str, name: str, data: Dict[str, Any]) -> bool:
+    def write(self, directory: str, name: str, data: dict[str, Any]) -> bool:
         """Atomic write leveraging an OS-level replacement from a temp file."""
         try:
             p = Path(directory) / f"{name}.yaml"

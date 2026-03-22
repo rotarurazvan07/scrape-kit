@@ -1,7 +1,9 @@
-from typing import Dict, Any, Tuple
-from rapidfuzz import fuzz
-import unicodedata
 import re
+import unicodedata
+from typing import Any
+
+from rapidfuzz import fuzz
+
 
 class SimilarityEngine:
     """Encapsulates string similarity logic, primarily designed for entities/names.
@@ -12,7 +14,7 @@ class SimilarityEngine:
     # If you want singleton behavior per-app, manage the instance from the app level.
     # Leaving out the strict __new__ singleton forces callers to instantiate properly and pass config.
 
-    def __init__(self, cfg: Dict[str, Any]):
+    def __init__(self, cfg: dict[str, Any]):
         """
         Configuration accepts:
           acronyms: dict for generic sub-string replacement
@@ -20,22 +22,22 @@ class SimilarityEngine:
           weights: token, substr, phonetic, ratio
           threshold: integer threshold for is_similar
         """
-        self.acronyms = cfg.get('acronyms', {})
-        self.synonyms = cfg.get('synonyms', {})
+        self.acronyms = cfg.get("acronyms", {})
+        self.synonyms = cfg.get("synonyms", {})
 
         # weights for hybrid matching
-        weights = cfg.get('weights', {})
-        self.token_weight = weights.get('token', 0.5)
-        self.substr_weight = weights.get('substr', 0.1)
-        self.phonetic_weight = weights.get('phonetic', 0.1)
-        self.ratio_weight = weights.get('ratio', 0.3)
+        weights = cfg.get("weights", {})
+        self.token_weight = weights.get("token", 0.5)
+        self.substr_weight = weights.get("substr", 0.1)
+        self.phonetic_weight = weights.get("phonetic", 0.1)
+        self.ratio_weight = weights.get("ratio", 0.3)
 
-        self.similarity_threshold = cfg.get('threshold', 65)
+        self.similarity_threshold = cfg.get("threshold", 65)
 
         # Caches
-        self._norm_cache: Dict[str, str] = {}
-        self._soundex_cache: Dict[str, str] = {}
-        self._result_cache: Dict[Tuple[str, str], Tuple[bool, float]] = {}
+        self._norm_cache: dict[str, str] = {}
+        self._soundex_cache: dict[str, str] = {}
+        self._result_cache: dict[tuple[str, str], tuple[bool, float]] = {}
 
     def _soundex(self, name: str) -> str:
         if name in self._soundex_cache:
@@ -44,8 +46,12 @@ class SimilarityEngine:
         orig_name = name
         name = name.upper()
         replacements = {
-            "BFPV": "1", "CGJKQSXZ": "2", "DT": "3",
-            "L": "4", "MN": "5", "R": "6"
+            "BFPV": "1",
+            "CGJKQSXZ": "2",
+            "DT": "3",
+            "L": "4",
+            "MN": "5",
+            "R": "6",
         }
         if not name:
             return "0000"
@@ -65,8 +71,8 @@ class SimilarityEngine:
             return self._norm_cache[match_name]
 
         # Decompose Unicode and remove diacritics
-        name = unicodedata.normalize('NFD', match_name)
-        name = ''.join(ch for ch in name if unicodedata.category(ch) != 'Mn')
+        name = unicodedata.normalize("NFD", match_name)
+        name = "".join(ch for ch in name if unicodedata.category(ch) != "Mn")
         name = re.sub(r"[(),.`]", "", name)
 
         name = " ".join(name.split()).lower()
@@ -105,14 +111,14 @@ class SimilarityEngine:
         ratio_score = fuzz.ratio(s1, s2)
 
         final_score = (
-            self.token_weight * token_score +
-            self.substr_weight * substr_score +
-            self.phonetic_weight * phonetic_score +
-            self.ratio_weight * ratio_score
+            self.token_weight * token_score
+            + self.substr_weight * substr_score
+            + self.phonetic_weight * phonetic_score
+            + self.ratio_weight * ratio_score
         )
         return final_score
 
-    def is_similar(self, s1: str, s2: str) -> Tuple[bool, float]:
+    def is_similar(self, s1: str, s2: str) -> tuple[bool, float]:
         """Check similarity between two raw strings. Normalization and caching are handled internally."""
         cache_key = tuple(sorted([s1, s2]))
         if cache_key in self._result_cache:

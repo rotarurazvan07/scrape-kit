@@ -14,17 +14,18 @@ Plus 5 complex integration scenarios at the bottom.
 """
 
 import os
-import time
 import sqlite3
 import threading
-import pytest
+import time
+
 import pandas as pd
+import pytest
 
-from storage import BaseStorageManager, BufferedStorageManager
 from errors import StorageError
-
+from storage import BaseStorageManager, BufferedStorageManager
 
 # ── Shared test schema ────────────────────────────────────────────────────────
+
 
 class MockDB(BaseStorageManager):
     """Concrete subclass with a simple two-table schema for testing."""
@@ -49,6 +50,7 @@ class MockDB(BaseStorageManager):
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def db(tmp_path):
@@ -79,7 +81,9 @@ def populated_db(tmp_path):
 def buffered_db(tmp_path):
     conn = sqlite3.connect(str(tmp_path / "buffer.db"))
     conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
-    conn.executemany("INSERT INTO items VALUES (?, ?, ?)", [(1, "alpha", "a"), (2, "beta", "b")])
+    conn.executemany(
+        "INSERT INTO items VALUES (?, ?, ?)", [(1, "alpha", "a"), (2, "beta", "b")]
+    )
     conn.commit()
     conn.close()
     manager = BufferedStorageManager(str(tmp_path / "buffer.db"), "items")
@@ -93,13 +97,16 @@ def buffered_db(tmp_path):
 def make_chunk(path, rows, table="items"):
     """Helper: create a standalone .db chunk with the items schema."""
     conn = sqlite3.connect(str(path))
-    conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)")
+    conn.execute(
+        f"CREATE TABLE {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)"
+    )
     conn.executemany(f"INSERT INTO {table} (name, value) VALUES (?, ?)", rows)
     conn.commit()
     conn.close()
 
 
 # ── fetch_rows ────────────────────────────────────────────────────────────────
+
 
 class TestFetchRows:
     def test_normal_returns_matching_rows(self, populated_db):
@@ -135,6 +142,7 @@ class TestFetchRows:
 
 # ── fetch_dataframe ───────────────────────────────────────────────────────────
 
+
 class TestFetchDataframe:
     def test_normal_returns_dataframe_with_correct_shape(self, populated_db):
         df = populated_db.fetch_dataframe("SELECT * FROM items")
@@ -164,6 +172,7 @@ class TestFetchDataframe:
 
 
 # ── fetch_objs ────────────────────────────────────────────────────────────────
+
 
 class TestFetchObjs:
     def test_normal_with_mapper_transforms_rows(self, populated_db):
@@ -196,6 +205,7 @@ class TestFetchObjs:
 
 # ── execute_batch ─────────────────────────────────────────────────────────────
 
+
 class TestExecuteBatch:
     def test_normal_inserts_all_rows_in_one_transaction(self, db):
         params = [("item1", "v1"), ("item2", "v2"), ("item3", "v3")]
@@ -227,6 +237,7 @@ class TestExecuteBatch:
 
 # ── create_index ─────────────────────────────────────────────────────────────
 
+
 class TestCreateIndex:
     def test_normal_creates_single_column_index(self, db):
         db.create_index("items", ["name"])
@@ -257,6 +268,7 @@ class TestCreateIndex:
 
 # ── exists ────────────────────────────────────────────────────────────────────
 
+
 class TestBaseExists:
     def test_normal_returns_true_when_value_present(self, populated_db):
         assert populated_db.exists("items", "name", "alpha") is True
@@ -283,6 +295,7 @@ class TestBaseExists:
 
 
 # ── insert ────────────────────────────────────────────────────────────────────
+
 
 class TestBaseInsert:
     def test_normal_inserts_row_and_is_retrievable(self, db):
@@ -313,6 +326,7 @@ class TestBaseInsert:
 
 # ── clear_database ────────────────────────────────────────────────────────────
 
+
 class TestClearDatabase:
     def test_normal_removes_all_rows(self, populated_db):
         populated_db.clear_database("items")
@@ -333,6 +347,7 @@ class TestClearDatabase:
 
 # ── merge_databases ───────────────────────────────────────────────────────────
 
+
 class TestMergeDatabases:
     def test_normal_single_chunk_lands_in_staging(self, db, tmp_path):
         chunk_dir = tmp_path / "chunks"
@@ -346,7 +361,9 @@ class TestMergeDatabases:
         chunk_dir = tmp_path / "chunks"
         chunk_dir.mkdir()
         for i in range(3):
-            make_chunk(chunk_dir / f"c{i}.db", [(f"item_{i}_{j}", str(j)) for j in range(4)])
+            make_chunk(
+                chunk_dir / f"c{i}.db", [(f"item_{i}_{j}", str(j)) for j in range(4)]
+            )
         db.merge_databases(str(chunk_dir), "items")
         rows = db.fetch_rows("SELECT * FROM staging_items")
         assert len(rows) == 12
@@ -369,13 +386,16 @@ class TestMergeDatabases:
 
 # ── merge_row_by_row ──────────────────────────────────────────────────────────
 
+
 class TestMergeRowByRow:
     def test_normal_callback_called_for_every_row(self, db, tmp_path):
         chunk_dir = tmp_path / "chunks"
         chunk_dir.mkdir()
         make_chunk(chunk_dir / "c1.db", [("r1", "v1"), ("r2", "v2")])
         collected = []
-        db.merge_row_by_row(str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"]))
+        db.merge_row_by_row(
+            str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"])
+        )
         assert sorted(collected) == ["r1", "r2"]
 
     def test_normal_flush_callback_invoked_once_per_chunk(self, db, tmp_path):
@@ -385,7 +405,8 @@ class TestMergeRowByRow:
         make_chunk(chunk_dir / "c2.db", [("b", "2")])
         flush_hits = []
         db.merge_row_by_row(
-            str(chunk_dir), "items",
+            str(chunk_dir),
+            "items",
             row_callback=lambda r: None,
             flush_callback=lambda: flush_hits.append(1),
         )
@@ -395,7 +416,9 @@ class TestMergeRowByRow:
         empty = tmp_path / "empty"
         empty.mkdir()
         called = []
-        db.merge_row_by_row(str(empty), "items", row_callback=lambda r: called.append(r))
+        db.merge_row_by_row(
+            str(empty), "items", row_callback=lambda r: called.append(r)
+        )
         assert called == []
 
     def test_edge_corrupt_chunk_skipped_gracefully(self, db, tmp_path):
@@ -406,11 +429,14 @@ class TestMergeRowByRow:
         # A tiny corrupt file (too small, filtered by size check)
         (chunk_dir / "corrupt.db").write_bytes(b"not a db")
         collected = []
-        db.merge_row_by_row(str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"]))
+        db.merge_row_by_row(
+            str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"])
+        )
         assert "valid" in collected
 
 
 # ── reopen_if_changed ─────────────────────────────────────────────────────────
+
 
 class TestReopenIfChanged:
     def test_normal_unchanged_file_keeps_same_connection(self, db):
@@ -442,6 +468,7 @@ class TestReopenIfChanged:
 
 
 # ── flush_and_close ───────────────────────────────────────────────────────────
+
 
 class TestFlushAndClose:
     def test_normal_connection_unusable_after_close(self, tmp_path):
@@ -475,6 +502,7 @@ class TestFlushAndClose:
 
 # ── BufferedStorageManager — exists ──────────────────────────────────────────
 
+
 class TestBufferedExists:
     def test_normal_found_in_buffer(self, buffered_db):
         assert buffered_db.exists("name", "alpha") is True
@@ -498,6 +526,7 @@ class TestBufferedExists:
 
 # ── BufferedStorageManager — insert ──────────────────────────────────────────
 
+
 class TestBufferedInsert:
     def test_normal_insert_grows_buffer(self, buffered_db):
         before = len(buffered_db._ensure_buffer())
@@ -517,11 +546,14 @@ class TestBufferedInsert:
     def test_normal_flush_writes_inserted_rows_to_disk(self, buffered_db):
         buffered_db.insert({"id": 3, "name": "flushed", "value": "f"})
         buffered_db.flush()
-        rows = buffered_db.fetch_rows("SELECT * FROM items WHERE name = ?", ("flushed",))
+        rows = buffered_db.fetch_rows(
+            "SELECT * FROM items WHERE name = ?", ("flushed",)
+        )
         assert len(rows) == 1
 
 
 # ── BufferedStorageManager — flush ────────────────────────────────────────────
+
 
 class TestBufferedFlush:
     def test_normal_dirty_buffer_written_to_db(self, buffered_db):
@@ -550,6 +582,7 @@ class TestBufferedFlush:
 
 # ── BufferedStorageManager — clear_database ───────────────────────────────────
 
+
 class TestBufferedClearDatabase:
     def test_normal_clears_sql_and_resets_buffer(self, buffered_db):
         buffered_db.clear_database("items")
@@ -570,6 +603,7 @@ class TestBufferedClearDatabase:
 
 # ── BufferedStorageManager — reopen_if_changed ───────────────────────────────
 
+
 class TestBufferedReopenIfChanged:
     def test_normal_mtime_change_clears_buffer(self, buffered_db):
         _ = buffered_db._ensure_buffer()
@@ -587,6 +621,7 @@ class TestBufferedReopenIfChanged:
 
 
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
+
 
 class TestStorageScenarios:
     def test_scenario_batch_insert_index_and_exists(self, db):
@@ -606,7 +641,9 @@ class TestStorageScenarios:
         chunk_dir = tmp_path / "chunks"
         chunk_dir.mkdir()
         for i in range(4):
-            make_chunk(chunk_dir / f"c{i}.db", [(f"node_{i}_{j}", str(j)) for j in range(5)])
+            make_chunk(
+                chunk_dir / f"c{i}.db", [(f"node_{i}_{j}", str(j)) for j in range(5)]
+            )
         db.merge_databases(str(chunk_dir), "items")
         df = db.fetch_dataframe("SELECT * FROM staging_items")
         assert len(df) == 20
@@ -638,7 +675,9 @@ class TestStorageScenarios:
 
         def writer():
             try:
-                db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", params)
+                db.execute_batch(
+                    "INSERT INTO items (name, value) VALUES (?, ?)", params
+                )
             except Exception as e:
                 errors.append(("writer", e))
 
@@ -648,10 +687,9 @@ class TestStorageScenarios:
             except Exception as e:
                 errors.append(("reader", e))
 
-        threads = (
-            [threading.Thread(target=writer)] +
-            [threading.Thread(target=reader) for _ in range(6)]
-        )
+        threads = [threading.Thread(target=writer)] + [
+            threading.Thread(target=reader) for _ in range(6)
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -664,7 +702,9 @@ class TestStorageScenarios:
         assert populated_db.fetch_rows("SELECT * FROM items") == []
 
         new_data = [("x", "10"), ("y", "20"), ("z", "30")]
-        populated_db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", new_data)
+        populated_db.execute_batch(
+            "INSERT INTO items (name, value) VALUES (?, ?)", new_data
+        )
         rows = populated_db.fetch_rows("SELECT name FROM items ORDER BY name")
         assert [r["name"] for r in rows] == ["x", "y", "z"]
         # Old names must be gone

@@ -10,10 +10,11 @@ Plus 5 complex integration scenarios at the bottom.
 """
 
 import pytest
+
 from matching import SimilarityEngine
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def engine():
@@ -24,27 +25,30 @@ def engine():
 @pytest.fixture
 def rich_engine():
     """Engine pre-loaded with acronyms, synonyms, and explicit weights."""
-    return SimilarityEngine({
-        "threshold": 65,
-        "acronyms": {
-            "fc": "football club",
-            "utd": "united",
-            "afc": "athletic football club",
-        },
-        "synonyms": {
-            "man city": "manchester city",
-            "barca": "fc barcelona",
-        },
-        "weights": {
-            "token": 0.5,
-            "substr": 0.1,
-            "phonetic": 0.1,
-            "ratio": 0.3,
-        },
-    })
+    return SimilarityEngine(
+        {
+            "threshold": 65,
+            "acronyms": {
+                "fc": "football club",
+                "utd": "united",
+                "afc": "athletic football club",
+            },
+            "synonyms": {
+                "man city": "manchester city",
+                "barca": "fc barcelona",
+            },
+            "weights": {
+                "token": 0.5,
+                "substr": 0.1,
+                "phonetic": 0.1,
+                "ratio": 0.3,
+            },
+        }
+    )
 
 
 # ── __init__ ──────────────────────────────────────────────────────────────────
+
 
 class TestInit:
     def test_normal_full_config_applied(self):
@@ -82,8 +86,8 @@ class TestInit:
     def test_edge_partial_weights_fills_missing_with_defaults(self):
         eng = SimilarityEngine({"weights": {"token": 0.9}})
         assert eng.token_weight == 0.9
-        assert eng.substr_weight == 0.1   # default
-        assert eng.ratio_weight == 0.3    # default
+        assert eng.substr_weight == 0.1  # default
+        assert eng.ratio_weight == 0.3  # default
 
     def test_edge_zero_threshold_everything_is_similar(self):
         eng = SimilarityEngine({"threshold": 0})
@@ -94,6 +98,7 @@ class TestInit:
 
 
 # ── hybrid_match ──────────────────────────────────────────────────────────────
+
 
 class TestHybridMatch:
     def test_normal_identical_strings_score_100(self, engine):
@@ -129,6 +134,7 @@ class TestHybridMatch:
 
 
 # ── is_similar ────────────────────────────────────────────────────────────────
+
 
 class TestIsSimilar:
     def test_normal_clearly_similar_returns_true(self, engine):
@@ -176,6 +182,7 @@ class TestIsSimilar:
 
 # ── _normalize ────────────────────────────────────────────────────────────────
 
+
 class TestNormalize:
     def test_normal_lowercases_and_strips_punctuation(self, engine):
         result = engine._normalize("Hello, World!")
@@ -218,6 +225,7 @@ class TestNormalize:
 
 # ── _soundex ──────────────────────────────────────────────────────────────────
 
+
 class TestSoundex:
     def test_normal_standard_soundex_codes(self, engine):
         assert engine._soundex("Smith") == "S530"
@@ -244,6 +252,7 @@ class TestSoundex:
 
 
 # ── Caching ───────────────────────────────────────────────────────────────────
+
 
 class TestCaching:
     def test_normal_result_cached_after_first_is_similar(self, engine):
@@ -278,13 +287,16 @@ class TestCaching:
 
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
 
+
 class TestMatchingScenarios:
     def test_scenario_diacritic_plus_synonym_chain(self):
         """Diacritic stripping and synonym replacement must compose correctly."""
-        eng = SimilarityEngine({
-            "threshold": 70,
-            "synonyms": {"fc barcelona": "barcelona"},
-        })
+        eng = SimilarityEngine(
+            {
+                "threshold": 70,
+                "synonyms": {"fc barcelona": "barcelona"},
+            }
+        )
         # "FC Barçelona" → strip diacritic → "FC Barcelona" → lowercase → "fc barcelona"
         # → synonym match → "barcelona"
         # "Barcelona" → normalize → "barcelona"
@@ -293,10 +305,12 @@ class TestMatchingScenarios:
 
     def test_scenario_acronym_expands_before_similarity(self):
         """Acronym expansion during normalization bridges abbreviated vs full name."""
-        eng = SimilarityEngine({
-            "threshold": 65,
-            "acronyms": {"fc": "football club", "utd": "united"},
-        })
+        eng = SimilarityEngine(
+            {
+                "threshold": 65,
+                "acronyms": {"fc": "football club", "utd": "united"},
+            }
+        )
         match, _ = eng.is_similar("Manchester FC", "Manchester Football Club")
         assert match is True
         match2, _ = eng.is_similar("Man Utd", "Man United")
@@ -304,14 +318,18 @@ class TestMatchingScenarios:
 
     def test_scenario_token_weight_vs_ratio_weight_on_reordered_names(self):
         """Token set ratio handles order-independence; character ratio does not."""
-        token_eng = SimilarityEngine({
-            "threshold": 80,
-            "weights": {"token": 1.0, "substr": 0.0, "phonetic": 0.0, "ratio": 0.0},
-        })
-        ratio_eng = SimilarityEngine({
-            "threshold": 80,
-            "weights": {"token": 0.0, "substr": 0.0, "phonetic": 0.0, "ratio": 1.0},
-        })
+        token_eng = SimilarityEngine(
+            {
+                "threshold": 80,
+                "weights": {"token": 1.0, "substr": 0.0, "phonetic": 0.0, "ratio": 0.0},
+            }
+        )
+        ratio_eng = SimilarityEngine(
+            {
+                "threshold": 80,
+                "weights": {"token": 0.0, "substr": 0.0, "phonetic": 0.0, "ratio": 1.0},
+            }
+        )
         m_token, _ = token_eng.is_similar("Moby Dick", "Dick Moby")
         m_ratio, _ = ratio_eng.is_similar("Moby Dick", "Dick Moby")
         assert m_token is True
@@ -319,10 +337,12 @@ class TestMatchingScenarios:
 
     def test_scenario_phonetic_weight_boosts_homophones(self):
         """High phonetic weight helps match names that sound alike but are spelled differently."""
-        eng = SimilarityEngine({
-            "threshold": 50,
-            "weights": {"token": 0.2, "substr": 0.0, "phonetic": 0.8, "ratio": 0.0},
-        })
+        eng = SimilarityEngine(
+            {
+                "threshold": 50,
+                "weights": {"token": 0.2, "substr": 0.0, "phonetic": 0.8, "ratio": 0.0},
+            }
+        )
         # "Smith" and "Smyth" share soundex S530
         match, score = eng.is_similar("John Smith", "John Smyth")
         assert match is True

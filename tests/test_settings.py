@@ -9,15 +9,16 @@ Plus 5 complex integration scenarios at the bottom.
 """
 
 import threading
-import yaml
-import pytest
 from pathlib import Path
 
-from settings import SettingsManager
-from errors import SettingsError
+import pytest
+import yaml
 
+from errors import SettingsError
+from settings import SettingsManager
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def make_cfg(tmp_path, structure: dict) -> Path:
     """Recursively write {relative_path: yaml_content_str} into tmp_path/config."""
@@ -31,6 +32,7 @@ def make_cfg(tmp_path, structure: dict) -> Path:
 
 # ── __init__ ──────────────────────────────────────────────────────────────────
 
+
 class TestInit:
     def test_normal_loads_single_yaml(self, tmp_path):
         cfg = make_cfg(tmp_path, {"app.yaml": "name: myapp\nversion: 2"})
@@ -39,11 +41,14 @@ class TestInit:
         assert manager.settings["config"]["app"]["version"] == 2
 
     def test_normal_loads_nested_directory_tree(self, tmp_path):
-        cfg = make_cfg(tmp_path, {
-            "db.yaml": "host: localhost",
-            "section/cache.yaml": "ttl: 300",
-            "section/sub/deep.yaml": "key: leaf",
-        })
+        cfg = make_cfg(
+            tmp_path,
+            {
+                "db.yaml": "host: localhost",
+                "section/cache.yaml": "ttl: 300",
+                "section/sub/deep.yaml": "key: leaf",
+            },
+        )
         manager = SettingsManager(str(cfg))
         assert manager.settings["config"]["db"]["host"] == "localhost"
         assert manager.settings["config"]["section"]["cache"]["ttl"] == 300
@@ -85,6 +90,7 @@ class TestInit:
 
 # ── get ───────────────────────────────────────────────────────────────────────
 
+
 class TestGet:
     def test_normal_full_path_lookup(self, tmp_path):
         cfg = make_cfg(tmp_path, {"db.yaml": "host: localhost\nport: 5432"})
@@ -93,9 +99,9 @@ class TestGet:
         assert manager.get("config", "db", "port") == 5432
 
     def test_normal_fallback_depth_first_search_by_last_key(self, tmp_path):
-        cfg = make_cfg(tmp_path, {
-            "section/hidden.yaml": "secret_token: abc123\ndepth: 5"
-        })
+        cfg = make_cfg(
+            tmp_path, {"section/hidden.yaml": "secret_token: abc123\ndepth: 5"}
+        )
         manager = SettingsManager(str(cfg))
         # Caller only knows the leaf key, not the full path
         assert manager.get("secret_token") == "abc123"
@@ -142,6 +148,7 @@ class TestGet:
 
 
 # ── write ─────────────────────────────────────────────────────────────────────
+
 
 class TestWrite:
     def test_normal_creates_yaml_file_with_correct_content(self, tmp_path):
@@ -201,6 +208,7 @@ class TestWrite:
 
 # ── delete ────────────────────────────────────────────────────────────────────
 
+
 class TestDelete:
     def test_normal_deletes_existing_file(self, tmp_path):
         cfg = tmp_path / "config"
@@ -247,15 +255,19 @@ class TestDelete:
 
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
 
+
 class TestSettingsScenarios:
     def test_scenario_deep_nested_multi_file_all_keys_accessible(self, tmp_path):
         """Many yaml files across deep directories — every leaf key reachable by fallback."""
-        cfg = make_cfg(tmp_path, {
-            "root.yaml": "root_val: world",
-            "a/mid.yaml": "mid_val: hello",
-            "a/b/leaf.yaml": "deep_val: 42",
-            "a/b/c/ultra.yaml": "ultra_val: bottom",
-        })
+        cfg = make_cfg(
+            tmp_path,
+            {
+                "root.yaml": "root_val: world",
+                "a/mid.yaml": "mid_val: hello",
+                "a/b/leaf.yaml": "deep_val: 42",
+                "a/b/c/ultra.yaml": "ultra_val: bottom",
+            },
+        )
         manager = SettingsManager(str(cfg))
         assert manager.get("root_val") == "world"
         assert manager.get("mid_val") == "hello"
@@ -267,21 +279,30 @@ class TestSettingsScenarios:
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
-        manager.write(str(cfg), "runtime", {
-            "feature_flags": {"new_ui": True, "dark_mode": False},
-            "max_workers": 8,
-        })
+        manager.write(
+            str(cfg),
+            "runtime",
+            {
+                "feature_flags": {"new_ui": True, "dark_mode": False},
+                "max_workers": 8,
+            },
+        )
         assert manager.get("max_workers") == 8
         assert manager.get("feature_flags")["new_ui"] is True
         assert manager.get("feature_flags")["dark_mode"] is False
 
-    def test_scenario_multiple_files_same_leaf_key_fallback_returns_first(self, tmp_path):
+    def test_scenario_multiple_files_same_leaf_key_fallback_returns_first(
+        self, tmp_path
+    ):
         """When two files share a key, fallback DFS returns whichever is found first
         (alphabetical due to sorted rglob). Both are accessible via full path."""
-        cfg = make_cfg(tmp_path, {
-            "a/config.yaml": "timeout: 10",
-            "b/config.yaml": "timeout: 20",
-        })
+        cfg = make_cfg(
+            tmp_path,
+            {
+                "a/config.yaml": "timeout: 10",
+                "b/config.yaml": "timeout: 20",
+            },
+        )
         manager = SettingsManager(str(cfg))
         # Full path access distinguishes them
         assert manager.get("config", "a", "config", "timeout") == 10
@@ -289,13 +310,14 @@ class TestSettingsScenarios:
 
     def test_scenario_unicode_special_chars_and_multiline_values(self, tmp_path):
         """YAML with unicode, floats, and list values round-trips correctly."""
-        cfg = make_cfg(tmp_path, {
-            "intl.yaml": (
-                "greeting: Héllo Wörld\n"
-                "pi: 3.14159\n"
-                "tags:\n  - alpha\n  - beta\n"
-            )
-        })
+        cfg = make_cfg(
+            tmp_path,
+            {
+                "intl.yaml": (
+                    "greeting: Héllo Wörld\npi: 3.14159\ntags:\n  - alpha\n  - beta\n"
+                )
+            },
+        )
         manager = SettingsManager(str(cfg))
         assert manager.get("greeting") == "Héllo Wörld"
         assert manager.get("pi") == pytest.approx(3.14159)
@@ -327,5 +349,7 @@ class TestSettingsScenarios:
         assert len(list(cfg.glob("worker_*.yaml"))) == 10
         # Verify content integrity for each file
         for i in range(10):
-            data = yaml.safe_load((cfg / f"worker_{i}.yaml").read_text(encoding="utf-8"))
+            data = yaml.safe_load(
+                (cfg / f"worker_{i}.yaml").read_text(encoding="utf-8")
+            )
             assert data["id"] == i
