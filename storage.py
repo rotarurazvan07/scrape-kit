@@ -5,7 +5,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -40,7 +40,7 @@ class BaseStorageManager:
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
-    def _serialize_json(self, obj: Any) -> Optional[str]:
+    def _serialize_json(self, obj: Any) -> str | None:
         """Generic JSON serializer for complex rows."""
         if obj is None:
             return None
@@ -51,7 +51,7 @@ class BaseStorageManager:
         except (TypeError, ValueError) as e:
             raise StorageError(f"Serialization failed for {type(obj).__name__}: {e}") from e
 
-    def _deserialize_json(self, json_str: Optional[str]) -> Any:
+    def _deserialize_json(self, json_str: str | None) -> Any:
         """Generic JSON deserializer for complex rows."""
         if not json_str:
             return None
@@ -70,7 +70,7 @@ class BaseStorageManager:
     def fetch_rows(
         self,
         query: str,
-        params: Optional[Sequence[Any]] = None,
+        params: Sequence[Any] | None = None,
     ) -> list[sqlite3.Row]:
         """Execute a query and return all results as sqlite3.Row objects."""
         params = params or ()
@@ -85,7 +85,7 @@ class BaseStorageManager:
     def fetch_dataframe(
         self,
         query: str,
-        params: Optional[Sequence[Any]] = None,
+        params: Sequence[Any] | None = None,
     ) -> pd.DataFrame:
         """Execute a query and return results directly as a pandas DataFrame."""
         params = params or ()
@@ -99,8 +99,8 @@ class BaseStorageManager:
     def fetch_objs(
         self,
         query: str,
-        params: Optional[Sequence[Any]] = None,
-        mapper: Optional[Callable[[sqlite3.Row], Any]] = None,
+        params: Sequence[Any] | None = None,
+        mapper: Callable[[sqlite3.Row], Any] | None = None,
     ) -> list[Any]:
         """Fetch rows and automatically map them to objects using a provided callback."""
         rows = self.fetch_rows(query, params)
@@ -136,8 +136,7 @@ class BaseStorageManager:
         idx_name = f"idx_{table_name}_{'_'.join(columns)}"
         unique_str = "UNIQUE" if unique else ""
         query = (
-            f"CREATE {unique_str} INDEX IF NOT EXISTS {idx_name}"
-            f" ON {_qi(table_name)}({', '.join(_qi(c) for c in columns)})"
+            f"CREATE {unique_str} INDEX IF NOT EXISTS {idx_name} ON {_qi(table_name)}({', '.join(_qi(c) for c in columns)})"
         )
         with self.db_lock:
             try:
@@ -207,7 +206,7 @@ class BaseStorageManager:
         input_dir: str,
         table_name: str,
         row_callback: Callable[[sqlite3.Row], None],
-        flush_callback: Optional[Callable[[], None]] = None,
+        flush_callback: Callable[[], None] | None = None,
     ):
         """Row-by-row merge for tables that require per-row logic (e.g. similarity checks)."""
         db_files: list[str] = self._get_chunk_files(input_dir, skip_file=self.db_path)
@@ -261,11 +260,8 @@ class BaseStorageManager:
             self._file_mtime = current_mtime
 
     @staticmethod
-    def _get_chunk_files(input_dir: str, skip_file: Optional[str] = None) -> list[str]:
-        candidates = [
-            os.path.abspath(f)
-            for f in glob.glob(os.path.join(input_dir, "*.db"))
-        ]
+    def _get_chunk_files(input_dir: str, skip_file: str | None = None) -> list[str]:
+        candidates = [os.path.abspath(f) for f in glob.glob(os.path.join(input_dir, "*.db"))]
         if skip_file:
             skip_abs = os.path.abspath(skip_file)
             return [f for f in candidates if f != skip_abs]
@@ -297,7 +293,7 @@ class BufferedStorageManager(BaseStorageManager):
 
     def __init__(self, db_path: str, table_name: str):
         self._table_name = table_name
-        self._buffer: Optional[pd.DataFrame] = None
+        self._buffer: pd.DataFrame | None = None
         self._dirty: bool = False
         super().__init__(db_path)
 
@@ -316,9 +312,7 @@ class BufferedStorageManager(BaseStorageManager):
             return
         with self.db_lock:
             try:
-                self._buffer.to_sql(
-                    self._table_name, self.conn, if_exists="replace", index=False
-                )
+                self._buffer.to_sql(self._table_name, self.conn, if_exists="replace", index=False)
                 self.conn.commit()
                 self._dirty = False
             except Exception as e:
