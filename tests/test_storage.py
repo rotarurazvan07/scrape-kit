@@ -2,7 +2,7 @@
 Comprehensive tests for storage.py — BaseStorageManager & BufferedStorageManager.
 
 Public API covered (Base):
-  __init__, fetch_rows, fetch_dataframe, fetch_objs, execute_batch,
+  __init__, fetch_rows, fetch_dataframe, fetch_objects, execute_batch,
   create_index, exists, insert, merge_databases, merge_row_by_row,
   reopen_if_changed, flush_and_close, clear_database
 
@@ -160,24 +160,24 @@ class TestFetchDataframe:
             db.fetch_dataframe("SELECT * FROM ghost_table")
 
 
-# ── fetch_objs ────────────────────────────────────────────────────────────────
+# ── fetch_objects ────────────────────────────────────────────────────────────────
 
 
 class TestFetchObjs:
     def test_normal_with_mapper_transforms_rows(self, populated_db):
-        result = populated_db.fetch_objs(
+        result = populated_db.fetch_objects(
             "SELECT * FROM items ORDER BY name",
             mapper=lambda r: r["name"].upper(),
         )
         assert result == ["ALPHA", "BETA", "GAMMA"]
 
     def test_normal_without_mapper_returns_list_of_dicts(self, populated_db):
-        result = populated_db.fetch_objs("SELECT * FROM items ORDER BY name")
+        result = populated_db.fetch_objects("SELECT * FROM items ORDER BY name")
         assert all(isinstance(r, dict) for r in result)
         assert result[0]["name"] == "alpha"
 
     def test_normal_parameterized_with_mapper(self, populated_db):
-        result = populated_db.fetch_objs(
+        result = populated_db.fetch_objects(
             "SELECT * FROM items WHERE name = ?",
             params=("gamma",),
             mapper=lambda r: r["value"],
@@ -185,11 +185,11 @@ class TestFetchObjs:
         assert result == ["3"]
 
     def test_edge_no_rows_returns_empty_list(self, db):
-        assert db.fetch_objs("SELECT * FROM items") == []
+        assert db.fetch_objects("SELECT * FROM items") == []
 
     def test_error_invalid_query_raises_storage_error(self, db):
         with pytest.raises(StorageError):
-            db.fetch_objs("SELECT * FROM no_such_table")
+            db.fetch_objects("SELECT * FROM no_such_table")
 
 
 # ── execute_batch ─────────────────────────────────────────────────────────────

@@ -154,18 +154,18 @@ class TestFetch:
         assert MockFetcher.get.call_count == 2
 
     @patch("scrape_kit.fetcher.Fetcher")
-    def test_edge_status_503_retries_then_returns_empty(self, MockFetcher):
+    def test_edge_status_503_retries_then_raises(self, MockFetcher):
         MockFetcher.get.return_value = make_page(status=503)
         fetcher = WebFetcher()
-        result = fetcher.fetch("http://example.com", retries=2, backoff=0)
-        assert result == ""
+        with pytest.raises(FetcherError):
+            fetcher.fetch("http://example.com", retries=2, backoff=0)
 
     @patch("scrape_kit.fetcher.Fetcher")
     def test_edge_status_429_treated_like_503(self, MockFetcher):
         MockFetcher.get.return_value = make_page(status=429)
         fetcher = WebFetcher()
-        result = fetcher.fetch("http://example.com", retries=1, backoff=0)
-        assert result == ""
+        with pytest.raises(FetcherError):
+            fetcher.fetch("http://example.com", retries=1, backoff=0)
 
     @patch("scrape_kit.fetcher.Fetcher")
     def test_error_all_retries_exhaust_raises_fetcher_error(self, MockFetcher):
@@ -203,13 +203,15 @@ class TestBrowser:
     def test_normal_returns_dynamic_session_by_default(self, MockDynamic):
         fetcher = WebFetcher()
         session = fetcher.browser()
-        assert session is MockDynamic.return_value
+        assert isinstance(session, InteractiveSession)
+        assert session.session is MockDynamic.return_value
 
     @patch("scrape_kit.fetcher.StealthySession")
     def test_normal_solve_cloudflare_uses_stealthy_session(self, MockStealthy):
         fetcher = WebFetcher()
         session = fetcher.browser(solve_cloudflare=True)
-        assert session is MockStealthy.return_value
+        assert isinstance(session, InteractiveSession)
+        assert session.session is MockStealthy.return_value
         MockStealthy.assert_called_once()
         call_kwargs = MockStealthy.call_args[1]
         assert call_kwargs.get("solve_cloudflare") is True
@@ -281,11 +283,12 @@ class TestScrape:
         fetcher = WebFetcher(block_indicators=["blocked"])
         mock_fetch.return_value = "<html>blocked</html>"
         called = []
-        fetcher.scrape(
-            ["http://example.com"],
-            callback=lambda u, h: called.append(u),
-            mode=ScrapeMode.FAST,
-        )
+        with pytest.raises(FetcherError):
+            fetcher.scrape(
+                ["http://example.com"],
+                callback=lambda u, h: called.append(u),
+                mode=ScrapeMode.FAST,
+            )
         assert called == []
 
 

@@ -42,6 +42,9 @@ class SettingsManager:
 
     def get(self, *keys: str) -> Any | None:
         """Fetch a value using dict paths: get('nested', 'key'). Reloads before fetch."""
+        if not keys:
+            raise SettingsError("At least one key must be provided")
+
         self._load()
 
         node = self.settings
@@ -66,27 +69,29 @@ class SettingsManager:
 
         return _search(self.settings, keys[-1])
 
-    def write(self, directory: str, name: str, data: dict[str, Any]) -> bool:
-        """Atomic write leveraging an OS-level replacement from a temp file."""
+    def _resolve_target(self, name: str, subpath: str | Path | None = None) -> Path:
+        base_dir = self._directory if subpath is None else self._directory / Path(subpath)
+        return base_dir / f"{name}.yaml"
+
+    def write(self, name: str, data: dict[str, Any], *, subpath: str | Path | None = None) -> None:
+        """Write settings atomically under the manager's configured directory."""
         try:
-            p = Path(directory) / f"{name}.yaml"
+            p = self._resolve_target(name, subpath)
             p.parent.mkdir(parents=True, exist_ok=True)
 
             temp_path = p.with_suffix(".tmp")
             temp_path.write_text(yaml.dump(data), encoding="utf-8")
             os.replace(temp_path, p)
-            return True
         except (OSError, yaml.YAMLError) as e:
             logger.error(f"write failed for {name}: {e}")
-            return False
+            raise SettingsError(f"write failed for {name}: {e}") from e
 
-    def delete(self, directory: str, name: str) -> bool:
+    def delete(self, name: str, *, subpath: str | Path | None = None) -> None:
         """Delete a YAML setting file out of the tracked directory tree."""
         try:
-            p = Path(directory) / f"{name}.yaml"
+            p = self._resolve_target(name, subpath)
             if p.exists():
                 p.unlink()
-            return True
         except OSError as e:
             logger.error(f"delete failed for {name}: {e}")
-            return False
+            raise SettingsError(f"delete failed for {name}: {e}") from e

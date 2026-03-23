@@ -5,6 +5,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
@@ -12,6 +13,13 @@ import pandas as pd
 from .errors import StorageError
 
 logger = logging.getLogger("scrape_kit.storage")
+
+
+@dataclass
+class MergeReport:
+    processed_chunks: int = 0
+    skipped_chunks: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 def _qi(name: str) -> str:
@@ -92,7 +100,7 @@ class BaseStorageManager:
             except Exception as e:
                 raise StorageError(f"DataFrame fetch failed for [{query}]: {e}") from e
 
-    def fetch_objs(
+    def fetch_objects(
         self,
         query: str,
         params: Sequence[Any] | None = None,
@@ -110,7 +118,7 @@ class BaseStorageManager:
         self,
         query: str,
         params_list: Sequence[Sequence[Any] | Mapping[str, Any]],
-    ):
+    ) -> None:
         """Execute multiple inserts/updates in a single transaction for performance."""
         if not params_list:
             return
@@ -127,7 +135,7 @@ class BaseStorageManager:
         table_name: str,
         columns: list[str],
         unique: bool = False,
-    ):
+    ) -> None:
         """Helper to safely create indexes on tables."""
         idx_name = f"idx_{table_name}_{'_'.join(columns)}"
         unique_str = "UNIQUE" if unique else ""
@@ -147,7 +155,7 @@ class BaseStorageManager:
         rows = self.fetch_rows(query, (value,))
         return len(rows) > 0
 
-    def insert(self, table_name: str, data: Mapping[str, Any]):
+    def insert(self, table_name: str, data: Mapping[str, Any]) -> None:
         """Insert a single dictionary as a row into the specified table."""
         columns = list(data.keys())
         placeholders = ", ".join("?" for _ in columns)
@@ -162,12 +170,13 @@ class BaseStorageManager:
 
     # ── Merging ───────────────────────────────────────────────────────────────
 
-    def merge_databases(self, input_dir: str, table_name: str) -> None:
+    def merge_databases(self, input_dir: str, table_name: str) -> MergeReport:
         db_files = self.get_chunk_files(input_dir, skip_file=self.db_path)
         if not db_files:
-            return
+            return MergeReport()
 
         staging = f"staging_{table_name}"
+        report = MergeReport()
 
         with self.db_lock:
             try:
@@ -185,16 +194,22 @@ class BaseStorageManager:
                         )
                         self.conn.commit()
                         self.conn.execute("DETACH DATABASE chunk")
+                        report.processed_chunks += 1
                     except sqlite3.Error as e:
                         logger.error("Skip %s: %s", db_file, e)
+                        report.skipped_chunks += 1
+                        report.errors.append(f"{db_file}: {e}")
                         try:
                             self.conn.execute("DETACH DATABASE chunk")
                         except sqlite3.Error as detach_e:
                             logger.error("Error detaching after merge failure: %s", detach_e)
+                            report.errors.append(f"{db_file} detach: {detach_e}")
 
-                logger.info("Merged %d chunks into %s", len(db_files), staging)
+                logger.info("Merged %d chunks into %s", report.processed_chunks, staging)
             except sqlite3.Error as e:
                 raise StorageError(f"Merge failed: {e}") from e
+
+        return report
 
     def merge_row_by_row(
         self,
@@ -202,9 +217,11 @@ class BaseStorageManager:
         table_name: str,
         row_callback: Callable[[sqlite3.Row], None],
         flush_callback: Callable[[], None] | None = None,
-    ) -> None:
+    ) -> MergeReport:
+        report = MergeReport()
         for db_file in self.get_chunk_files(input_dir, skip_file=self.db_path):
             if not (os.path.exists(db_file) and os.path.getsize(db_file) > 100):
+                report.skipped_chunks += 1
                 continue
             try:
                 temp_conn = sqlite3.connect(db_file)
@@ -218,10 +235,15 @@ class BaseStorageManager:
 
                 if flush_callback:
                     flush_callback()
+                report.processed_chunks += 1
 
             except sqlite3.Error as e:
                 logger.error("Skipping chunk %s: %s", db_file, e)
+                report.skipped_chunks += 1
+                report.errors.append(f"{db_file}: {e}")
                 continue
+
+        return report
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
@@ -257,7 +279,7 @@ class BaseStorageManager:
             return [f for f in candidates if f != skip_abs]
         return candidates
 
-    def flush_and_close(self):
+    def flush_and_close(self) -> None:
         """Force-flush WAL and shut down the connection cleanly."""
         try:
             self.conn.commit()
@@ -268,7 +290,7 @@ class BaseStorageManager:
         except sqlite3.Error as e:
             raise StorageError(f"Fatal error during shutdown: {e}") from e
 
-    def clear_database(self, table_name: str):
+    def clear_database(self, table_name: str) -> None:
         """Delete all rows from a table without dropping it."""
         with self.db_lock:
             try:
@@ -296,7 +318,7 @@ class BufferedStorageManager(BaseStorageManager):
         )
         return self._buffer
 
-    def flush(self):
+    def flush(self) -> None:
         """Write the buffer back to SQLite."""
         if not self._dirty or self._buffer is None:
             return
@@ -308,15 +330,52 @@ class BufferedStorageManager(BaseStorageManager):
             except Exception as e:
                 raise StorageError(f"Buffer flush failed: {e}") from e
 
-    def exists(self, column: str, value: Any) -> bool:
+    def exists(
+        self,
+        table_name: str,
+        column: str | None = None,
+        value: Any | None = None,
+    ) -> bool:
+        if column is None:
+            raise StorageError("exists requires either (table_name, column, value) or legacy (column, value)")
+        if value is None:
+            # Legacy buffered call shape: exists(column, value)
+            column_name = table_name
+            target_value = column
+            table = self._table_name
+        else:
+            table = table_name
+            column_name = column
+            target_value = value
+
+        if table != self._table_name:
+            raise StorageError(
+                f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'"
+            )
+
         df = self.ensure_buffer()
         if df.empty:
             return False
-        return value in df[column].values
+        return target_value in df[column_name].values
 
-    def insert(self, data: Mapping[str, Any]) -> None:
+    def insert(self, table_name: str | Mapping[str, Any], data: Mapping[str, Any] | None = None) -> None:
+        if data is None:
+            # Legacy buffered call shape: insert(data)
+            table = self._table_name
+            payload = table_name
+            if not isinstance(payload, Mapping):
+                raise StorageError("insert requires mapping payload")
+        else:
+            table = str(table_name)
+            payload = data
+
+        if table != self._table_name:
+            raise StorageError(
+                f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'"
+            )
+
         df = self.ensure_buffer()
-        self._buffer = pd.concat([df, pd.DataFrame([data])], ignore_index=True)
+        self._buffer = pd.concat([df, pd.DataFrame([payload])], ignore_index=True)
         self._dirty = True
 
     def clear_database(self, table_name: str) -> None:

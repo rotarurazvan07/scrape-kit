@@ -150,7 +150,7 @@ class TestWrite:
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
         data = {"host": "localhost", "port": 5432, "tls": True}
-        assert manager.write(str(cfg), "database", data) is True
+        manager.write("database", data)
         loaded = yaml.safe_load((cfg / "database.yaml").read_text(encoding="utf-8"))
         assert loaded == data
 
@@ -158,7 +158,7 @@ class TestWrite:
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
-        manager.write(str(cfg), "atomic", {"x": 1})
+        manager.write("atomic", {"x": 1})
         assert not (cfg / "atomic.tmp").exists()
         assert (cfg / "atomic.yaml").exists()
 
@@ -167,7 +167,7 @@ class TestWrite:
         cfg.mkdir()
         (cfg / "target.yaml").write_text("old: data")
         manager = SettingsManager(str(cfg))
-        manager.write(str(cfg), "target", {"new": "data"})
+        manager.write("target", {"new": "data"})
         loaded = yaml.safe_load((cfg / "target.yaml").read_text(encoding="utf-8"))
         assert loaded == {"new": "data"}
         assert "old" not in loaded
@@ -176,19 +176,18 @@ class TestWrite:
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
-        deep = str(cfg / "a" / "b" / "c")
-        assert manager.write(deep, "leaf", {"val": 42}) is True
-        assert Path(deep, "leaf.yaml").exists()
+        manager.write("leaf", {"val": 42}, subpath=Path("a") / "b" / "c")
+        assert Path(cfg, "a", "b", "c", "leaf.yaml").exists()
 
     def test_edge_write_empty_dict(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
-        assert manager.write(str(cfg), "empty_cfg", {}) is True
+        manager.write("empty_cfg", {})
         loaded = yaml.safe_load((cfg / "empty_cfg.yaml").read_text(encoding="utf-8"))
         assert loaded is None or loaded == {}
 
-    def test_error_write_to_path_blocked_by_file_returns_false(self, tmp_path):
+    def test_error_write_to_path_blocked_by_file_raises(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
@@ -196,8 +195,8 @@ class TestWrite:
         blocker = tmp_path / "blocker"
         blocker.write_text("i am a file, not a dir")
         # Trying to write inside 'blocker' as if it were a directory
-        result = manager.write(str(blocker), "file", {"a": 1})
-        assert result is False
+        with pytest.raises(SettingsError):
+            manager.write("file", {"a": 1}, subpath=Path("..") / "blocker")
 
 
 # ── delete ────────────────────────────────────────────────────────────────────
@@ -210,7 +209,7 @@ class TestDelete:
         target = cfg / "to_delete.yaml"
         target.write_text("x: 1")
         manager = SettingsManager(str(cfg))
-        assert manager.delete(str(cfg), "to_delete") is True
+        manager.delete("to_delete")
         assert not target.exists()
 
     def test_normal_deleted_key_no_longer_retrievable(self, tmp_path):
@@ -219,7 +218,7 @@ class TestDelete:
         (cfg / "service.yaml").write_text("url: http://example.com")
         manager = SettingsManager(str(cfg))
         assert manager.get("url") == "http://example.com"
-        manager.delete(str(cfg), "service")
+        manager.delete("service")
         assert manager.get("url") is None
 
     def test_edge_delete_nonexistent_file_still_returns_true(self, tmp_path):
@@ -227,24 +226,23 @@ class TestDelete:
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
         # Should be a no-op, not an error
-        assert manager.delete(str(cfg), "ghost_file") is True
+        manager.delete("ghost_file")
 
     def test_edge_delete_then_write_same_name(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
         (cfg / "svc.yaml").write_text("url: old")
         manager = SettingsManager(str(cfg))
-        manager.delete(str(cfg), "svc")
-        manager.write(str(cfg), "svc", {"url": "new"})
+        manager.delete("svc")
+        manager.write("svc", {"url": "new"})
         assert manager.get("url") == "new"
 
-    def test_error_delete_from_nonexistent_directory_returns_true(self, tmp_path):
+    def test_error_delete_from_nonexistent_directory_is_noop(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
-        # Path doesn't exist → file doesn't exist → returns True
-        result = manager.delete(str(tmp_path / "nonexistent_dir"), "anything")
-        assert result is True
+        # Missing file is a no-op
+        manager.delete("anything", subpath="nonexistent_dir")
 
 
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
@@ -274,7 +272,6 @@ class TestSettingsScenarios:
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
         manager.write(
-            str(cfg),
             "runtime",
             {
                 "feature_flags": {"new_ui": True, "dark_mode": False},
@@ -321,8 +318,8 @@ class TestSettingsScenarios:
 
         def write_config(i):
             try:
-                ok = manager.write(str(cfg), f"worker_{i}", {"id": i, "label": f"w{i}"})
-                results.append(ok)
+                manager.write(f"worker_{i}", {"id": i, "label": f"w{i}"})
+                results.append(True)
             except Exception as e:
                 errors.append(e)
 
