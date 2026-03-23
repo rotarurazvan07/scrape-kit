@@ -133,9 +133,7 @@ class WebFetcher:
                 status = getattr(page, "status", getattr(page, "status_code", 200))
                 if status in [403, 429, 503]:
                     if attempt == retries:
-                        raise FetcherError(
-                            f"Blocked with status {status} on {url} after {retries} attempts"
-                        )
+                        raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts")
                     wait = backoff * attempt
                     logger.warning(f"Status {status} on {url} — retrying in {wait:.0f}s (attempt {attempt}/{retries})")
                     time.sleep(wait)
@@ -265,11 +263,11 @@ class WebFetcher:
         if last_error is not None:
             logger.error("[scrape/fast] Error on %s: %s", url, last_error)
             failure = FetcherError(f"Fast scrape failed for {url}: {last_error}")
-            setattr(failure, "url", url)
+            failure.url = url
             raise failure from last_error
 
         failure = FetcherError(f"Fast scrape remained blocked for {url}")
-        setattr(failure, "url", url)
+        failure.url = url
         raise failure
 
     def _scrape_stealth(self, urls: list[str], callback: Callable, max_concurrency: int) -> None:

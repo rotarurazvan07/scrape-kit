@@ -349,9 +349,7 @@ class BufferedStorageManager(BaseStorageManager):
             target_value = value
 
         if table != self._table_name:
-            raise StorageError(
-                f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'"
-            )
+            raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
 
         df = self.ensure_buffer()
         if df.empty:
@@ -370,9 +368,7 @@ class BufferedStorageManager(BaseStorageManager):
             payload = data
 
         if table != self._table_name:
-            raise StorageError(
-                f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'"
-            )
+            raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
 
         df = self.ensure_buffer()
         self._buffer = pd.concat([df, pd.DataFrame([payload])], ignore_index=True)
