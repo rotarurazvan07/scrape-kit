@@ -3,10 +3,10 @@ import unicodedata
 from typing import Any
 
 from rapidfuzz import fuzz
+
 from .logger import get_logger
 
 logger = get_logger(__name__)
-
 
 
 class SimilarityEngine:

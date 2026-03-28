@@ -9,9 +9,6 @@ from .errors import SettingsError
 
 # Configure structured logging
 
-import yaml
-
-from .errors import SettingsError
 
 # Configure structured logging
 logger = logging.getLogger("scrape_kit.settings")

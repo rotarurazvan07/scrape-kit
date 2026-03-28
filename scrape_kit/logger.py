@@ -2,8 +2,9 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any
 
 
 class ScrapeKitFormatter(logging.Formatter):
@@ -35,8 +36,8 @@ class ScrapeKitFormatter(logging.Formatter):
 
 def get_logger(
     name: str,
-    level: Optional[int] = None,
-    log_file: Optional[str] = None,
+    level: int | None = None,
+    log_file: str | None = None,
     stream: Any = sys.stderr,
     propagate: bool = False,
 ) -> logging.Logger:
