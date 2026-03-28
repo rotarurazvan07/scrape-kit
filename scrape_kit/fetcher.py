@@ -220,9 +220,26 @@ class WebFetcher:
         **kwargs: Any,
     ) -> InteractiveSession:
         """Get a consistent interactive browser wrapper as a context manager."""
-        kwargs.setdefault("disable_resources", not interactive and not solve_cloudflare)
-        kwargs.setdefault("network_idle", interactive or solve_cloudflare)
-        kwargs.setdefault("wait_until", "load")
+        is_heavy_session = interactive or solve_cloudflare
+
+        defaults = {
+            "disable_resources": not is_heavy_session,
+            "network_idle": is_heavy_session,
+            "wait_until": "load",
+        }
+        for key, value in defaults.items():
+            kwargs.setdefault(key, value)
+
+        low_mem_flags = {
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--disable-setuid-sandbox"
+        }
+
+        current_args = list(kwargs.get("args", []))
+        unique_args = list(set(current_args) | low_mem_flags)
+        kwargs["args"] = unique_args
 
         if solve_cloudflare:
             session = StealthySession(headless=headless, solve_cloudflare=True, **kwargs)
