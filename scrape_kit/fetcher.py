@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -14,9 +13,8 @@ from scrapling.fetchers import (
 )
 
 from .errors import FetcherError
-
-# Configure structured logging
-logger = logging.getLogger("scrape_kit.fetcher")
+from .logger import get_logger
+logger = get_logger(__name__)
 
 T = TypeVar("T", bound="InteractiveSession")
 
@@ -310,16 +308,27 @@ class WebFetcher:
 
     async def _fetch_one_stealth(self, url: str, session: Any, sem: asyncio.Semaphore, callback: Callable) -> None:
         async with sem:
-            for attempt in range(1, 4):
+            for attempt in range(1, 5):
                 try:
                     page = await session.fetch(url, disable_resources=False, network_idle=True, timeout=90000)
+                    status = getattr(page, "status", getattr(page, "status_code", 200))
+
+                    if status in [429, 503]:
+                        if attempt < 4:
+                            wait = 30 * attempt
+                            logger.warning(f"Status {status} on {url} (attempt {attempt}/4) — retrying in {wait}s...")
+                            await asyncio.sleep(wait)
+                            continue
+                        else:
+                            raise FetcherError(f"Blocked with status {status} on {url} after 4 attempts")
+
                     callback(url, page.html_content)
                     return
                 except Exception as e:
-                    if attempt < 3:
+                    if attempt < 4:
                         wait = 15 * attempt
-                        logger.warning(f"Challenge/Timeout on {url} (attempt {attempt}) — retrying in {wait}s...")
+                        logger.warning(f"Stealth fetch error/timeout on {url} (attempt {attempt}/4) — retrying in {wait}s: {e}")
                         await asyncio.sleep(wait)
                     else:
                         logger.error(f"Failed persistently on {url}: {e}")
-                        raise FetcherError(f"Stealth fetch failed after retries: {e}") from e
+                        raise FetcherError(f"Stealth fetch failed after 4 retries: {e}") from e

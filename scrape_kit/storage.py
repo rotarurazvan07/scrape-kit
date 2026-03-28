@@ -1,6 +1,5 @@
 import glob
 import json
-import logging
 import os
 import sqlite3
 import threading
@@ -11,8 +10,9 @@ from typing import Any
 import pandas as pd
 
 from .errors import StorageError
+from .logger import get_logger
 
-logger = logging.getLogger("scrape_kit.storage")
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -34,16 +34,15 @@ def _qi(name: str) -> str:
 
 
 class BaseStorageManager:
-    """Core Generic Storage Orchestrator using SQLite in WAL mode."""
+    """Core Generic Storage Orchestrator using SQLite."""
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.row_factory = sqlite3.Row
         self.db_lock = threading.Lock()
         self._file_mtime = os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
-        logger.info("Initialized StorageManager for %s (WAL mode enabled)", db_path)
+        logger.info("Initialized StorageManager for %s", db_path)
         self._create_tables()
 
     # ── Serialization ─────────────────────────────────────────────────────────
@@ -277,7 +276,6 @@ class BaseStorageManager:
 
             logger.info("Database file changed externally, reopening %s", self.db_path)
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.row_factory = sqlite3.Row
             self._file_mtime = current_mtime
 
@@ -290,12 +288,10 @@ class BaseStorageManager:
         return candidates
 
     def flush_and_close(self) -> None:
-        """Force-flush WAL and shut down the connection cleanly."""
+        """Shut down the connection cleanly."""
         try:
             self.conn.commit()
             with self.db_lock:
-                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-                self.conn.execute("PRAGMA journal_mode=DELETE;")
                 self.conn.close()
         except sqlite3.Error as e:
             raise StorageError(f"Fatal error during shutdown: {e}") from e

@@ -1,4 +1,3 @@
-import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -6,12 +5,8 @@ from typing import Any
 import yaml
 
 from .errors import SettingsError
-
-# Configure structured logging
-
-
-# Configure structured logging
-logger = logging.getLogger("scrape_kit.settings")
+from .logger import get_logger
+logger = get_logger(__name__)
 
 
 class SettingsManager:
