@@ -8,6 +8,12 @@ import yaml
 from .errors import SettingsError
 
 # Configure structured logging
+
+import yaml
+
+from .errors import SettingsError
+
+# Configure structured logging
 logger = logging.getLogger("scrape_kit.settings")
 
 
@@ -19,10 +25,25 @@ class SettingsManager:
         self.settings: dict[str, Any] = {}
         self._load()
 
+        logger.info("SettingsManager initialized with settings: %s", self.settings)
+
     def _load(self) -> None:
         """Reload all .yaml files from the directory tree into self.settings."""
+        logger.debug("Reloading settings from %s...", self._directory)
         self.settings = {}
-        for yaml_file in sorted(self._directory.rglob("*.yaml")):
+
+        if not self._directory.exists():
+            return
+
+        if self._directory.is_file():
+            files = [self._directory]
+            base_path = self._directory.parent
+        else:
+            files = sorted(self._directory.rglob("*.yaml"))
+            base_path = self._directory.parent
+
+        for yaml_file in files:
+            logger.debug("Found config file: %s", yaml_file.name)
             try:
                 data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError as e:
@@ -33,12 +54,14 @@ class SettingsManager:
                 raise SettingsError(f"File system access failed for {yaml_file}: {e}") from e
 
             node = self.settings
-            # relative_to gets the path from self._directory.parent
-            # e.g., if self._directory is 'config', yaml_file is 'config/a/b.yaml'
-            # parts will be ('config', 'a', 'b.yaml')
-            for part in yaml_file.relative_to(self._directory.parent).parts[:-1]:
-                node = node.setdefault(part, {})
-            node[yaml_file.stem] = data
+            try:
+                # Build nested dict based on directory structure relative to parent
+                for part in yaml_file.relative_to(base_path).parts[:-1]:
+                    node = node.setdefault(part, {})
+                node[yaml_file.stem] = data
+            except ValueError:
+                # If path logic fails, just put it at root
+                self.settings[yaml_file.stem] = data
 
     def get(self, *keys: str) -> Any | None:
         """Fetch a value using dict paths: get('nested', 'key'). Reloads before fetch."""
@@ -77,11 +100,13 @@ class SettingsManager:
         """Write settings atomically under the manager's configured directory."""
         try:
             p = self._resolve_target(name, subpath)
+            logger.info("Writing settings to %s...", p)
             p.parent.mkdir(parents=True, exist_ok=True)
 
             temp_path = p.with_suffix(".tmp")
             temp_path.write_text(yaml.dump(data), encoding="utf-8")
             os.replace(temp_path, p)
+            logger.debug("Write successful for %s", name)
         except (OSError, yaml.YAMLError) as e:
             logger.error(f"write failed for {name}: {e}")
             raise SettingsError(f"write failed for {name}: {e}") from e

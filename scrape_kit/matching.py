@@ -3,6 +3,10 @@ import unicodedata
 from typing import Any
 
 from rapidfuzz import fuzz
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 
 class SimilarityEngine:
@@ -22,17 +26,21 @@ class SimilarityEngine:
           weights: token, substr, phonetic, ratio
           threshold: integer threshold for is_similar
         """
-        self.acronyms = cfg.get("acronyms", {})
-        self.synonyms = cfg.get("synonyms", {})
+        if not cfg:
+            raise ValueError("Configuration is required for SimilarityEngine")
+        else:
+            self.acronyms = cfg.get("acronyms", {})
+            self.synonyms = cfg.get("synonyms", {})
 
-        # weights for hybrid matching
-        weights = cfg.get("weights", {})
-        self.token_weight = weights.get("token", 0.5)
-        self.substr_weight = weights.get("substr", 0.1)
-        self.phonetic_weight = weights.get("phonetic", 0.1)
-        self.ratio_weight = weights.get("ratio", 0.3)
+            # weights for hybrid matching
+            weights = cfg.get("weights")
+            self.token_weight = weights.get("token")
+            self.substr_weight = weights.get("substr")
+            self.phonetic_weight = weights.get("phonetic")
+            self.ratio_weight = weights.get("ratio")
 
-        self.similarity_threshold = cfg.get("threshold", 65)
+            # similarity threshold
+            self.similarity_threshold = cfg.get("threshold")
 
         # Caches
         self._norm_cache: dict[str, str] = {}
@@ -126,8 +134,11 @@ class SimilarityEngine:
         n1 = self._normalize(s1)
         n2 = self._normalize(s2)
 
+        logger.debug("Matching '%s' via '%s' vs '%s' via '%s'", s1, n1, s2, n2)
+
         score = self.hybrid_match(n1, n2)
         res = (score > self.similarity_threshold, score)
+        logger.debug("Match Result: %s | Score: %.2f", res[0], score)
 
         self._result_cache[cache_key] = res
         return res

@@ -7,6 +7,7 @@ from .fetcher import ScrapeMode, WebFetcher
 from .matching import SimilarityEngine
 from .settings import SettingsManager
 from .storage import BaseStorageManager, BufferedStorageManager
+from .logger import get_logger, time_profiler
 
 __all__ = [
     "SettingsManager",
@@ -19,4 +20,6 @@ __all__ = [
     "FetcherError",
     "StorageError",
     "SettingsError",
+    "get_logger",
+    "time_profiler",
 ]

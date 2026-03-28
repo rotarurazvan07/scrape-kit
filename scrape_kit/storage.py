@@ -43,6 +43,7 @@ class BaseStorageManager:
         self.conn.row_factory = sqlite3.Row
         self.db_lock = threading.Lock()
         self._file_mtime = os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
+        logger.info("Initialized StorageManager for %s (WAL mode enabled)", db_path)
         self._create_tables()
 
     # ── Serialization ─────────────────────────────────────────────────────────
@@ -82,8 +83,11 @@ class BaseStorageManager:
         with self.db_lock:
             try:
                 cursor = self.conn.execute(query, params)
-                return cursor.fetchall()
+                res = cursor.fetchall()
+                logger.debug("Query: %s | Params: %s | Rows: %d", query, params, len(res))
+                return res
             except sqlite3.Error as e:
+                logger.error("Query failed: %s | Error: %s", query, e)
                 raise StorageError(f"Query [{query}] failed: {e}") from e
 
     def fetch_dataframe(
@@ -124,9 +128,11 @@ class BaseStorageManager:
             return
         with self.db_lock:
             try:
+                logger.debug("Batch execution: %s (elements: %d)", query, len(params_list))
                 self.conn.executemany(query, params_list)
                 self.conn.commit()
             except sqlite3.Error as e:
+                logger.error("Batch execution failed: %s", e)
                 self.conn.rollback()
                 raise StorageError(f"Batch execution failed: {e}") from e
 
@@ -163,9 +169,11 @@ class BaseStorageManager:
         query = f"INSERT INTO {_qi(table_name)} ({col_list}) VALUES ({placeholders})"  # nosec B608
         with self.db_lock:
             try:
+                logger.debug("Insert into %s: %s", table_name, data)
                 self.conn.execute(query, list(data.values()))
                 self.conn.commit()
             except sqlite3.Error as e:
+                logger.error("Insert failed into %s: %s", table_name, e)
                 raise StorageError(f"Insert failed on {table_name}: {e}") from e
 
     # ── Merging ───────────────────────────────────────────────────────────────
@@ -187,6 +195,7 @@ class BaseStorageManager:
 
                 for db_file in db_files:
                     try:
+                        logger.debug("Staging merge from %s...", os.path.basename(db_file))
                         self.conn.execute("ATTACH DATABASE ? AS chunk", (db_file,))
                         self.conn.execute(
                             f"INSERT INTO {_qi(staging)}"  # nosec B608
@@ -266,6 +275,7 @@ class BaseStorageManager:
             except Exception as e:
                 logger.warning("Cleanup error on reopen: %s", e)
 
+            logger.info("Database file changed externally, reopening %s", self.db_path)
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.row_factory = sqlite3.Row

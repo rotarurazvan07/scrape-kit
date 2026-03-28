@@ -34,35 +34,45 @@ class InteractiveSession:
     def __init__(self, session: DynamicSession | StealthySession) -> None:
         self.session = session
         self.page = None
+        logger.debug("InteractiveSession initialized with %s", type(session).__name__)
 
     def __enter__(self):
+        logger.info("Starting browser session...")
         self.session.start()
         # Create a persistent page that we control
         self.page = self.session.context.new_page()
+        logger.debug("Browser page created and session started")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
             if self.page:
+                logger.debug("Closing browser page...")
                 self.page.close()
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
             raise FetcherError(f"Cleanup failed: {e}") from e
+        logger.info("Closing browser session")
         self.session.close()
 
     def fetch(self, url: str, timeout: int = 90000, wait_until: str = "load") -> SimpleNamespace:
         if not self.page:
             raise RuntimeError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
 
+        logger.info("Browser fetching: %s (timeout=%dms)", url, timeout)
         self.page.goto(url, wait_until=wait_until, timeout=timeout)
+        logger.debug("Waiting 2s for dynamic content / Cloudflare settle...")
         self.page.wait_for_timeout(2000)
-        return SimpleNamespace(html_content=self.page.content())
+        content = self.page.content()
+        logger.debug("Fetch complete, content length: %d", len(content))
+        return SimpleNamespace(html_content=content)
 
     def execute_script(self, script: str) -> Any:
         if not self.page:
             raise RuntimeError("Call fetch() first")
 
         clean_script = script.strip()
+        logger.debug("Executing script: %s...", clean_script[:50])
         try:
             if clean_script.startswith("return "):
                 return self.page.evaluate(f"() => {{ {clean_script} }}")
@@ -128,11 +138,15 @@ class WebFetcher:
 
         for attempt in range(1, retries + 1):
             try:
+                logger.debug("Fast fetch attempt %d/%d for %s", attempt, retries, url)
                 page = Fetcher.get(url, stealthy_headers=stealthy_headers)
 
                 status = getattr(page, "status", getattr(page, "status_code", 200))
+                logger.debug("Response status for %s: %d", url, status)
+
                 if status in [403, 429, 503]:
                     if attempt == retries:
+                        logger.error("Final attempt failed with status %d for %s", status, url)
                         raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts")
                     wait = backoff * attempt
                     logger.warning(f"Status {status} on {url} — retrying in {wait:.0f}s (attempt {attempt}/{retries})")
@@ -146,6 +160,7 @@ class WebFetcher:
                 )
 
                 if matched:
+                    logger.debug("Retry indicator '%s' matched for %s", matched, url)
                     if attempt < retries:
                         wait = backoff * attempt
                         logger.warning(
@@ -159,8 +174,10 @@ class WebFetcher:
                         time.sleep(wait)
                         continue
                     else:
+                        logger.info("Retries exhausted for %s, escalating to browser...", url)
                         return self._escalate_to_browser(url, matched)
 
+                logger.debug("Successfully fetched content (len=%d) for %s", len(html), url)
                 return html
 
             except Exception as e:
@@ -227,8 +244,10 @@ class WebFetcher:
             return
 
         if mode == ScrapeMode.FAST:
+            logger.info("Starting batch scrape (FAST mode) for %d URLs with concurrency %d", len(urls), max_concurrency)
             self._scrape_fast(urls, callback, max_concurrency)
         elif mode == ScrapeMode.STEALTH:
+            logger.info("Starting batch scrape (STEALTH mode) for %d URLs with concurrency %d", len(urls), max_concurrency)
             self._scrape_stealth(urls, callback, max_concurrency)
         else:
             raise ValueError(f"Unsupported scrape mode: {mode}")
