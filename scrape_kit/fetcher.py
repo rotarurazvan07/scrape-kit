@@ -230,12 +230,7 @@ class WebFetcher:
         for key, value in defaults.items():
             kwargs.setdefault(key, value)
 
-        low_mem_flags = {
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--no-sandbox",
-            "--disable-setuid-sandbox"
-        }
+        low_mem_flags = {"--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"}
 
         current_args = list(kwargs.get("args", []))
         unique_args = list(set(current_args) | low_mem_flags)
