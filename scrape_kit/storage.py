@@ -41,9 +41,13 @@ class BaseStorageManager:
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.db_lock = threading.Lock()
-        self._file_mtime = os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
         logger.info("Initialized StorageManager for %s", db_path)
         self._create_tables()
+
+        # Record mtime AFTER creation tables (initialization-time writes) to avoid immediate reload
+        self._file_mtime = (
+            os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
+        )
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
