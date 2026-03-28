@@ -45,9 +45,7 @@ class BaseStorageManager:
         self._create_tables()
 
         # Record mtime AFTER creation tables (initialization-time writes) to avoid immediate reload
-        self._file_mtime = (
-            os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
-        )
+        self._file_mtime = os.path.getmtime(self.db_path) if os.path.exists(self.db_path) else 0
 
     # ── Serialization ─────────────────────────────────────────────────────────
 
