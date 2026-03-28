@@ -14,6 +14,7 @@ from scrapling.fetchers import (
 
 from .errors import FetcherError
 from .logger import get_logger
+
 logger = get_logger(__name__)
 
 T = TypeVar("T", bound="InteractiveSession")
@@ -327,7 +328,9 @@ class WebFetcher:
                 except Exception as e:
                     if attempt < 4:
                         wait = 15 * attempt
-                        logger.warning(f"Stealth fetch error/timeout on {url} (attempt {attempt}/4) — retrying in {wait}s: {e}")
+                        logger.warning(
+                            f"Stealth fetch error/timeout on {url} (attempt {attempt}/4) — retrying in {wait}s: {e}"
+                        )
                         await asyncio.sleep(wait)
                     else:
                         logger.error(f"Failed persistently on {url}: {e}")
