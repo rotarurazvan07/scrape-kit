@@ -320,6 +320,7 @@ class WebFetcher:
             raise FetcherError(f"Stealth scrape had {len(errors)} failures. Sample: {summary}")
 
     async def _fetch_one_stealth(self, url: str, session: Any, sem: asyncio.Semaphore, callback: Callable) -> None:
+        loop = asyncio.get_running_loop()
         async with sem:
             for attempt in range(1, 5):
                 try:
@@ -335,7 +336,7 @@ class WebFetcher:
                         else:
                             raise FetcherError(f"Blocked with status {status} on {url} after 4 attempts")
 
-                    callback(url, page.html_content)
+                    await loop.run_in_executor(None, callback, url, page.html_content)
                     return
                 except Exception as e:
                     if attempt < 4:
