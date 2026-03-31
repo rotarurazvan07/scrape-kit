@@ -80,25 +80,25 @@ class InteractiveSession:
             logger.error(f"Script Execution Error: {e}")
             raise
 
-    def wait_for_selector(self, selector: str, timeout: int = 30000,**kwargs: Any) -> None:
+    def wait_for_selector(self, selector: str, timeout: int = 30000, **kwargs: Any) -> None:
         if not self.page:
             raise RuntimeError("Call fetch() first")
-        self.page.wait_for_selector(selector, timeout=timeout,**kwargs)
+        self.page.wait_for_selector(selector, timeout=timeout, **kwargs)
 
-    def wait_for_function(self, expression: str, timeout: int = 30000,**kwargs: Any) -> None:
+    def wait_for_function(self, expression: str, timeout: int = 30000, **kwargs: Any) -> None:
         if not self.page:
             raise RuntimeError("Call fetch() first")
-        self.page.wait_for_function(expression, timeout=timeout,**kwargs)
+        self.page.wait_for_function(expression, timeout=timeout, **kwargs)
 
-    def click(self, selector: str, timeout: int = 30000,**kwargs: Any) -> None:
+    def click(self, selector: str, timeout: int = 30000, **kwargs: Any) -> None:
         if not self.page:
             raise RuntimeError("Call fetch() first")
-        self.page.click(selector, timeout=timeout,**kwargs)
+        self.page.click(selector, timeout=timeout, **kwargs)
 
-    def wait_for_timeout(self, ms: int,**kwargs: Any) -> None:
+    def wait_for_timeout(self, ms: int, **kwargs: Any) -> None:
         if not self.page:
             raise RuntimeError("Call fetch() first")
-        self.page.wait_for_timeout(ms,**kwargs)
+        self.page.wait_for_timeout(ms, **kwargs)
 
     def __getattr__(self, name):
         """Delegate other attributes to the underlying Scrapling session."""
