@@ -17,22 +17,23 @@ Each method has: normal case(s), edge case(s), error case.
 Plus 5 complex integration scenarios at the bottom.
 """
 
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
+
 import pytest
 
+import scrape_kit as sk
+import scrape_kit.fetcher as fetcher_module
 from scrape_kit.errors import FetcherError
 from scrape_kit.fetcher import (
     InteractiveSession,
     ScrapeMode,
     WebFetcher,
-    fetch as module_fetch,
-    is_blocked as module_is_blocked,
-    browser as module_browser,
-    scrape as module_scrape,
     _get_shared,
 )
-import scrape_kit.fetcher as fetcher_module
-import scrape_kit as sk
+from scrape_kit.fetcher import browser as module_browser
+from scrape_kit.fetcher import fetch as module_fetch
+from scrape_kit.fetcher import is_blocked as module_is_blocked
+from scrape_kit.fetcher import scrape as module_scrape
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,7 @@ def make_interactive_session(html: str = "<html>page</html>", eval_return=None):
 
 
 # ── Fixture: reset shared instance between tests ──────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def reset_shared():
@@ -114,11 +116,7 @@ class TestConfigure:
         cfg_dir = tmp_path / "config"
         cfg_dir.mkdir()
         (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators:\n"
-            "  - just a moment\n"
-            "  - checking your browser\n"
-            "block_indicators:\n"
-            "  - access denied\n",
+            "retry_indicators:\n  - just a moment\n  - checking your browser\nblock_indicators:\n  - access denied\n",
             encoding="utf-8",
         )
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
@@ -685,9 +683,7 @@ class TestFetcherScenarios:
         cfg_dir = tmp_path / "config"
         cfg_dir.mkdir()
         (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators: []\n"
-            "block_indicators:\n"
-            "  - e2e_blocked\n",
+            "retry_indicators: []\nblock_indicators:\n  - e2e_blocked\n",
             encoding="utf-8",
         )
         WebFetcher.configure(str(cfg_dir))
@@ -698,13 +694,10 @@ class TestFetcherScenarios:
         """Calling configure() twice replaces the shared instance."""
         cfg_a = tmp_path / "cfg_a"
         cfg_b = tmp_path / "cfg_b"
-        cfg_a.mkdir(); cfg_b.mkdir()
-        (cfg_a / "scraper_config.yaml").write_text(
-            "retry_indicators: [first]\nblock_indicators: []\n"
-        )
-        (cfg_b / "scraper_config.yaml").write_text(
-            "retry_indicators: [second]\nblock_indicators: []\n"
-        )
+        cfg_a.mkdir()
+        cfg_b.mkdir()
+        (cfg_a / "scraper_config.yaml").write_text("retry_indicators: [first]\nblock_indicators: []\n")
+        (cfg_b / "scraper_config.yaml").write_text("retry_indicators: [second]\nblock_indicators: []\n")
         WebFetcher.configure(str(cfg_a))
         first = fetcher_module._shared
         WebFetcher.configure(str(cfg_b))

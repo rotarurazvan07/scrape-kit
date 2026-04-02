@@ -28,14 +28,13 @@ Legacy static-class pattern (still works):
 """
 
 from .errors import FetcherError, ScrapeKitError, SettingsError, StorageError
-from .fetcher import (
+from .fetcher import (  # Module-level proxies — use these after configure() or configure_defaults()
     InteractiveSession,
     ScrapeMode,
     WebFetcher,
-    # Module-level proxies — use these after configure() or configure_defaults()
+    browser,
     fetch,
     is_blocked,
-    browser,
     scrape,
 )
 from .logger import get_logger, time_profiler

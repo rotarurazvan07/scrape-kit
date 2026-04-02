@@ -2,7 +2,6 @@ import asyncio
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, TypeVar
 
@@ -37,6 +36,7 @@ def _get_shared() -> "WebFetcher":
 
 # ── Public module-level proxies ───────────────────────────────────────────────
 # These allow `from scrape_kit.fetcher import fetch` usage without instantiation.
+
 
 def fetch(url: str, **kwargs: Any) -> str:
     """Module-level proxy — delegates to the shared WebFetcher instance."""
@@ -156,16 +156,31 @@ class WebFetcher:
 
     # ── Default indicators — override via configure() or __init__ ─────────────
     _DEFAULT_RETRY: list[str] = [
-        "403 Forbidden", "Access Denied", "429 Too Many Requests",
-        "Too Many Requests", "rate limit exceeded", "rate limited",
-        "Request throttled", "Service Unavailable", "503 Service Unavailable",
-        "Temporarily Unavailable", "overloaded", "quota exceeded",
-        "Just a moment", "Checking your browser", "verify you are a human",
+        "403 Forbidden",
+        "Access Denied",
+        "429 Too Many Requests",
+        "Too Many Requests",
+        "rate limit exceeded",
+        "rate limited",
+        "Request throttled",
+        "Service Unavailable",
+        "503 Service Unavailable",
+        "Temporarily Unavailable",
+        "overloaded",
+        "quota exceeded",
+        "Just a moment",
+        "Checking your browser",
+        "verify you are a human",
     ]
     _DEFAULT_BLOCK: list[str] = [
-        "Just a moment...", "cf-browser-verification", "Access Denied",
-        "Checking your browser", "verify you are a human",
-        "403 Forbidden", "429 Too Many Requests", "Attention Required!",
+        "Just a moment...",
+        "cf-browser-verification",
+        "Access Denied",
+        "Checking your browser",
+        "verify you are a human",
+        "403 Forbidden",
+        "429 Too Many Requests",
+        "Attention Required!",
     ]
 
     def __init__(
@@ -220,7 +235,9 @@ class WebFetcher:
         instance = cls(retry_indicators=retry, block_indicators=block)
         logger.info(
             "WebFetcher configured from '%s' (%d retry / %d block indicators)",
-            config_path, len(retry), len(block),
+            config_path,
+            len(retry),
+            len(block),
         )
 
         if set_shared:
@@ -239,7 +256,8 @@ class WebFetcher:
             _shared = instance
         logger.info(
             "WebFetcher configured with defaults (%d retry / %d block indicators)",
-            len(cls._DEFAULT_RETRY), len(cls._DEFAULT_BLOCK),
+            len(cls._DEFAULT_RETRY),
+            len(cls._DEFAULT_BLOCK),
         )
         return instance
 
@@ -280,7 +298,14 @@ class WebFetcher:
                 if matched:
                     if attempt < retries:
                         wait = backoff * attempt
-                        logger.warning("Retry indicator '%s' on %s — retrying in %.0fs (attempt %d/%d)", matched, url, wait, attempt, retries)
+                        logger.warning(
+                            "Retry indicator '%s' on %s — retrying in %.0fs (attempt %d/%d)",
+                            matched,
+                            url,
+                            wait,
+                            attempt,
+                            retries,
+                        )
                         time.sleep(wait)
                         continue
                     else:
@@ -338,7 +363,7 @@ class WebFetcher:
             kwargs.setdefault(key, value)
 
         low_mem_flags = {"--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"}
-        kwargs["args"] = list(set(list(kwargs.get("args", []))) | low_mem_flags)
+        kwargs["args"] = list(set(kwargs.get("args", [])) | low_mem_flags)
 
         if solve_cloudflare:
             session = StealthySession(headless=headless, solve_cloudflare=True, **kwargs)
@@ -411,6 +436,7 @@ class WebFetcher:
         errors: list[tuple[str, Exception]] = []
 
         async with AsyncStealthySession(max_pages=concurrency, headless=True, solve_cloudflare=True) as session:
+
             async def _worker() -> None:
                 while True:
                     try:
