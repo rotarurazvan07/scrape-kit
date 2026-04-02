@@ -374,8 +374,9 @@ class TestMergeRowByRow:
         chunk_dir.mkdir()
         make_chunk(chunk_dir / "c1.db", [("r1", "v1"), ("r2", "v2")])
         collected = []
-        db.merge_row_by_row(str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"]))
+        report = db.merge_row_by_row(str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"]))
         assert sorted(collected) == ["r1", "r2"]
+        assert report.processed_rows == 2
 
     def test_normal_flush_callback_invoked_once_per_chunk(self, db, tmp_path):
         chunk_dir = tmp_path / "chunks"
@@ -508,6 +509,7 @@ class TestBufferedInsert:
         before = len(buffered_db.ensure_buffer())
         buffered_db.insert({"id": 3, "name": "gamma", "value": "g"})
         assert len(buffered_db.ensure_buffer()) == before + 1
+        assert buffered_db._pending_rows == []
 
     def test_normal_insert_marks_buffer_dirty(self, buffered_db):
         assert buffered_db._dirty is False
@@ -542,10 +544,13 @@ class TestBufferedFlush:
         rows = buffered_db.fetch_rows("SELECT * FROM items")
         assert len(rows) == 2  # original rows untouched
 
-    def test_edge_flush_when_buffer_none_is_noop(self, buffered_db):
+    def test_edge_flush_when_buffer_none_persists_pending(self, buffered_db):
         buffered_db._buffer = None
+        buffered_db._pending_rows = [{"id": 55, "name": "late", "value": "z"}]
         buffered_db._dirty = True
-        buffered_db.flush()  # guard: if not _dirty or buffer is None → return
+        buffered_db.flush()
+        rows = buffered_db.fetch_rows("SELECT * FROM items WHERE name = ?", ("late",))
+        assert len(rows) == 1
 
     def test_normal_flush_clears_dirty_flag(self, buffered_db):
         buffered_db.insert({"id": 3, "name": "x", "value": "y"})

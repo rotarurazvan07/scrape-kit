@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 class MergeReport:
     processed_chunks: int = 0
     skipped_chunks: int = 0
+    processed_rows: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -227,24 +228,33 @@ class BaseStorageManager:
         table_name: str,
         row_callback: Callable[[sqlite3.Row], None],
         flush_callback: Callable[[], None] | None = None,
+        read_batch_size: int = 1000,
+        flush_every_rows: int | None = None,
     ) -> MergeReport:
         report = MergeReport()
+        rows_since_flush = 0
         for db_file in self.get_chunk_files(input_dir, skip_file=self.db_path):
             if not (os.path.exists(db_file) and os.path.getsize(db_file) > 100):
                 report.skipped_chunks += 1
                 continue
+            temp_conn: sqlite3.Connection | None = None
             try:
                 logger.info("Merging chunk %s...", os.path.basename(db_file))
                 temp_conn = sqlite3.connect(db_file)
                 temp_conn.row_factory = sqlite3.Row
                 cursor = temp_conn.execute(f"SELECT * FROM {_qi(table_name)}")  # nosec B608
-                chunk_rows = cursor.fetchall()
-                temp_conn.close()
-
-                for row in chunk_rows:
-                    row_callback(row)
-
-                if flush_callback:
+                while True:
+                    chunk_rows = cursor.fetchmany(read_batch_size)
+                    if not chunk_rows:
+                        break
+                    for row in chunk_rows:
+                        row_callback(row)
+                        report.processed_rows += 1
+                        rows_since_flush += 1
+                        if flush_callback and flush_every_rows and rows_since_flush >= flush_every_rows:
+                            flush_callback()
+                            rows_since_flush = 0
+                if flush_callback and not flush_every_rows:
                     flush_callback()
                 report.processed_chunks += 1
 
@@ -253,6 +263,9 @@ class BaseStorageManager:
                 report.skipped_chunks += 1
                 report.errors.append(f"{db_file}: {e}")
                 continue
+            finally:
+                if temp_conn is not None:
+                    temp_conn.close()
 
         return report
 
@@ -316,24 +329,40 @@ class BufferedStorageManager(BaseStorageManager):
         self._table_name = table_name
         self._buffer: pd.DataFrame | None = None
         self._dirty: bool = False
+        self._pending_rows: list[dict[str, Any]] = []
         super().__init__(db_path)
+
+    def _materialize_pending_rows(self) -> None:
+        if not self._pending_rows:
+            return
+
+        pending_df = pd.DataFrame(self._pending_rows)
+        self._pending_rows.clear()
+
+        if self._buffer is None or self._buffer.empty:
+            self._buffer = pending_df.reset_index(drop=True)
+            return
+
+        pending_df = pending_df.dropna(axis=1, how="all")
+        self._buffer = pd.concat([self._buffer, pending_df], ignore_index=True)
 
     def ensure_buffer(self) -> pd.DataFrame:
         """Lazy-load the entire table into a DataFrame if not already cached."""
-        if self._buffer is not None:
-            return self._buffer
-        self._buffer = self.fetch_dataframe(
-            f"SELECT * FROM {_qi(self._table_name)}"  # nosec B608
-        )
+        if self._buffer is None:
+            self._buffer = self.fetch_dataframe(
+                f"SELECT * FROM {_qi(self._table_name)}"  # nosec B608
+            )
+        self._materialize_pending_rows()
         return self._buffer
 
     def flush(self) -> None:
         """Write the buffer back to SQLite."""
-        if not self._dirty or self._buffer is None:
+        if not self._dirty:
             return
+        df = self.ensure_buffer()
         with self.db_lock:
             try:
-                self._buffer.to_sql(self._table_name, self.conn, if_exists="replace", index=False)
+                df.to_sql(self._table_name, self.conn, if_exists="replace", index=False)
                 self.conn.commit()
                 self._dirty = False
             except Exception as e:
@@ -360,6 +389,10 @@ class BufferedStorageManager(BaseStorageManager):
         if table != self._table_name:
             raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
 
+        for row in self._pending_rows:
+            if row.get(column_name) == target_value:
+                return True
+
         df = self.ensure_buffer()
         if df.empty:
             return False
@@ -379,15 +412,7 @@ class BufferedStorageManager(BaseStorageManager):
         if table != self._table_name:
             raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
 
-        df = self.ensure_buffer()
-        row_df = pd.DataFrame([payload])
-
-        # Future-proof against pandas concat dtype changes with empty/all-NA inputs.
-        if df.empty:
-            self._buffer = row_df.reset_index(drop=True)
-        else:
-            row_df = row_df.dropna(axis=1, how="all")
-            self._buffer = pd.concat([df, row_df], ignore_index=True)
+        self._pending_rows.append(dict(payload))
         self._dirty = True
 
     def clear_database(self, table_name: str) -> None:
@@ -395,6 +420,7 @@ class BufferedStorageManager(BaseStorageManager):
         super().clear_database(table_name)
         if table_name == self._table_name:
             self._buffer = None
+            self._pending_rows = []
             self._dirty = False
 
     def reopen_if_changed(self) -> None:
@@ -403,6 +429,7 @@ class BufferedStorageManager(BaseStorageManager):
         super().reopen_if_changed()
         if self._file_mtime != prev_mtime:
             self._buffer = None
+            self._pending_rows = []
             self._dirty = False
 
     def close(self) -> None:
