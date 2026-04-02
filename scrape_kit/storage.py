@@ -380,7 +380,14 @@ class BufferedStorageManager(BaseStorageManager):
             raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
 
         df = self.ensure_buffer()
-        self._buffer = pd.concat([df, pd.DataFrame([payload])], ignore_index=True)
+        row_df = pd.DataFrame([payload])
+
+        # Future-proof against pandas concat dtype changes with empty/all-NA inputs.
+        if df.empty:
+            self._buffer = row_df.reset_index(drop=True)
+        else:
+            row_df = row_df.dropna(axis=1, how="all")
+            self._buffer = pd.concat([df, row_df], ignore_index=True)
         self._dirty = True
 
     def clear_database(self, table_name: str) -> None:
