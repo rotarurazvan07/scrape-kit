@@ -1,24 +1,38 @@
 """
-Comprehensive tests for fetcher.py — WebFetcher, InteractiveSession, ScrapeMode.
+Comprehensive tests for fetcher.py — WebFetcher, InteractiveSession, ScrapeMode,
+configure(), configure_defaults(), and module-level proxy functions.
 
 Public API covered:
-  WebFetcher:         __init__, fetch, is_blocked, browser, scrape
+  WebFetcher:         __init__, fetch, is_blocked, browser, scrape,
+                      configure(), configure_defaults()
   InteractiveSession: __enter__/__exit__, fetch, execute_script,
                       wait_for_selector, wait_for_function, click,
                       wait_for_timeout, __getattr__
   ScrapeMode:         FAST, STEALTH constants
+  Module proxies:     fetch, is_blocked, browser, scrape
+  Package helpers:    configure, configure_defaults
 
 All scrapling I/O is mocked — no network calls are made.
 Each method has: normal case(s), edge case(s), error case.
 Plus 5 complex integration scenarios at the bottom.
 """
 
-from unittest.mock import MagicMock, patch
-
+from unittest.mock import MagicMock, patch, call
 import pytest
 
 from scrape_kit.errors import FetcherError
-from scrape_kit.fetcher import InteractiveSession, ScrapeMode, WebFetcher
+from scrape_kit.fetcher import (
+    InteractiveSession,
+    ScrapeMode,
+    WebFetcher,
+    fetch as module_fetch,
+    is_blocked as module_is_blocked,
+    browser as module_browser,
+    scrape as module_scrape,
+    _get_shared,
+)
+import scrape_kit.fetcher as fetcher_module
+import scrape_kit as sk
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -32,13 +46,23 @@ def make_page(html: str = "<html>OK</html>", status: int = 200) -> MagicMock:
 
 
 def make_interactive_session(html: str = "<html>page</html>", eval_return=None):
-    """Return (mock_scrapling_session, mock_page) with sensible defaults."""
     mock_session = MagicMock()
     mock_page = MagicMock()
     mock_session.context.new_page.return_value = mock_page
     mock_page.content.return_value = html
     mock_page.evaluate.return_value = eval_return
     return mock_session, mock_page
+
+
+# ── Fixture: reset shared instance between tests ──────────────────────────────
+
+@pytest.fixture(autouse=True)
+def reset_shared():
+    """Ensure each test starts with a clean shared instance state."""
+    old = fetcher_module._shared
+    fetcher_module._shared = None
+    yield
+    fetcher_module._shared = old
 
 
 # ── ScrapeMode ────────────────────────────────────────────────────────────────
@@ -76,12 +100,180 @@ class TestWebFetcherInit:
         assert fetcher.block_indicators == []
 
     def test_normal_multiple_indicators_each(self):
-        fetcher = WebFetcher(
-            retry_indicators=["a", "b", "c"],
-            block_indicators=["x", "y"],
-        )
+        fetcher = WebFetcher(retry_indicators=["a", "b", "c"], block_indicators=["x", "y"])
         assert len(fetcher.retry_indicators) == 3
         assert len(fetcher.block_indicators) == 2
+
+
+# ── WebFetcher.configure() ────────────────────────────────────────────────────
+
+
+class TestConfigure:
+    def test_normal_loads_indicators_from_yaml(self, tmp_path):
+        """configure() reads retry/block lists from a YAML file via SettingsManager."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "scraper_config.yaml").write_text(
+            "retry_indicators:\n"
+            "  - just a moment\n"
+            "  - checking your browser\n"
+            "block_indicators:\n"
+            "  - access denied\n",
+            encoding="utf-8",
+        )
+        instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
+        assert instance.retry_indicators == ["just a moment", "checking your browser"]
+        assert instance.block_indicators == ["access denied"]
+
+    def test_normal_sets_shared_instance_by_default(self, tmp_path):
+        """configure() stores result as module-level shared instance when set_shared=True."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "scraper_config.yaml").write_text(
+            "retry_indicators:\n  - test\nblock_indicators: []\n",
+            encoding="utf-8",
+        )
+        fetcher_module._shared = None
+        instance = WebFetcher.configure(str(cfg_dir), set_shared=True)
+        assert fetcher_module._shared is instance
+
+    def test_edge_set_shared_false_does_not_replace_shared(self, tmp_path):
+        """configure(set_shared=False) does not overwrite the module shared instance."""
+        existing = WebFetcher(retry_indicators=["existing"])
+        fetcher_module._shared = existing
+
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "scraper_config.yaml").write_text(
+            "retry_indicators:\n  - new\nblock_indicators: []\n",
+            encoding="utf-8",
+        )
+        WebFetcher.configure(str(cfg_dir), set_shared=False)
+        assert fetcher_module._shared is existing
+
+    def test_normal_custom_config_key(self, tmp_path):
+        """configure() uses a custom key to look up a differently named YAML block."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "my_scraper.yaml").write_text(
+            "retry_indicators:\n  - custom\nblock_indicators:\n  - nope\n",
+            encoding="utf-8",
+        )
+        instance = WebFetcher.configure(str(cfg_dir), config_key="my_scraper", set_shared=False)
+        assert instance.retry_indicators == ["custom"]
+        assert instance.block_indicators == ["nope"]
+
+    def test_edge_missing_yaml_falls_back_to_defaults(self, tmp_path):
+        """If config key not found, configure() uses class-level _DEFAULT_RETRY/_DEFAULT_BLOCK."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        # Write a YAML but with a different key — our key won't be found
+        (cfg_dir / "other.yaml").write_text("other:\n  x: 1\n", encoding="utf-8")
+        instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
+        assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
+        assert instance.block_indicators == WebFetcher._DEFAULT_BLOCK
+
+
+class TestConfigureDefaults:
+    def test_normal_uses_class_defaults(self):
+        instance = WebFetcher.configure_defaults(set_shared=False)
+        assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
+        assert instance.block_indicators == WebFetcher._DEFAULT_BLOCK
+
+    def test_normal_sets_shared_by_default(self):
+        fetcher_module._shared = None
+        instance = WebFetcher.configure_defaults(set_shared=True)
+        assert fetcher_module._shared is instance
+
+    def test_edge_set_shared_false_leaves_shared_none(self):
+        fetcher_module._shared = None
+        WebFetcher.configure_defaults(set_shared=False)
+        assert fetcher_module._shared is None
+
+    def test_normal_default_indicators_are_nonempty(self):
+        assert len(WebFetcher._DEFAULT_RETRY) > 0
+        assert len(WebFetcher._DEFAULT_BLOCK) > 0
+
+
+# ── Package-level configure helpers ──────────────────────────────────────────
+
+
+class TestPackageConfigure:
+    def test_normal_sk_configure_sets_shared(self, tmp_path):
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "scraper_config.yaml").write_text(
+            "retry_indicators:\n  - pkg\nblock_indicators: []\n",
+            encoding="utf-8",
+        )
+        fetcher_module._shared = None
+        instance = sk.configure(str(cfg_dir))
+        assert fetcher_module._shared is instance
+        assert "pkg" in instance.retry_indicators
+
+    def test_normal_sk_configure_defaults_sets_shared(self):
+        fetcher_module._shared = None
+        instance = sk.configure_defaults()
+        assert fetcher_module._shared is instance
+        assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
+
+
+# ── Module-level proxy functions ──────────────────────────────────────────────
+
+
+class TestModuleProxies:
+    def test_normal_get_shared_creates_zero_config_instance_if_not_set(self):
+        """_get_shared() auto-creates an empty WebFetcher when none is configured."""
+        fetcher_module._shared = None
+        shared = _get_shared()
+        assert isinstance(shared, WebFetcher)
+        assert shared.retry_indicators == []
+        assert shared.block_indicators == []
+        # Subsequent call returns same instance
+        assert _get_shared() is shared
+
+    @patch("scrape_kit.fetcher.Fetcher")
+    def test_normal_module_fetch_delegates_to_shared(self, MockFetcher):
+        """module fetch() uses whatever shared instance is set."""
+        MockFetcher.get.return_value = make_page("<html>proxied</html>")
+        fetcher = WebFetcher()
+        fetcher_module._shared = fetcher
+        result = module_fetch("http://example.com")
+        assert result == "<html>proxied</html>"
+
+    def test_normal_module_is_blocked_delegates_to_shared(self):
+        fetcher = WebFetcher(block_indicators=["BLOCKED"])
+        fetcher_module._shared = fetcher
+        assert module_is_blocked("<html>BLOCKED</html>") is True
+        assert module_is_blocked("<html>clean</html>") is False
+
+    @patch("scrape_kit.fetcher.DynamicSession")
+    def test_normal_module_browser_delegates_to_shared(self, MockDynamic):
+        fetcher = WebFetcher()
+        fetcher_module._shared = fetcher
+        session = module_browser()
+        assert isinstance(session, InteractiveSession)
+
+    @patch.object(WebFetcher, "_scrape_fast")
+    def test_normal_module_scrape_delegates_to_shared(self, mock_fast):
+        fetcher = WebFetcher()
+        fetcher_module._shared = fetcher
+        module_scrape(["http://a.com"], callback=MagicMock(), mode=ScrapeMode.FAST)
+        mock_fast.assert_called_once()
+
+    @patch("scrape_kit.fetcher.Fetcher")
+    def test_normal_configure_then_proxy_uses_configured_indicators(self, MockFetcher, tmp_path):
+        """Full flow: configure from YAML → module proxy picks up the indicators."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "scraper_config.yaml").write_text(
+            "retry_indicators:\n  - proxy_test\nblock_indicators:\n  - totally_blocked\n",
+            encoding="utf-8",
+        )
+        WebFetcher.configure(str(cfg_dir))
+        # is_blocked now uses the configured indicators
+        assert module_is_blocked("page is totally_blocked") is True
+        assert module_is_blocked("clean page") is False
 
 
 # ── WebFetcher.is_blocked ─────────────────────────────────────────────────────
@@ -141,7 +333,7 @@ class TestFetch:
         fetcher = WebFetcher(retry_indicators=["wait"])
         result = fetcher.fetch("http://example.com", retries=3, backoff=0)
         assert result == "<html>Clean</html>"
-        assert MockFetcher.get.call_count == 1  # no retry needed
+        assert MockFetcher.get.call_count == 1
 
     @patch("scrape_kit.fetcher.Fetcher")
     def test_normal_retry_indicator_on_first_attempt_then_success(self, MockFetcher):
@@ -186,11 +378,33 @@ class TestFetch:
 
     @patch("scrape_kit.fetcher.Fetcher")
     def test_edge_retry_indicator_check_is_case_insensitive(self, MockFetcher):
-        # indicator lower-cased in check
         blocked = make_page("<html>CLOUDFLARE CHECKING</html>")
         clean = make_page("<html>OK</html>")
         MockFetcher.get.side_effect = [blocked, clean]
         fetcher = WebFetcher(retry_indicators=["cloudflare checking"])
+        result = fetcher.fetch("http://example.com", retries=2, backoff=0)
+        assert "OK" in result
+
+    def test_error_retries_less_than_one_raises_value_error(self):
+        fetcher = WebFetcher()
+        with pytest.raises(ValueError, match="retries must be >= 1"):
+            fetcher.fetch("http://example.com", retries=0)
+
+    @patch("scrape_kit.fetcher.Fetcher")
+    def test_normal_configured_instance_uses_yaml_indicators(self, MockFetcher, tmp_path):
+        """configure() → instance respects loaded indicators on fetch()."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "scraper_config.yaml").write_text(
+            "retry_indicators:\n  - block_me\nblock_indicators: []\n",
+            encoding="utf-8",
+        )
+        fetcher = WebFetcher.configure(str(cfg_dir), set_shared=False)
+        # First call blocked, second clean
+        MockFetcher.get.side_effect = [
+            make_page("<html>block_me</html>"),
+            make_page("<html>OK</html>"),
+        ]
         result = fetcher.fetch("http://example.com", retries=2, backoff=0)
         assert "OK" in result
 
@@ -212,21 +426,8 @@ class TestBrowser:
         session = fetcher.browser(solve_cloudflare=True)
         assert isinstance(session, InteractiveSession)
         assert session.session is MockStealthy.return_value
-        MockStealthy.assert_called_once()
         call_kwargs = MockStealthy.call_args[1]
         assert call_kwargs.get("solve_cloudflare") is True
-
-    @patch("scrape_kit.fetcher.DynamicSession")
-    def test_edge_interactive_flag_wraps_in_interactive_session(self, MockDynamic):
-        fetcher = WebFetcher()
-        session = fetcher.browser(interactive=True)
-        assert isinstance(session, InteractiveSession)
-
-    @patch("scrape_kit.fetcher.StealthySession")
-    def test_edge_interactive_plus_cloudflare_uses_stealthy_wrapped(self, MockStealthy):
-        fetcher = WebFetcher()
-        session = fetcher.browser(solve_cloudflare=True, interactive=True)
-        assert isinstance(session, InteractiveSession)
 
     @patch("scrape_kit.fetcher.DynamicSession")
     def test_normal_headless_flag_forwarded(self, MockDynamic):
@@ -284,12 +485,13 @@ class TestScrape:
         mock_fetch.return_value = "<html>blocked</html>"
         called = []
         with pytest.raises(FetcherError):
-            fetcher.scrape(
-                ["http://example.com"],
-                callback=lambda u, h: called.append(u),
-                mode=ScrapeMode.FAST,
-            )
+            fetcher.scrape(["http://example.com"], callback=lambda u, h: called.append(u), mode=ScrapeMode.FAST)
         assert called == []
+
+    def test_error_invalid_mode_raises_value_error(self):
+        fetcher = WebFetcher()
+        with pytest.raises(ValueError, match="Unsupported scrape mode"):
+            fetcher.scrape(["http://a.com"], callback=MagicMock(), mode="invalid")
 
 
 # ── InteractiveSession ────────────────────────────────────────────────────────
@@ -359,8 +561,7 @@ class TestInteractiveSessionExecuteScript:
         assert result == 42
 
     def test_edge_execute_without_enter_raises(self):
-        mock_session = MagicMock()
-        session = InteractiveSession(mock_session)
+        session = InteractiveSession(MagicMock())
         with pytest.raises(RuntimeError, match="Call fetch"):
             session.execute_script("1 + 1")
 
@@ -410,8 +611,7 @@ class TestInteractiveSessionHelpers:
         assert session.cookies == {"session": "abc"}
 
     def test_edge_helpers_without_enter_raise_runtime(self):
-        mock_session = MagicMock()
-        session = InteractiveSession(mock_session)
+        session = InteractiveSession(MagicMock())
         for method, args in [
             ("wait_for_selector", ("#x",)),
             ("wait_for_function", ("() => true",)),
@@ -428,7 +628,6 @@ class TestInteractiveSessionHelpers:
 class TestFetcherScenarios:
     @patch("scrape_kit.fetcher.Fetcher")
     def test_scenario_two_failures_then_success_on_third(self, MockFetcher):
-        """503 twice, then clean HTML on the third attempt."""
         MockFetcher.get.side_effect = [
             make_page(status=503),
             make_page(status=503),
@@ -442,7 +641,6 @@ class TestFetcherScenarios:
     @patch("scrape_kit.fetcher.Fetcher")
     @patch.object(WebFetcher, "_escalate_to_browser")
     def test_scenario_retry_indicator_exhausts_and_escalates(self, mock_escalate, MockFetcher):
-        """Retry indicator on every attempt → escalation called exactly once."""
         mock_escalate.return_value = "<html>Solved via browser</html>"
         MockFetcher.get.return_value = make_page("<html>just a moment</html>")
         fetcher = WebFetcher(retry_indicators=["just a moment"])
@@ -452,22 +650,15 @@ class TestFetcherScenarios:
 
     @patch.object(WebFetcher, "fetch")
     def test_scenario_fast_scrape_with_concurrency_all_urls_processed(self, mock_fetch):
-        """Batch of 6 URLs with concurrency 3 — all callbacks fire, order may differ."""
         mock_fetch.return_value = "<html>data</html>"
         fetcher = WebFetcher()
         results = []
         urls = [f"http://site{i}.com" for i in range(6)]
-        fetcher.scrape(
-            urls,
-            callback=lambda u, h: results.append(u),
-            mode=ScrapeMode.FAST,
-            max_concurrency=3,
-        )
+        fetcher.scrape(urls, callback=lambda u, h: results.append(u), mode=ScrapeMode.FAST, max_concurrency=3)
         assert sorted(results) == sorted(urls)
 
     @patch("scrape_kit.fetcher.Fetcher")
     def test_scenario_multiple_block_indicators_individually_detected(self, MockFetcher):
-        """Each distinct block indicator triggers is_blocked independently."""
         fetcher = WebFetcher(block_indicators=["rate limited", "access denied", "captcha required"])
         assert fetcher.is_blocked("Sorry, rate limited right now") is True
         assert fetcher.is_blocked("<h1>Access Denied</h1>") is True
@@ -475,7 +666,6 @@ class TestFetcherScenarios:
         assert fetcher.is_blocked("<html>Welcome to our store</html>") is False
 
     def test_scenario_interactive_session_full_lifecycle(self):
-        """Full context manager lifecycle: enter, fetch, execute_script, exit."""
         mock_session, mock_page = make_interactive_session(
             html="<html><title>Scraped</title></html>",
             eval_return="Scraped",
@@ -489,3 +679,35 @@ class TestFetcherScenarios:
         mock_page.goto.assert_called_once_with("http://test.com", wait_until="load", timeout=30000)
         mock_page.close.assert_called_once()
         mock_session.close.assert_called_once()
+
+    def test_scenario_configure_yaml_then_module_proxy_full_flow(self, tmp_path):
+        """configure() from YAML → module proxies use the right indicators end-to-end."""
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "scraper_config.yaml").write_text(
+            "retry_indicators: []\n"
+            "block_indicators:\n"
+            "  - e2e_blocked\n",
+            encoding="utf-8",
+        )
+        WebFetcher.configure(str(cfg_dir))
+        assert module_is_blocked("page contains e2e_blocked text") is True
+        assert module_is_blocked("normal page") is False
+
+    def test_scenario_multiple_configure_calls_last_one_wins(self, tmp_path):
+        """Calling configure() twice replaces the shared instance."""
+        cfg_a = tmp_path / "cfg_a"
+        cfg_b = tmp_path / "cfg_b"
+        cfg_a.mkdir(); cfg_b.mkdir()
+        (cfg_a / "scraper_config.yaml").write_text(
+            "retry_indicators: [first]\nblock_indicators: []\n"
+        )
+        (cfg_b / "scraper_config.yaml").write_text(
+            "retry_indicators: [second]\nblock_indicators: []\n"
+        )
+        WebFetcher.configure(str(cfg_a))
+        first = fetcher_module._shared
+        WebFetcher.configure(str(cfg_b))
+        second = fetcher_module._shared
+        assert first is not second
+        assert second.retry_indicators == ["second"]

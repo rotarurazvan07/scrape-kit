@@ -234,6 +234,7 @@ class BaseStorageManager:
                 report.skipped_chunks += 1
                 continue
             try:
+                logger.info("Merging chunk %s...", os.path.basename(db_file))
                 temp_conn = sqlite3.connect(db_file)
                 temp_conn.row_factory = sqlite3.Row
                 cursor = temp_conn.execute(f"SELECT * FROM {_qi(table_name)}")  # nosec B608
