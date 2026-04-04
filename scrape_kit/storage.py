@@ -41,7 +41,7 @@ class BaseStorageManager:
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.db_lock = threading.Lock()
+        self.db_lock = threading.RLock()
         logger.info("Initialized StorageManager for %s", db_path)
         self._create_tables()
 
@@ -180,7 +180,31 @@ class BaseStorageManager:
 
     # ── Merging ───────────────────────────────────────────────────────────────
 
-    def merge_databases(self, input_dir: str, table_name: str) -> MergeReport:
+    def create_staging_table(self, source_table: str, staging_name: str) -> None:
+        """Create a temporary-like staging table with the same schema as source."""
+        with self.db_lock:
+            try:
+                self.conn.execute(f"DROP TABLE IF EXISTS {_qi(staging_name)}")  # nosec B608
+                self.conn.execute(
+                    f"CREATE TABLE {_qi(staging_name)}"  # nosec B608
+                    f" AS SELECT * FROM {_qi(source_table)} WHERE 0"
+                )
+                self.conn.commit()
+            except sqlite3.Error as e:
+                raise StorageError(f"Staging table creation failed: {e}") from e
+
+    def merge_databases(
+        self,
+        input_dir: str,
+        table_name: str,
+        end_process_query: str | None = None,
+    ) -> MergeReport:
+        """Merge all .db chunks from input_dir into the main database.
+
+        Bulk-fetches data using SQLite ATTACH to a staging table.
+        If end_process_query is provided, it must describe an INSERT INTO table_name SELECT ...
+        pattern to move data from the staging table to the final destination.
+        """
         db_files = self.get_chunk_files(input_dir, skip_file=self.db_path)
         if not db_files:
             return MergeReport()
@@ -190,11 +214,10 @@ class BaseStorageManager:
 
         with self.db_lock:
             try:
-                self.conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {_qi(staging)}"  # nosec B608
-                    f" AS SELECT * FROM {_qi(table_name)} WHERE 0"
-                )
+                # 1. Prepare Staging
+                self.create_staging_table(table_name, staging)
 
+                # 2. Bulk Attach and Insert
                 for db_file in db_files:
                     try:
                         logger.debug("Staging merge from %s...", os.path.basename(db_file))
@@ -217,6 +240,15 @@ class BaseStorageManager:
                             report.errors.append(f"{db_file} detach: {detach_e}")
 
                 logger.info("Merged %d chunks into %s", report.processed_chunks, staging)
+
+                # 3. Optional Deduplication/Finalization step
+                if end_process_query:
+                    logger.info("Running end process query...")
+                    self.conn.execute(end_process_query)
+                    self.conn.commit()
+                    self.conn.execute(f"DROP TABLE IF EXISTS {_qi(staging)}")  # nosec B608
+                    self.conn.commit()
+
             except sqlite3.Error as e:
                 raise StorageError(f"Merge failed: {e}") from e
 
@@ -325,11 +357,12 @@ class BaseStorageManager:
 class BufferedStorageManager(BaseStorageManager):
     """Storage manager with an in-memory pandas buffer for high-speed lookups."""
 
-    def __init__(self, db_path: str, table_name: str) -> None:
+    def __init__(self, db_path: str, table_name: str, preserve_schema: bool = True) -> None:
         self._table_name = table_name
         self._buffer: pd.DataFrame | None = None
         self._dirty: bool = False
         self._pending_rows: list[dict[str, Any]] = []
+        self._preserve_schema = preserve_schema
         super().__init__(db_path)
 
     def _materialize_pending_rows(self) -> None:
@@ -362,11 +395,18 @@ class BufferedStorageManager(BaseStorageManager):
         df = self.ensure_buffer()
         with self.db_lock:
             try:
-                df.to_sql(self._table_name, self.conn, if_exists="replace", index=False)
+                if self._preserve_schema:
+                    # DELETE + append preserves custom schema/indexes/triggers
+                    self.conn.execute(f"DELETE FROM {_qi(self._table_name)}")  # nosec B608
+                    if not df.empty:
+                        df.to_sql(self._table_name, self.conn, if_exists="append", index=False)
+                else:
+                    # replace drops and recreates the table (standard pandas behavior)
+                    df.to_sql(self._table_name, self.conn, if_exists="replace", index=False)
                 self.conn.commit()
                 self._dirty = False
             except Exception as e:
-                raise StorageError(f"Buffer flush failed: {e}") from e
+                raise StorageError(f"Buffer flush failed for {self._table_name}: {e}") from e
 
     def exists(
         self,
