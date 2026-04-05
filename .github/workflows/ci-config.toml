@@ -1,10 +1,23 @@
 # ════════════════════════════════════════════════════════════════════════════
-# CI Configuration for scrape-kit
+# CI Configuration
 # ════════════════════════════════════════════════════════════════════════════
-# This file is read by the CI workflow. Edit the sections below to customize
-# analysis behavior. The CI workflow uses these values when pyproject.toml
-# is not present or doesn't contain the relevant sections.
+# Edit the [ci] section below to adapt this workflow for your repo.
+# Only 4 values need to be changed:
+#   python-version   — Python version for non-matrix jobs
+#   src-dirs         — Source code dirs (space-separated)
+#   test-dirs        — Test dirs (space-separated)
+#   coverage-fail-under — Min coverage % to pass
+#
+# The [mypy], [ruff], [isort] sections are used directly by those tools.
 # ════════════════════════════════════════════════════════════════════════════
+
+[ci]
+python-version = "3.10"
+src-dirs = "scrape_kit"
+test-dirs = "tests"
+coverage-fail-under = 80
+
+# ── Tool configs (used directly by the tools) ───────────────────────────────
 
 [ruff]
 line-length = 127
@@ -18,18 +31,17 @@ ignore = ["UP"]
 quote-style = "double"
 
 [mypy]
-python-version = "3.10"
+python_version = "3.10"
 strict = true
-ignore-missing-imports = true
+ignore_missing_imports = true
 
 [isort]
 profile = "black"
-line-length = 127
+line_length = 127
 
 [coverage]
 source = ["scrape_kit"]
-fail-under = 80
+omit = ["tests/*"]
 
 [pytest]
 testpaths = ["tests"]
-timeout = 60
