@@ -266,40 +266,82 @@ class BaseStorageManager:
         report = MergeReport()
         rows_since_flush = 0
         for db_file in self.get_chunk_files(input_dir, skip_file=self.db_path):
-            if not (os.path.exists(db_file) and os.path.getsize(db_file) > 100):
+            if not self._is_valid_chunk(db_file):
                 report.skipped_chunks += 1
                 continue
-            temp_conn: sqlite3.Connection | None = None
             try:
-                logger.info("Merging chunk %s...", os.path.basename(db_file))
-                temp_conn = sqlite3.connect(db_file)
-                temp_conn.row_factory = sqlite3.Row
-                cursor = temp_conn.execute(f"SELECT * FROM {_qi(table_name)}")  # nosec B608
-                while True:
-                    chunk_rows = cursor.fetchmany(read_batch_size)
-                    if not chunk_rows:
-                        break
-                    for row in chunk_rows:
-                        row_callback(row)
-                        report.processed_rows += 1
-                        rows_since_flush += 1
-                        if flush_callback and flush_every_rows and rows_since_flush >= flush_every_rows:
-                            flush_callback()
-                            rows_since_flush = 0
-                if flush_callback and not flush_every_rows:
-                    flush_callback()
+                rows_processed, rows_since_flush = self._process_chunk(
+                    db_file, table_name, row_callback, flush_callback,
+                    read_batch_size, flush_every_rows, rows_since_flush, report
+                )
                 report.processed_chunks += 1
-
             except sqlite3.Error as e:
-                logger.error("Skipping chunk %s: %s", db_file, e)
-                report.skipped_chunks += 1
-                report.errors.append(f"{db_file}: {e}")
-                continue
-            finally:
-                if temp_conn is not None:
-                    temp_conn.close()
+                self._handle_chunk_error(db_file, e, report)
 
         return report
+
+    def _is_valid_chunk(self, db_file: str) -> bool:
+        """Check if chunk file exists and is large enough."""
+        return os.path.exists(db_file) and os.path.getsize(db_file) > 100
+
+    def _process_chunk(
+        self,
+        db_file: str,
+        table_name: str,
+        row_callback: Callable[[sqlite3.Row], None],
+        flush_callback: Callable[[], None] | None,
+        read_batch_size: int,
+        flush_every_rows: int | None,
+        rows_since_flush: int,
+        report: MergeReport,
+    ) -> tuple[int, int]:
+        """Process a single chunk file row by row."""
+        logger.info("Merging chunk %s...", os.path.basename(db_file))
+        temp_conn: sqlite3.Connection | None = None
+        try:
+            temp_conn = sqlite3.connect(db_file)
+            temp_conn.row_factory = sqlite3.Row
+            cursor = temp_conn.execute(f"SELECT * FROM {_qi(table_name)}")  # nosec B608
+            while True:
+                chunk_rows = cursor.fetchmany(read_batch_size)
+                if not chunk_rows:
+                    break
+                for row in chunk_rows:
+                    row_callback(row)
+                    report.processed_rows += 1
+                    rows_since_flush += 1
+                    rows_since_flush = self._maybe_flush(
+                        flush_callback, flush_every_rows, rows_since_flush
+                    )
+            if flush_callback and not flush_every_rows:
+                flush_callback()
+            return report.processed_rows, rows_since_flush
+        finally:
+            if temp_conn is not None:
+                temp_conn.close()
+
+    def _maybe_flush(
+        self,
+        flush_callback: Callable[[], None] | None,
+        flush_every_rows: int | None,
+        rows_since_flush: int,
+    ) -> int:
+        """Flush if row threshold reached. Returns updated rows_since_flush."""
+        if flush_callback and flush_every_rows and rows_since_flush >= flush_every_rows:
+            flush_callback()
+            return 0
+        return rows_since_flush
+
+    def _handle_chunk_error(
+        self,
+        db_file: str,
+        error: sqlite3.Error,
+        report: MergeReport,
+    ) -> None:
+        """Log chunk error and update report."""
+        logger.error("Skipping chunk %s: %s", db_file, error)
+        report.skipped_chunks += 1
+        report.errors.append(f"{db_file}: {error}")
 
     # ── Internals ─────────────────────────────────────────────────────────────
 

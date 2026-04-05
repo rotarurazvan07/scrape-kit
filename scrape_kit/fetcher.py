@@ -80,7 +80,7 @@ class InteractiveSession:
         logger.debug("Browser page created and session started")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, _exc_type, _exc_val, _exc_tb):
         try:
             if self.page:
                 logger.debug("Closing browser page...")
@@ -275,58 +275,105 @@ class WebFetcher:
 
         for attempt in range(1, retries + 1):
             try:
-                logger.debug("Fast fetch attempt %d/%d for %s", attempt, retries, url)
-                page = Fetcher.get(url, stealthy_headers=stealthy_headers)
-
-                status = getattr(page, "status", getattr(page, "status_code", 200))
-                logger.debug("Response status for %s: %d", url, status)
-
-                if status in [403, 429, 503]:
-                    if attempt == retries:
-                        raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts")
-                    wait = backoff * attempt
-                    logger.warning("Status %d on %s — retrying in %.0fs (attempt %d/%d)", status, url, wait, attempt, retries)
-                    time.sleep(wait)
-                    continue
-
-                html = page.html_content
-                matched = next(
-                    (ind for ind in self.retry_indicators if ind.lower() in html.lower()),
-                    None,
-                )
-
-                if matched:
-                    if attempt < retries:
-                        wait = backoff * attempt
-                        logger.warning(
-                            "Retry indicator '%s' on %s — retrying in %.0fs (attempt %d/%d)",
-                            matched,
-                            url,
-                            wait,
-                            attempt,
-                            retries,
-                        )
-                        time.sleep(wait)
-                        continue
-                    else:
-                        logger.info("Retries exhausted for %s, escalating to browser...", url)
-                        return self._escalate_to_browser(url, matched)
-
-                logger.debug("Successfully fetched content (len=%d) for %s", len(html), url)
-                return html
-
+                html = self._fetch_attempt(url, stealthy_headers, attempt, retries, backoff)
+                if html is not None:
+                    return html
+            except FetcherError:
+                raise
             except Exception as e:
-                if isinstance(e, FetcherError):
-                    raise
-                if attempt < retries:
-                    wait = backoff * attempt
-                    logger.warning("Error on %s: %s — retrying in %.0fs (attempt %d/%d)", url, e, wait, attempt, retries)
-                    time.sleep(wait)
-                else:
-                    logger.error("Failed after %d attempts on %s: %s", retries, url, e)
-                    raise FetcherError(f"Fetch failed after {retries} attempts: {e}") from e
+                self._handle_fetch_error(url, e, attempt, retries, backoff)
 
         raise FetcherError(f"Fetch failed for {url} after {retries} attempts")
+
+    def _fetch_attempt(
+        self,
+        url: str,
+        stealthy_headers: bool,
+        attempt: int,
+        retries: int,
+        backoff: float,
+    ) -> str | None:
+        """Execute a single fetch attempt. Returns HTML on success, None to retry."""
+        logger.debug("Fast fetch attempt %d/%d for %s", attempt, retries, url)
+        page = Fetcher.get(url, stealthy_headers=stealthy_headers)
+
+        status = getattr(page, "status", getattr(page, "status_code", 200))
+        logger.debug("Response status for %s: %d", url, status)
+
+        if self._is_blocked_status(status, attempt, retries, url, backoff):
+            return None
+
+        html = page.html_content
+        matched = self._check_retry_indicators(html, url, attempt, retries, backoff)
+        if matched is not None:
+            if attempt >= retries:
+                logger.info("Retries exhausted for %s, escalating to browser...", url)
+                return self._escalate_to_browser(url, matched)
+            return None
+
+        logger.debug("Successfully fetched content (len=%d) for %s", len(html), url)
+        return html
+
+    def _is_blocked_status(
+        self,
+        status: int,
+        attempt: int,
+        retries: int,
+        url: str,
+        backoff: float,
+    ) -> bool:
+        """Check if status code indicates blocking. Returns True if should retry."""
+        if status not in [403, 429, 503]:
+            return False
+        if attempt >= retries:
+            raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts")
+        wait = backoff * attempt
+        logger.warning("Status %d on %s — retrying in %.0fs (attempt %d/%d)", status, url, wait, attempt, retries)
+        time.sleep(wait)
+        return True
+
+    def _check_retry_indicators(
+        self,
+        html: str,
+        url: str,
+        attempt: int,
+        retries: int,
+        backoff: float,
+    ) -> str | None:
+        """Check retry indicators. Returns matched indicator or None."""
+        matched = next(
+            (ind for ind in self.retry_indicators if ind.lower() in html.lower()),
+            None,
+        )
+        if matched and attempt < retries:
+            wait = backoff * attempt
+            logger.warning(
+                "Retry indicator '%s' on %s — retrying in %.0fs (attempt %d/%d)",
+                matched,
+                url,
+                wait,
+                attempt,
+                retries,
+            )
+            time.sleep(wait)
+        return matched
+
+    def _handle_fetch_error(
+        self,
+        url: str,
+        error: Exception,
+        attempt: int,
+        retries: int,
+        backoff: float,
+    ) -> None:
+        """Handle fetch error, retrying if attempts remain."""
+        if attempt < retries:
+            wait = backoff * attempt
+            logger.warning("Error on %s: %s — retrying in %.0fs (attempt %d/%d)", url, error, wait, attempt, retries)
+            time.sleep(wait)
+        else:
+            logger.error("Failed after %d attempts on %s: %s", retries, url, error)
+            raise FetcherError(f"Fetch failed after {retries} attempts: {error}") from error
 
     def _escalate_to_browser(self, url: str, blocked_by: str) -> str:
         logger.info("'%s' detected on %s — escalating to browser...", blocked_by, url)

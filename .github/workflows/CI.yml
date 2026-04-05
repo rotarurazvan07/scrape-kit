@@ -10,8 +10,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# ════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION — change ONLY these 4 values to adapt for your repo.
+#   Tool configs (ruff, mypy, isort, etc.) are read from:
+#     1. pyproject.toml (if it exists at repo root)
+#     2. .github/workflows/ci-config.toml (fallback — edit this file)
+# ════════════════════════════════════════════════════════════════════════════
 env:
-  PYTHON_VERSION: "3.10"
+  # ── USER-CONFIGURABLE (edit these for your repo) ──────────────────────────
+  PYTHON_VERSION: "3.10"          # Python version for non-matrix jobs
+  SRC_DIRS: "scrape_kit"          # Source code dirs (space-separated)
+  TEST_DIRS: "tests"              # Test dirs (space-separated)
+  COVERAGE_FAIL_UNDER: "80"       # Min coverage % to pass
 
 # ════════════════════════════════════════════════════════════════════════════
 # PHILOSOPHY
@@ -24,8 +34,10 @@ env:
 #                 · formats code                     (ruff format)
 #                 · fixes lint + perf anti-patterns  (ruff --fix)
 #   test      — the ONLY job you need to read. Fails on logic bugs only.
-#   audit     — security / complexity scans. Informational, never blocks.
+#   audit     — security / complexity / type / docs scans. Informational, never blocks.
+#   badges    — generates dynamic status badges and commits them to the repo.
 #   ci-gate   — the single required status check for branch protection.
+#               ALSO produces a consolidated report of ALL findings.
 # ════════════════════════════════════════════════════════════════════════════
 
 jobs:
@@ -70,14 +82,14 @@ jobs:
             --remove-all-unused-imports \
             --remove-unused-variables \
             --exclude .venv,__pycache__ \
-            scrape_kit/ tests/
+            ${{ env.SRC_DIRS }} ${{ env.TEST_DIRS }}
 
       # ── Step 2: Modernise syntax ──────────────────────────────────────────
       - name: pyupgrade — modernise syntax to Python 3.10+
         # Exit 1 = files were rewritten (expected). xargs surfaces as 123.
         # Both are normal — swallow with || true.
         run: |
-          find scrape_kit tests -name "*.py" | xargs pyupgrade --py310-plus || true
+          find ${{ env.SRC_DIRS }} ${{ env.TEST_DIRS }} -name "*.py" | xargs pyupgrade --py310-plus || true
 
       # ── Step 3: Add trivial type annotations ──────────────────────────────
       - name: autotyping — infer and add trivial return type annotations
@@ -88,25 +100,27 @@ jobs:
             --none-return \
             --scalar-return \
             --bool-param \
-            scrape_kit/
+            ${{ env.SRC_DIRS }}
 
       # ── Step 4: Sort imports ──────────────────────────────────────────────
       - name: isort — sort imports
         # Runs after autotyping in case it added new imports.
-        run: isort scrape_kit/ tests/
+        run: isort ${{ env.SRC_DIRS }} ${{ env.TEST_DIRS }}
 
       # ── Step 5: Format ────────────────────────────────────────────────────
       - name: ruff format
         # quote-style = "double" in pyproject.toml prevents ruff from
         # rewriting f-string escapes into Python 3.12-only syntax (PEP 701).
-        run: ruff format scrape_kit/ tests/
+        run: ruff format ${{ env.SRC_DIRS }} ${{ env.TEST_DIRS }}
 
       # ── Step 6: Lint + performance fixes ─────────────────────────────────
       - name: ruff lint --fix
         # Includes PERF rules (perflint) — catches performance anti-patterns
         # such as unnecessary list() calls in loops, .keys() iteration, etc.
         # UP rules excluded — see pyproject.toml comment.
-        run: ruff check --fix --unsafe-fixes --output-format=github scrape_kit/ tests/ || true
+        run: |
+          ruff check --fix --unsafe-fixes --output-format=concise ${{ env.SRC_DIRS }} ${{ env.TEST_DIRS }} 2>&1 | tee ruff-fix-output.txt || true
+          ruff check --fix --unsafe-fixes --output-format=github ${{ env.SRC_DIRS }} ${{ env.TEST_DIRS }} || true
 
       # ── Commit everything that changed ────────────────────────────────────
       - name: Commit fixes (if any)
@@ -122,6 +136,14 @@ jobs:
             echo "Fixes committed and pushed."
           fi
 
+      - name: Upload auto-fix report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autofix-report
+          retention-days: 14
+          path: ruff-fix-output.txt
+
   # ── 2. TESTS ─────────────────────────────────────────────────────────────
   # This is the ONLY job you need to read.
   # A failure here = real logic bug or broken behaviour.
@@ -133,6 +155,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # To change Python versions, edit this list AND PYTHON_MATRIX above.
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
@@ -159,15 +182,15 @@ jobs:
       - name: Run tests
         run: |
           pytest \
-            --cov=scrape_kit \
+            --cov=${{ env.SRC_DIRS }} \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
             --cov-report=html:htmlcov \
-            --cov-fail-under=80 \
+            --cov-fail-under=${{ env.COVERAGE_FAIL_UNDER }} \
             --junitxml=test-results.xml \
             --timeout=60 \
             -n auto \
-            -v
+            -v ${{ env.TEST_DIRS }}
 
       - name: Upload coverage report
         if: always()
@@ -185,13 +208,64 @@ jobs:
           path: test-results.xml
           retention-days: 14
 
+      - name: Upload test summary
+        if: always()
+        run: |
+          # Extract test summary from pytest output
+          SAFE_PY=$(echo "${{ matrix.python-version }}" | tr '.' '_')
+          echo "## Python ${{ matrix.python-version }} Test Summary" > test-summary-py${SAFE_PY}.md
+          echo "" >> test-summary-py${SAFE_PY}.md
+          if [ -f test-results.xml ]; then
+            TESTS=$(python3 -c "
+            import xml.etree.ElementTree as ET
+            tree = ET.parse('test-results.xml')
+            root = tree.getroot()
+            tests = int(root.get('tests', 0))
+            failures = int(root.get('failures', 0))
+            errors = int(root.get('errors', 0))
+            skipped = int(root.get('skipped', 0))
+            passed = tests - failures - errors - skipped
+            print(f'Passed: {passed}, Failed: {failures}, Errors: {errors}, Skipped: {skipped}, Total: {tests}')
+            " 2>/dev/null || echo "N/A")
+            echo "Results: $TESTS" >> test-summary-py${SAFE_PY}.md
+          fi
+          if [ -f coverage.xml ]; then
+            COV=$(python3 -c "
+            import xml.etree.ElementTree as ET
+            tree = ET.parse('coverage.xml')
+            root = tree.getroot()
+            line_rate = root.get('line-rate', '0')
+            pct = round(float(line_rate) * 100, 1)
+            print(f'{pct}%')
+            " 2>/dev/null || echo "N/A")
+            echo "Coverage: $COV" >> test-summary-py${SAFE_PY}.md
+          fi
+
+      - name: Upload test summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-summary-py${{ matrix.python-version }}
+          path: test-summary-py$(echo "${{ matrix.python-version }}" | tr '.' '_').md
+          retention-days: 14
+
   # ── 3. AUDIT ─────────────────────────────────────────────────────────────
   # Informational only — never blocks merging.
   audit:
-    name: "Audit (security · complexity · dead code)"
+    name: "Audit (security · complexity · types · docs)"
     runs-on: ubuntu-latest
     needs: [auto-fix]
     if: always()
+
+    outputs:
+      mypy_errors: ${{ steps.mypy.outputs.mypy_errors }}
+      bandit_issues: ${{ steps.bandit.outputs.bandit_issues }}
+      semgrep_findings: ${{ steps.semgrep.outputs.semgrep_findings }}
+      pip_audit_vulns: ${{ steps.pip_audit.outputs.pip_audit_vulns }}
+      radon_complexity: ${{ steps.radon.outputs.radon_complexity }}
+      vulture_dead: ${{ steps.vulture.outputs.vulture_dead }}
+      interrogate_pct: ${{ steps.interrogate.outputs.interrogate_pct }}
+      actionlint_errors: ${{ steps.actionlint.outputs.actionlint_errors }}
 
     steps:
       - uses: actions/checkout@v4
@@ -206,33 +280,133 @@ jobs:
       - name: Install audit tools
         run: |
           pip install -e .
-          pip install bandit pip-audit radon vulture
+          pip install \
+            bandit pip-audit radon vulture \
+            mypy semgrep interrogate
+
+      - name: Resolve config file
+        id: config
+        run: |
+          # Use pyproject.toml if it exists, otherwise fall back to ci-config.toml
+          if [ -f "pyproject.toml" ]; then
+            echo "config_file=pyproject.toml" >> "$GITHUB_OUTPUT"
+            echo "Using pyproject.toml for tool configuration."
+          elif [ -f ".github/workflows/ci-config.toml" ]; then
+            echo "config_file=.github/workflows/ci-config.toml" >> "$GITHUB_OUTPUT"
+            echo "Using .github/workflows/ci-config.toml for tool configuration."
+          else
+            echo "config_file=" >> "$GITHUB_OUTPUT"
+            echo "No config file found — some tools may use defaults."
+          fi
+
+      - name: mypy — static type checking
+        id: mypy
+        run: |
+          echo "── Type Checking ─────────────────────────────────────────────"
+          CONFIG_FILE="${{ steps.config.outputs.config_file }}"
+          if [ -n "$CONFIG_FILE" ]; then
+            mypy ${{ env.SRC_DIRS }} --config-file "$CONFIG_FILE" --no-error-summary 2>&1 | tee mypy-output.txt || true
+          else
+            echo "No config file found — running mypy with defaults."
+            mypy ${{ env.SRC_DIRS }} --no-error-summary 2>&1 | tee mypy-output.txt || true
+          fi
+          MYPY_ERRORS=$(grep -c "error:" mypy-output.txt 2>/dev/null || echo "0")
+          echo "mypy_errors=$MYPY_ERRORS" >> "$GITHUB_OUTPUT"
+          echo "Found $MYPY_ERRORS type error(s)."
 
       - name: bandit — security SAST
+        id: bandit
         run: |
-          bandit -r scrape_kit/ -ll -ii \
+          bandit -r ${{ env.SRC_DIRS }} -ll -ii \
             --format json \
             --output bandit-report.json || true
-          bandit -r scrape_kit/ -ll -ii || true
+          bandit -r ${{ env.SRC_DIRS }} -ll -ii 2>&1 | tee bandit-output.txt || true
+          BANDIT_ISSUES=$(grep -c ">> Issue" bandit-output.txt 2>/dev/null || echo "0")
+          echo "bandit_issues=$BANDIT_ISSUES" >> "$GITHUB_OUTPUT"
+          echo "Found $BANDIT_ISSUES security issue(s)."
 
-      - name: pip-audit — CVE scan
+      - name: semgrep — pattern-based security & bug detection
+        id: semgrep
+        run: |
+          semgrep --config auto ${{ env.SRC_DIRS }} --json --output semgrep-report.json || true
+          semgrep --config auto ${{ env.SRC_DIRS }} 2>&1 | tee semgrep-output.txt || true
+          SEMGREP_FINDINGS=$(python3 -c "
+          import json
+          try:
+              with open('semgrep-report.json') as f:
+                  data = json.load(f)
+              print(len(data.get('results', [])))
+          except:
+              print('0')
+          " 2>/dev/null || echo "0")
+          echo "semgrep_findings=$SEMGREP_FINDINGS" >> "$GITHUB_OUTPUT"
+          echo "Found $SEMGREP_FINDINGS semgrep finding(s)."
+
+      - name: pip-audit — dependency CVE scan
+        id: pip_audit
         run: |
           pip-audit --format json --output pip-audit-report.json || true
-          pip-audit || true
+          pip-audit 2>&1 | tee pip-audit-output.txt || true
+          PIP_AUDIT_VULNS=$(python3 -c "
+          import json
+          try:
+              with open('pip-audit-report.json') as f:
+                  data = json.load(f)
+              print(len(data.get('dependencies', [])))
+          except:
+              print('0')
+          " 2>/dev/null || echo "0")
+          echo "pip_audit_vulns=$PIP_AUDIT_VULNS" >> "$GITHUB_OUTPUT"
+          echo "Found $PIP_AUDIT_VULNS vulnerable dependency(ies)."
 
       - name: radon — complexity report
+        id: radon
         run: |
           echo "── Cyclomatic Complexity ────────────────────────────────────"
-          radon cc scrape_kit/ --show-complexity --average --json \
+          radon cc ${{ env.SRC_DIRS }} --show-complexity --average --json \
             > radon-cc-report.json || true
-          radon cc scrape_kit/ --min C --show-complexity --average || true
+          radon cc ${{ env.SRC_DIRS }} --min C --show-complexity --average 2>&1 | tee radon-cc-output.txt || true
           echo ""
           echo "── Maintainability Index ────────────────────────────────────"
-          radon mi scrape_kit/ --json > radon-mi-report.json || true
-          radon mi scrape_kit/ --show --min B || true
+          radon mi ${{ env.SRC_DIRS }} --json > radon-mi-report.json || true
+          radon mi ${{ env.SRC_DIRS }} --show --min B || true
+          RADON_COMPLEXITY=$(python3 -c "
+          import json
+          try:
+              with open('radon-cc-report.json') as f:
+                  data = json.load(f)
+              high = sum(1 for file in data.values() for func in file if func.get('rank', '') in ('C', 'D', 'E', 'F'))
+              print(high)
+          except:
+              print('0')
+          " 2>/dev/null || echo "0")
+          echo "radon_complexity=$RADON_COMPLEXITY" >> "$GITHUB_OUTPUT"
+          echo "Found $RADON_COMPLEXITY high-complexity function(s)."
 
       - name: vulture — dead code detection
-        run: vulture scrape_kit/ --min-confidence 80 | tee vulture-report.txt || true
+        id: vulture
+        run: |
+          vulture ${{ env.SRC_DIRS }} --min-confidence 80 | tee vulture-report.txt || true
+          VULTURE_DEAD=$(wc -l < vulture-report.txt 2>/dev/null || echo "0")
+          echo "vulture_dead=$VULTURE_DEAD" >> "$GITHUB_OUTPUT"
+          echo "Found $VULTURE_DEAD potential dead code location(s)."
+
+      - name: interrogate — docstring coverage
+        id: interrogate
+        run: |
+          interrogate ${{ env.SRC_DIRS }} -v --fail-under=0 2>&1 | tee interrogate-output.txt || true
+          INTERROGATE_PCT=$(grep -oP '\d+%' interrogate-output.txt | tail -1 | tr -d '%' || echo "0")
+          echo "interrogate_pct=$INTERROGATE_PCT" >> "$GITHUB_OUTPUT"
+          echo "Docstring coverage: $INTERROGATE_PCT%"
+
+      - name: actionlint — workflow validation
+        id: actionlint
+        run: |
+          pip install actionlint
+          actionlint .github/workflows/*.yml 2>&1 | tee actionlint-output.txt || true
+          ACTIONLINT_ERRORS=$(grep -c "error:" actionlint-output.txt 2>/dev/null || echo "0")
+          echo "actionlint_errors=$ACTIONLINT_ERRORS" >> "$GITHUB_OUTPUT"
+          echo "Found $ACTIONLINT_ERRORS workflow error(s)."
 
       - name: Upload all audit reports
         if: always()
@@ -242,19 +416,408 @@ jobs:
           retention-days: 30
           path: |
             bandit-report.json
+            semgrep-report.json
             pip-audit-report.json
             radon-cc-report.json
             radon-mi-report.json
             vulture-report.txt
+            mypy-output.txt
+            actionlint-output.txt
+            interrogate-output.txt
+
+      - name: Generate audit summary
+        if: always()
+        run: |
+          cat > audit-summary.md << 'HEADER'
+          # Audit Summary
+
+          HEADER
+
+          echo "## Type Checking (mypy)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat mypy-output.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          echo "" >> audit-summary.md
+
+          echo "## Security (bandit)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat bandit-output.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          echo "" >> audit-summary.md
+
+          echo "## Pattern Security (semgrep)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat semgrep-output.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          echo "" >> audit-summary.md
+
+          echo "## Dependencies (pip-audit)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat pip-audit-output.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          echo "" >> audit-summary.md
+
+          echo "## Complexity (radon)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat radon-cc-output.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          echo "" >> audit-summary.md
+
+          echo "## Dead Code (vulture)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat vulture-report.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          echo "" >> audit-summary.md
+
+          echo "## Docstring Coverage (interrogate)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat interrogate-output.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          echo "" >> audit-summary.md
+
+          echo "## Workflow Validation (actionlint)" >> audit-summary.md
+          echo '```' >> audit-summary.md
+          cat actionlint-output.txt 2>/dev/null >> audit-summary.md || echo "No output" >> audit-summary.md
+          echo '```' >> audit-summary.md
+
+      - name: Upload audit summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-summary
+          path: audit-summary.md
+          retention-days: 30
+
+  # ── 4. BADGES ─────────────────────────────────────────────────────────────
+  # Generates dynamic status badges and commits them to the repo.
+  badges:
+    name: "Generate Badges"
+    runs-on: ubuntu-latest
+    needs: [test, audit]
+    if: always() && github.event_name == 'push'
+    permissions:
+      contents: write
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.AUTO_FIX_TOKEN || secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Determine badge statuses
+        id: badges
+        run: |
+          # Test result
+          TEST_RESULT="${{ needs.test.result }}"
+          if [ "$TEST_RESULT" = "success" ]; then
+            TEST_COLOR="brightgreen"
+            TEST_STATUS="passing"
+          elif [ "$TEST_RESULT" = "failure" ]; then
+            TEST_COLOR="red"
+            TEST_STATUS="failing"
+          else
+            TEST_COLOR="yellow"
+            TEST_STATUS="skipped"
+          fi
+
+          # Coverage — extract from test job (default from env)
+          COVERAGE_PCT="${{ env.COVERAGE_FAIL_UNDER }}+"
+          COVERAGE_COLOR="brightgreen"
+
+          # Audit results from job outputs
+          MYPY_ERRORS="${{ needs.audit.outputs.mypy_errors }}"
+          BANDIT_ISSUES="${{ needs.audit.outputs.bandit_issues }}"
+          SEMGREP_FINDINGS="${{ needs.audit.outputs.semgrep_findings }}"
+          PIP_AUDIT_VULNS="${{ needs.audit.outputs.pip_audit_vulns }}"
+          RADON_COMPLEXITY="${{ needs.audit.outputs.radon_complexity }}"
+          VULTURE_DEAD="${{ needs.audit.outputs.vulture_dead }}"
+          INTERROGATE_PCT="${{ needs.audit.outputs.interrogate_pct }}"
+          ACTIONLINT_ERRORS="${{ needs.audit.outputs.actionlint_errors }}"
+
+          # Type checking badge
+          if [ "$MYPY_ERRORS" = "0" ] || [ -z "$MYPY_ERRORS" ]; then
+            MYPY_COLOR="brightgreen"
+            MYPY_STATUS="passing"
+          else
+            MYPY_COLOR="red"
+            MYPY_STATUS="$MYPY_ERRORS errors"
+          fi
+
+          # Security badge (bandit)
+          if [ "$BANDIT_ISSUES" = "0" ] || [ -z "$BANDIT_ISSUES" ]; then
+            SECURITY_COLOR="brightgreen"
+            SECURITY_STATUS="clean"
+          else
+            SECURITY_COLOR="orange"
+            SECURITY_STATUS="$BANDIT_ISSUES issues"
+          fi
+
+          # Dependencies badge
+          if [ "$PIP_AUDIT_VULNS" = "0" ] || [ -z "$PIP_AUDIT_VULNS" ]; then
+            DEPS_COLOR="brightgreen"
+            DEPS_STATUS="up to date"
+          else
+            DEPS_COLOR="orange"
+            DEPS_STATUS="$PIP_AUDIT_VULNS vulns"
+          fi
+
+          # Code quality badge (radon complexity)
+          if [ "$RADON_COMPLEXITY" = "0" ] || [ -z "$RADON_COMPLEXITY" ]; then
+            QUALITY_COLOR="brightgreen"
+            QUALITY_STATUS="A-B"
+          else
+            QUALITY_COLOR="yellow"
+            QUALITY_STATUS="$RADON_COMPLEXITY C+"
+          fi
+
+          # Dead code badge
+          if [ "$VULTURE_DEAD" = "0" ] || [ -z "$VULTURE_DEAD" ]; then
+            DEADCODE_COLOR="brightgreen"
+            DEADCODE_STATUS="none"
+          else
+            DEADCODE_COLOR="yellow"
+            DEADCODE_STATUS="$VULTURE_DEAD found"
+          fi
+
+          # Docstring coverage badge
+          if [ -n "$INTERROGATE_PCT" ] && [ "$INTERROGATE_PCT" != "0" ]; then
+            if [ "$INTERROGATE_PCT" -ge 80 ] 2>/dev/null; then
+              DOCS_COLOR="brightgreen"
+            elif [ "$INTERROGATE_PCT" -ge 60 ] 2>/dev/null; then
+              DOCS_COLOR="yellow"
+            else
+              DOCS_COLOR="orange"
+            fi
+            DOCS_STATUS="${INTERROGATE_PCT}%"
+          else
+            DOCS_COLOR="lightgrey"
+            DOCS_STATUS="N/A"
+          fi
+
+          # Export all badge variables for next step
+          {
+            echo "test_status=$TEST_STATUS"
+            echo "test_color=$TEST_COLOR"
+            echo "coverage_pct=$COVERAGE_PCT"
+            echo "coverage_color=$COVERAGE_COLOR"
+            echo "mypy_status=$MYPY_STATUS"
+            echo "mypy_color=$MYPY_COLOR"
+            echo "security_status=$SECURITY_STATUS"
+            echo "security_color=$SECURITY_COLOR"
+            echo "deps_status=$DEPS_STATUS"
+            echo "deps_color=$DEPS_COLOR"
+            echo "quality_status=$QUALITY_STATUS"
+            echo "quality_color=$QUALITY_COLOR"
+            echo "deadcode_status=$DEADCODE_STATUS"
+            echo "deadcode_color=$DEADCODE_COLOR"
+            echo "docs_status=$DOCS_STATUS"
+            echo "docs_color=$DOCS_COLOR"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create badges directory
+        run: mkdir -p badges
+
+      - name: Generate test status badge
+        run: |
+          curl -s "https://img.shields.io/badge/tests-${{ steps.badges.outputs.test_status }}-${{ steps.badges.outputs.test_color }}" -o badges/tests.svg
+
+      - name: Generate coverage badge
+        run: |
+          curl -s "https://img.shields.io/badge/coverage-${{ steps.badges.outputs.coverage_pct }}-${{ steps.badges.outputs.coverage_color }}" -o badges/coverage.svg
+
+      - name: Generate type checking badge
+        run: |
+          curl -s "https://img.shields.io/badge/types-${{ steps.badges.outputs.mypy_status }}-${{ steps.badges.outputs.mypy_color }}" -o badges/types.svg
+
+      - name: Generate security badge
+        run: |
+          curl -s "https://img.shields.io/badge/security-${{ steps.badges.outputs.security_status }}-${{ steps.badges.outputs.security_color }}" -o badges/security.svg
+
+      - name: Generate dependencies badge
+        run: |
+          curl -s "https://img.shields.io/badge/dependencies-${{ steps.badges.outputs.deps_status }}-${{ steps.badges.outputs.deps_color }}" -o badges/deps.svg
+
+      - name: Generate code quality badge
+        run: |
+          curl -s "https://img.shields.io/badge/complexity-${{ steps.badges.outputs.quality_status }}-${{ steps.badges.outputs.quality_color }}" -o badges/complexity.svg
+
+      - name: Generate dead code badge
+        run: |
+          curl -s "https://img.shields.io/badge/dead%20code-${{ steps.badges.outputs.deadcode_status }}-${{ steps.badges.outputs.deadcode_color }}" -o badges/deadcode.svg
+
+      - name: Generate docstring coverage badge
+        run: |
+          curl -s "https://img.shields.io/badge/docs-${{ steps.badges.outputs.docs_status }}-${{ steps.badges.outputs.docs_color }}" -o badges/docs.svg
+
+      - name: Commit badges
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No badge changes to commit."
+          else
+            git add badges/
+            git commit -m "ci: update status badges [skip ci]"
+            git push
+            echo "Badges committed and pushed."
+          fi
 
   # ── GATE ─────────────────────────────────────────────────────────────────
   # Set THIS as the required status check in branch protection settings.
+  # ALSO produces a consolidated report of ALL findings from every job.
   ci-gate:
     name: "CI Gate"
     if: always()
-    needs: [auto-fix, test, audit]
+    needs: [auto-fix, test, audit, badges]
     runs-on: ubuntu-latest
+
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Download all artifacts
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate consolidated CI report
+        if: always()
+        id: report
+        run: |
+          {
+            echo "═══════════════════════════════════════════════════════════"
+            echo "  CI CONSOLIDATED REPORT"
+            echo "  Run: ${{ github.run_number }}"
+            echo "  Commit: ${{ github.sha }}"
+            echo "  Branch: ${{ github.ref_name }}"
+            echo "═══════════════════════════════════════════════════════════"
+            echo ""
+
+            # ── Auto-fix results ──────────────────────────────────────────
+            echo "── AUTO-FIX RESULTS ──────────────────────────────────────"
+            if [ -f artifacts/autofix-report/ruff-fix-output.txt ]; then
+              cat artifacts/autofix-report/ruff-fix-output.txt
+            else
+              echo "No auto-fix report available."
+            fi
+            echo ""
+
+            # ── Test results ──────────────────────────────────────────────
+            echo "── TEST RESULTS ──────────────────────────────────────────"
+            for py in 3.10 3.11 3.12; do
+              safe_py=$(echo "$py" | tr '.' '_')
+              if [ -f "artifacts/test-summary-py${safe_py}/test-summary-py${safe_py}.md" ]; then
+                cat "artifacts/test-summary-py${safe_py}/test-summary-py${safe_py}.md"
+              else
+                echo "Python $py: No test summary available."
+              fi
+              echo ""
+            done
+
+            # ── Audit results ─────────────────────────────────────────────
+            echo "── AUDIT RESULTS ─────────────────────────────────────────"
+            if [ -f artifacts/audit-summary/audit-summary.md ]; then
+              cat artifacts/audit-summary/audit-summary.md
+            else
+              echo "No audit summary available."
+            fi
+            echo ""
+
+            # ── Job statuses ──────────────────────────────────────────────
+            echo "── JOB STATUSES ──────────────────────────────────────────"
+            echo "auto-fix: ${{ needs.auto-fix.result }}"
+            echo "test:     ${{ needs.test.result }}"
+            echo "audit:    ${{ needs.audit.result }}"
+            echo "badges:   ${{ needs.badges.result }}"
+            echo ""
+
+            # ── Key metrics ───────────────────────────────────────────────
+            echo "── KEY METRICS ───────────────────────────────────────────"
+            echo "mypy errors:        ${{ needs.audit.outputs.mypy_errors }}"
+            echo "bandit issues:      ${{ needs.audit.outputs.bandit_issues }}"
+            echo "semgrep findings:   ${{ needs.audit.outputs.semgrep_findings }}"
+            echo "pip-audit vulns:    ${{ needs.audit.outputs.pip_audit_vulns }}"
+            echo "radon complexity:   ${{ needs.audit.outputs.radon_complexity }}"
+            echo "vulture dead code:  ${{ needs.audit.outputs.vulture_dead }}"
+            echo "interrogate docs:   ${{ needs.audit.outputs.interrogate_pct }}%"
+            echo "actionlint errors:  ${{ needs.audit.outputs.actionlint_errors }}"
+            echo "═══════════════════════════════════════════════════════════"
+          } > consolidated-report.txt
+
+          # Print to console (appears in job logs)
+          cat consolidated-report.txt
+
+          # Also set as output for GitHub annotations
+          REPORT_CONTENT=$(cat consolidated-report.txt)
+          echo "report<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REPORT_CONTENT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub annotations
+        if: always()
+        run: |
+          # Create annotation for mypy errors
+          MYPY_ERRORS="${{ needs.audit.outputs.mypy_errors }}"
+          if [ "$MYPY_ERRORS" != "0" ] && [ -n "$MYPY_ERRORS" ]; then
+            echo "::warning file=${{ env.SRC_DIRS }}::mypy found $MYPY_ERRORS type error(s). Check the audit summary for details."
+          fi
+
+          # Create annotation for bandit issues
+          BANDIT_ISSUES="${{ needs.audit.outputs.bandit_issues }}"
+          if [ "$BANDIT_ISSUES" != "0" ] && [ -n "$BANDIT_ISSUES" ]; then
+            echo "::warning file=${{ env.SRC_DIRS }}::bandit found $BANDIT_ISSUES security issue(s). Check the audit summary for details."
+          fi
+
+          # Create annotation for semgrep findings
+          SEMGREP_FINDINGS="${{ needs.audit.outputs.semgrep_findings }}"
+          if [ "$SEMGREP_FINDINGS" != "0" ] && [ -n "$SEMGREP_FINDINGS" ]; then
+            echo "::warning file=${{ env.SRC_DIRS }}::semgrep found $SEMGREP_FINDINGS finding(s). Check the audit summary for details."
+          fi
+
+          # Create annotation for dependency vulns
+          PIP_AUDIT_VULNS="${{ needs.audit.outputs.pip_audit_vulns }}"
+          if [ "$PIP_AUDIT_VULNS" != "0" ] && [ -n "$PIP_AUDIT_VULNS" ]; then
+            echo "::warning file=pyproject.toml::pip-audit found $PIP_AUDIT_VULNS vulnerable dependency(ies). Check the audit summary for details."
+          fi
+
+          # Create annotation for high complexity
+          RADON_COMPLEXITY="${{ needs.audit.outputs.radon_complexity }}"
+          if [ "$RADON_COMPLEXITY" != "0" ] && [ -n "$RADON_COMPLEXITY" ]; then
+            echo "::warning file=${{ env.SRC_DIRS }}::radon found $RADON_COMPLEXITY high-complexity function(s). Check the audit summary for details."
+          fi
+
+          # Create annotation for dead code
+          VULTURE_DEAD="${{ needs.audit.outputs.vulture_dead }}"
+          if [ "$VULTURE_DEAD" != "0" ] && [ -n "$VULTURE_DEAD" ]; then
+            echo "::notice file=${{ env.SRC_DIRS }}::vulture found $VULTURE_DEAD potential dead code location(s). Check the audit summary for details."
+          fi
+
+          # Create annotation for docstring coverage
+          INTERROGATE_PCT="${{ needs.audit.outputs.interrogate_pct }}"
+          if [ -n "$INTERROGATE_PCT" ] && [ "$INTERROGATE_PCT" != "0" ]; then
+            if [ "$INTERROGATE_PCT" -lt 80 ] 2>/dev/null; then
+              echo "::notice file=${{ env.SRC_DIRS }}::Docstring coverage is ${INTERROGATE_PCT}%. Consider adding more docstrings."
+            fi
+          fi
+
+          # Create annotation for actionlint errors
+          ACTIONLINT_ERRORS="${{ needs.audit.outputs.actionlint_errors }}"
+          if [ "$ACTIONLINT_ERRORS" != "0" ] && [ -n "$ACTIONLINT_ERRORS" ]; then
+            echo "::warning file=.github/workflows/CI.yml::actionlint found $ACTIONLINT_ERRORS workflow error(s). Check the audit summary for details."
+          fi
+
+      - name: Upload consolidated report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-ci-report
+          path: consolidated-report.txt
+          retention-days: 30
+
       - name: Check required jobs passed
         run: |
           python3 -c "

@@ -336,3 +336,67 @@ class TestSettingsScenarios:
         for i in range(10):
             data = yaml.safe_load((cfg / f"worker_{i}.yaml").read_text(encoding="utf-8"))
             assert data["id"] == i
+
+
+    # ── Additional edge cases for uncovered lines ─────────────────────────────────
+
+
+    class TestInitEdgeCases:
+        def test_edge_directory_does_not_exist(self, tmp_path):
+            """Test line 29 - directory doesn't exist"""
+            nonexistent = tmp_path / "nonexistent"
+            manager = SettingsManager(str(nonexistent))
+            assert manager.settings == {}
+
+        def test_edge_single_file_as_directory(self, tmp_path):
+            """Test lines 32-33 - single file treated as directory"""
+            single_file = tmp_path / "single.yaml"
+            single_file.write_text("key: value")
+            manager = SettingsManager(str(single_file))
+            # When a single file is used, the structure is different
+            # The file becomes the root with its stem as the key
+            assert "single" in str(manager.settings) or manager.settings
+
+
+    class TestGetEdgeCases:
+        def test_error_no_keys_provided(self, tmp_path):
+            """Test line 62 - no keys provided"""
+            cfg = make_cfg(tmp_path, {"test.yaml": "key: value"})
+            manager = SettingsManager(str(cfg))
+            with pytest.raises(SettingsError, match="At least one key must be provided"):
+                manager.get()
+
+        def test_edge_get_with_non_dict_intermediate(self, tmp_path):
+            """Test edge case where intermediate node is not a dict"""
+            cfg = make_cfg(tmp_path, {"test.yaml": "value: not_dict"})
+            manager = SettingsManager(str(cfg))
+            # This should break out of the loop and return None
+            assert manager.get("test", "nonexistent", "key") is None
+
+
+    class TestWriteEdgeCases:
+        def test_error_write_fails_os_error(self, tmp_path):
+            """Test lines 103-105 - write fails with OSError"""
+            cfg = tmp_path / "config"
+            cfg.mkdir()
+            manager = SettingsManager(str(cfg))
+
+            # Mock os.replace to raise OSError
+            with patch("os.replace", side_effect=OSError("Permission denied")):
+                with pytest.raises(SettingsError, match="write failed"):
+                    manager.write("test", {"key": "value"})
+
+
+    class TestDeleteEdgeCases:
+        def test_error_delete_fails_os_error(self, tmp_path):
+            """Test lines 113-115 - delete fails with OSError"""
+            cfg = tmp_path / "config"
+            cfg.mkdir()
+            target = cfg / "to_delete.yaml"
+            target.write_text("x: 1")
+            manager = SettingsManager(str(cfg))
+
+            # Mock unlink to raise OSError
+            with patch.object(Path, "unlink", side_effect=OSError("Permission denied")):
+                with pytest.raises(SettingsError, match="delete failed"):
+                    manager.delete("to_delete")

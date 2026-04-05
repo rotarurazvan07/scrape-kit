@@ -17,7 +17,7 @@ Each method has: normal case(s), edge case(s), error case.
 Plus 5 complex integration scenarios at the bottom.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
@@ -704,3 +704,100 @@ class TestFetcherScenarios:
         second = fetcher_module._shared
         assert first is not second
         assert second.retry_indicators == ["second"]
+
+
+# ── Additional tests for uncovered lines ───────────────────────────────────────
+
+
+class TestEscalateToBrowser:
+    """Test lines 332-342 - _escalate_to_browser method"""
+
+    def test_normal_escalate_to_browser_success(self):
+        """Test successful browser escalation"""
+        fetcher = WebFetcher()
+        mock_browser_session = MagicMock()
+        mock_response = MagicMock()
+        mock_response.html_content = "<html>Escalated content</html>"
+        mock_browser_session.fetch.return_value = mock_response
+        mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
+        mock_browser_session.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(fetcher, 'browser', return_value=mock_browser_session):
+            result = fetcher._escalate_to_browser("http://test.com", "blocked")
+
+        assert result == "<html>Escalated content</html>"
+        mock_browser_session.fetch.assert_called_once_with("http://test.com", timeout=120000)
+
+    def test_edge_escalate_to_browser_no_html_content(self):
+        """Test line 342 - browser returns no content"""
+        fetcher = WebFetcher()
+        mock_browser_session = MagicMock()
+        mock_response = MagicMock()
+        del mock_response.html_content  # No html_content attribute
+        mock_browser_session.fetch.return_value = mock_response
+        mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
+        mock_browser_session.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(fetcher, 'browser', return_value=mock_browser_session):
+            with pytest.raises(FetcherError, match="Escalation returned no content"):
+                fetcher._escalate_to_browser("http://test.com", "blocked")
+
+    def test_error_escalate_to_browser_failure(self):
+        """Test lines 339-341 - browser escalation fails"""
+        fetcher = WebFetcher()
+        mock_browser_session = MagicMock()
+        mock_browser_session.fetch.side_effect = Exception("Browser error")
+        mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
+        mock_browser_session.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(fetcher, 'browser', return_value=mock_browser_session):
+            with pytest.raises(FetcherError, match="Escalation failed"):
+                fetcher._escalate_to_browser("http://test.com", "blocked")
+
+
+class TestFetchOneFast:
+    """Test lines 415-416, 419-421 - _fetch_one_fast method"""
+
+    def test_error_fetch_one_fast_all_attempts_fail(self):
+        """Test lines 415-416, 419-421 - all attempts fail with exception"""
+        fetcher = WebFetcher(block_indicators=[])
+
+        # Make fetch always raise an exception
+        with patch.object(fetcher, 'fetch', side_effect=Exception("Network error")):
+            with pytest.raises(FetcherError, match="Fast scrape failed for http://test.com"):
+                fetcher._fetch_one_fast("http://test.com", MagicMock())
+
+    def test_error_fetch_one_fast_blocked_all_attempts(self):
+        """Test lines 423-425 - all attempts blocked"""
+        fetcher = WebFetcher(block_indicators=["blocked"])
+
+        # Make fetch always return blocked content
+        with patch.object(fetcher, 'fetch', return_value="<html>blocked</html>"):
+            with pytest.raises(FetcherError, match="Fast scrape remained blocked for http://test.com"):
+                fetcher._fetch_one_fast("http://test.com", MagicMock())
+
+
+class TestScrapeStealth:
+    """Test lines 428, 431-460, 463-479 - stealth scraping methods"""
+
+    def test_normal_scrape_stealth_empty_urls(self):
+        """Test line 382-383 - empty urls returns immediately"""
+        fetcher = WebFetcher()
+        callback = MagicMock()
+        # Should not raise any error
+        fetcher.scrape([], callback, mode="stealth")
+
+    def test_normal_scrape_stealth_empty_urls(self):
+        """Test line 382-383 - empty urls returns immediately"""
+        fetcher = WebFetcher()
+        callback = MagicMock()
+        # Should not raise any error
+        fetcher.scrape([], callback, mode="stealth")
+
+    def test_error_scrape_unsupported_mode(self):
+        """Test line 391 - unsupported scrape mode"""
+        fetcher = WebFetcher()
+        callback = MagicMock()
+
+        with pytest.raises(ValueError, match="Unsupported scrape mode"):
+            fetcher.scrape(["http://test.com"], callback, mode="invalid_mode")

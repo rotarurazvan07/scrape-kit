@@ -1,0 +1,35 @@
+# ════════════════════════════════════════════════════════════════════════════
+# CI Configuration for scrape-kit
+# ════════════════════════════════════════════════════════════════════════════
+# This file is read by the CI workflow. Edit the sections below to customize
+# analysis behavior. The CI workflow uses these values when pyproject.toml
+# is not present or doesn't contain the relevant sections.
+# ════════════════════════════════════════════════════════════════════════════
+
+[ruff]
+line-length = 127
+target-version = "py310"
+
+[ruff.lint]
+select = ["E", "F", "B", "C", "SIM", "PERF"]
+ignore = ["UP"]
+
+[ruff.format]
+quote-style = "double"
+
+[mypy]
+python-version = "3.10"
+strict = true
+ignore-missing-imports = true
+
+[isort]
+profile = "black"
+line-length = 127
+
+[coverage]
+source = ["scrape_kit"]
+fail-under = 80
+
+[pytest]
+testpaths = ["tests"]
+timeout = 60
