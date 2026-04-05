@@ -1,0 +1,13 @@
+scrape_kit/fetcher.py:281:13: PERF203 `try`-`except` within a loop incurs performance overhead
+scrape_kit/fetcher.py:447:17: PERF203 `try`-`except` within a loop incurs performance overhead
+scrape_kit/storage.py:232:21: PERF203 `try`-`except` within a loop incurs performance overhead
+tests/test_fetcher.py:741:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_fetcher.py:753:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_fetcher.py:766:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_fetcher.py:775:9: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_fetcher.py:790:9: F811 Redefinition of unused `test_normal_scrape_stealth_empty_urls` from line 783: `test_normal_scrape_stealth_empty_urls` redefined here
+tests/test_settings.py:381:13: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_settings.py:395:13: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+tests/test_storage.py:455:14: B017 Do not assert blind exception: `Exception`
+tests/test_storage.py:876:9: B018 Found useless expression. Either assign it to a variable or remove it.
+Found 12 errors.

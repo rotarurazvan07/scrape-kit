@@ -337,9 +337,7 @@ class TestSettingsScenarios:
             data = yaml.safe_load((cfg / f"worker_{i}.yaml").read_text(encoding="utf-8"))
             assert data["id"] == i
 
-
     # ── Additional edge cases for uncovered lines ─────────────────────────────────
-
 
     class TestInitEdgeCases:
         def test_edge_directory_does_not_exist(self, tmp_path):
@@ -357,7 +355,6 @@ class TestSettingsScenarios:
             # The file becomes the root with its stem as the key
             assert "single" in str(manager.settings) or manager.settings
 
-
     class TestGetEdgeCases:
         def test_error_no_keys_provided(self, tmp_path):
             """Test line 62 - no keys provided"""
@@ -373,7 +370,6 @@ class TestSettingsScenarios:
             # This should break out of the loop and return None
             assert manager.get("test", "nonexistent", "key") is None
 
-
     class TestWriteEdgeCases:
         def test_error_write_fails_os_error(self, tmp_path):
             """Test lines 103-105 - write fails with OSError"""
@@ -385,7 +381,6 @@ class TestSettingsScenarios:
             with patch("os.replace", side_effect=OSError("Permission denied")):
                 with pytest.raises(SettingsError, match="write failed"):
                     manager.write("test", {"key": "value"})
-
 
     class TestDeleteEdgeCases:
         def test_error_delete_fails_os_error(self, tmp_path):

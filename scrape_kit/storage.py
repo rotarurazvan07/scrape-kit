@@ -271,8 +271,14 @@ class BaseStorageManager:
                 continue
             try:
                 rows_processed, rows_since_flush = self._process_chunk(
-                    db_file, table_name, row_callback, flush_callback,
-                    read_batch_size, flush_every_rows, rows_since_flush, report
+                    db_file,
+                    table_name,
+                    row_callback,
+                    flush_callback,
+                    read_batch_size,
+                    flush_every_rows,
+                    rows_since_flush,
+                    report,
                 )
                 report.processed_chunks += 1
             except sqlite3.Error as e:
@@ -310,9 +316,7 @@ class BaseStorageManager:
                     row_callback(row)
                     report.processed_rows += 1
                     rows_since_flush += 1
-                    rows_since_flush = self._maybe_flush(
-                        flush_callback, flush_every_rows, rows_since_flush
-                    )
+                    rows_since_flush = self._maybe_flush(flush_callback, flush_every_rows, rows_since_flush)
             if flush_callback and not flush_every_rows:
                 flush_callback()
             return report.processed_rows, rows_since_flush

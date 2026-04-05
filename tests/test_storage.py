@@ -18,7 +18,7 @@ import os
 import sqlite3
 import threading
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -696,27 +696,30 @@ class TestSerializationEdgeCases:
 
     def test_edge_serialize_object_with_dict(self, db):
         """Test line 57-58 - object with __dict__"""
+
         class TestObj:
             def __init__(self):
                 self.name = "test"
                 self.value = 42
+
         obj = TestObj()
         result = db.serialize_json(obj)
         assert result == '{"name": "test", "value": 42}'
 
     def test_error_serialize_unserializable_raises(self, db):
         """Test lines 60-61 - unserializable object raises StorageError"""
+
         class Unserializable:
             def __init__(self):
                 self.func = lambda: None  # Functions can't be serialized
+
         obj = Unserializable()
         with pytest.raises(StorageError, match="Serialization failed"):
             db.serialize_json(obj)
 
     def test_edge_deserialize_nan_returns_none(self, db):
         """Test line 64 - NaN (float != float) returns None"""
-        import math
-        nan_value = float('nan')
+        nan_value = float("nan")
         result = db.deserialize_json(nan_value)
         assert result is None
 
@@ -734,7 +737,7 @@ class TestMergeDatabaseEdgeCases:
         # Note: Can't properly mock sqlite3.Connection as its attributes are read-only
         # This test verifies the method exists and has proper error handling structure
         db = MockDB(str(tmp_path / "test.db"))
-        assert hasattr(db, 'create_staging_table')
+        assert hasattr(db, "create_staging_table")
 
     def test_edge_merge_with_corrupt_chunk(self, tmp_path):
         """Test lines 232-240 - merge with corrupt chunk file"""
@@ -827,12 +830,7 @@ class TestMergeRowByRowEdgeCases:
             flush_count[0] += 1
 
         report = main_db.merge_row_by_row(
-            str(tmp_path),
-            "items",
-            row_callback,
-            flush_callback,
-            read_batch_size=2,
-            flush_every_rows=3
+            str(tmp_path), "items", row_callback, flush_callback, read_batch_size=2, flush_every_rows=3
         )
 
         assert report.processed_rows == 5
@@ -848,6 +846,7 @@ class TestMergeRowByRowEdgeCases:
         main_db = MockDB(str(tmp_path / "main.db"))
 
         rows_processed = []
+
         def row_callback(row):
             rows_processed.append(dict(row))
 

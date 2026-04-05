@@ -10,7 +10,6 @@ Each method has: normal case, edge case(s), error case.
 import logging
 import os
 import sys
-import tempfile
 import time
 from unittest.mock import patch
 
@@ -209,6 +208,7 @@ class TestTimeProfiler:
 
         # Patch the logging module's getLogger to return our test logger
         with patch("logging.getLogger", return_value=test_logger):
+
             @time_profiler()
             def test_function():
                 time.sleep(0.05)
