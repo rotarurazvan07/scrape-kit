@@ -17,7 +17,7 @@ Each method has: normal case(s), edge case(s), error case.
 Plus 5 complex integration scenarios at the bottom.
 """
 
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -722,7 +722,7 @@ class TestEscalateToBrowser:
         mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
         mock_browser_session.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(fetcher, 'browser', return_value=mock_browser_session):
+        with patch.object(fetcher, "browser", return_value=mock_browser_session):
             result = fetcher._escalate_to_browser("http://test.com", "blocked")
 
         assert result == "<html>Escalated content</html>"
@@ -738,7 +738,7 @@ class TestEscalateToBrowser:
         mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
         mock_browser_session.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(fetcher, 'browser', return_value=mock_browser_session):
+        with patch.object(fetcher, "browser", return_value=mock_browser_session):
             with pytest.raises(FetcherError, match="Escalation returned no content"):
                 fetcher._escalate_to_browser("http://test.com", "blocked")
 
@@ -750,7 +750,7 @@ class TestEscalateToBrowser:
         mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
         mock_browser_session.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(fetcher, 'browser', return_value=mock_browser_session):
+        with patch.object(fetcher, "browser", return_value=mock_browser_session):
             with pytest.raises(FetcherError, match="Escalation failed"):
                 fetcher._escalate_to_browser("http://test.com", "blocked")
 
@@ -763,7 +763,7 @@ class TestFetchOneFast:
         fetcher = WebFetcher(block_indicators=[])
 
         # Make fetch always raise an exception
-        with patch.object(fetcher, 'fetch', side_effect=Exception("Network error")):
+        with patch.object(fetcher, "fetch", side_effect=Exception("Network error")):
             with pytest.raises(FetcherError, match="Fast scrape failed for http://test.com"):
                 fetcher._fetch_one_fast("http://test.com", MagicMock())
 
@@ -772,7 +772,7 @@ class TestFetchOneFast:
         fetcher = WebFetcher(block_indicators=["blocked"])
 
         # Make fetch always return blocked content
-        with patch.object(fetcher, 'fetch', return_value="<html>blocked</html>"):
+        with patch.object(fetcher, "fetch", return_value="<html>blocked</html>"):
             with pytest.raises(FetcherError, match="Fast scrape remained blocked for http://test.com"):
                 fetcher._fetch_one_fast("http://test.com", MagicMock())
 
