@@ -1,16 +1,5 @@
 # scrape-kit
 
-![Tests](badges/tests.svg)
-![Coverage](badges/coverage.svg)
-![Types](badges/types.svg)
-![Security](badges/security.svg)
-![Dependencies](badges/deps.svg)
-![Complexity](badges/complexity.svg)
-![Dead Code](badges/deadcode.svg)
-![Docs](badges/docs.svg)
-
----
-
 A personal high-performance Python scraping framework. Handles HTTP fetching, stealth browser sessions, fuzzy entity matching, SQLite storage, and YAML-based configuration — packaged for direct installation from GitHub rather than as a submodule.
 
 ### CI Pipeline Overview
@@ -20,7 +9,6 @@ A personal high-performance Python scraping framework. Handles HTTP fetching, st
 | **Auto-fix** | Removes unused imports, modernises syntax, adds type annotations, sorts imports, formats code, fixes lint/perf anti-patterns | ✅ Auto-commits |
 | **Tests** | Runs test suite across Python 3.10, 3.11, 3.12 with coverage reporting | 🔒 Gate |
 | **Audit** | Security SAST (bandit), pattern security (semgrep), type checking (mypy), CVE scan (pip-audit), complexity (radon), dead code (vulture), docstring coverage (interrogate), secret detection (detect-secrets), workflow validation (actionlint) | ℹ️ Advisory |
-| **Badges** | Generates dynamic status badges and commits them to the repo | 🔄 Auto-updates |
 
 ---
 
