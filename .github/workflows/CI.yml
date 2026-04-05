@@ -1,3 +1,4 @@
+
 name: CI
 
 on:
@@ -28,7 +29,6 @@ concurrency:
 #                 · fixes lint + perf anti-patterns  (ruff --fix)
 #   test      — the ONLY job you need to read. Fails on logic bugs only.
 #   audit     — security / complexity / type / docs scans. Informational, never blocks.
-#   badges    — generates dynamic status badges and commits them to the repo.
 #   ci-gate   — the single required status check for branch protection.
 #               ALSO produces a consolidated report of ALL findings.
 # ════════════════════════════════════════════════════════════════════════════
@@ -443,154 +443,11 @@ jobs:
           path: audit-summary.md
           retention-days: 30
 
-  # ── 4. BADGES ─────────────────────────────────────────────────────────────
-  badges:
-    name: "Generate Badges"
-    runs-on: ubuntu-latest
-    needs: [test, audit, load-config]
-    if: always() && github.event_name == 'push'
-    permissions:
-      contents: write
-    continue-on-error: true
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.AUTO_FIX_TOKEN || secrets.GITHUB_TOKEN }}
-          ref: ${{ github.head_ref || github.ref_name }}
-          fetch-depth: 0
-
-      - name: Determine badge statuses
-        id: badges
-        run: |
-          TEST_RESULT="${{ needs.test.result }}"
-          if [ "$TEST_RESULT" = "success" ]; then
-            TEST_COLOR="brightgreen"; TEST_STATUS="passing"
-          elif [ "$TEST_RESULT" = "failure" ]; then
-            TEST_COLOR="red"; TEST_STATUS="failing"
-          else
-            TEST_COLOR="yellow"; TEST_STATUS="skipped"
-          fi
-
-          COVERAGE_PCT="${{ needs.load-config.outputs.coverage-fail-under }}+"
-          COVERAGE_COLOR="brightgreen"
-
-          MYPY_ERRORS="${{ needs.audit.outputs.mypy_errors }}"
-          BANDIT_ISSUES="${{ needs.audit.outputs.bandit_issues }}"
-          SEMGREP_FINDINGS="${{ needs.audit.outputs.semgrep_findings }}"
-          PIP_AUDIT_VULNS="${{ needs.audit.outputs.pip_audit_vulns }}"
-          RADON_COMPLEXITY="${{ needs.audit.outputs.radon_complexity }}"
-          VULTURE_DEAD="${{ needs.audit.outputs.vulture_dead }}"
-          INTERROGATE_PCT="${{ needs.audit.outputs.interrogate_pct }}"
-
-          # Type checking badge
-          if [ "$MYPY_ERRORS" = "0" ] || [ -z "$MYPY_ERRORS" ]; then
-            MYPY_COLOR="brightgreen"; MYPY_STATUS="passing"
-          else
-            MYPY_COLOR="red"; MYPY_STATUS="$MYPY_ERRORS errors"
-          fi
-
-          # Security badge
-          if [ "$BANDIT_ISSUES" = "0" ] || [ -z "$BANDIT_ISSUES" ]; then
-            SECURITY_COLOR="brightgreen"; SECURITY_STATUS="clean"
-          else
-            SECURITY_COLOR="orange"; SECURITY_STATUS="$BANDIT_ISSUES issues"
-          fi
-
-          # Dependencies badge
-          if [ "$PIP_AUDIT_VULNS" = "0" ] || [ -z "$PIP_AUDIT_VULNS" ]; then
-            DEPS_COLOR="brightgreen"; DEPS_STATUS="up to date"
-          else
-            DEPS_COLOR="orange"; DEPS_STATUS="$PIP_AUDIT_VULNS vulns"
-          fi
-
-          # Code quality badge
-          if [ "$RADON_COMPLEXITY" = "0" ] || [ -z "$RADON_COMPLEXITY" ]; then
-            QUALITY_COLOR="brightgreen"; QUALITY_STATUS="A-B"
-          else
-            QUALITY_COLOR="yellow"; QUALITY_STATUS="$RADON_COMPLEXITY C+"
-          fi
-
-          # Dead code badge
-          if [ "$VULTURE_DEAD" = "0" ] || [ -z "$VULTURE_DEAD" ]; then
-            DEADCODE_COLOR="brightgreen"; DEADCODE_STATUS="none"
-          else
-            DEADCODE_COLOR="yellow"; DEADCODE_STATUS="$VULTURE_DEAD found"
-          fi
-
-          # Docstring coverage badge
-          if [ -n "$INTERROGATE_PCT" ] && [ "$INTERROGATE_PCT" != "0" ]; then
-            if [ "$INTERROGATE_PCT" -ge 80 ] 2>/dev/null; then
-              DOCS_COLOR="brightgreen"
-            elif [ "$INTERROGATE_PCT" -ge 60 ] 2>/dev/null; then
-              DOCS_COLOR="yellow"
-            else
-              DOCS_COLOR="orange"
-            fi
-            DOCS_STATUS="${INTERROGATE_PCT}%"
-          else
-            DOCS_COLOR="lightgrey"; DOCS_STATUS="N/A"
-          fi
-
-          {
-            echo "test_status=$TEST_STATUS"
-            echo "test_color=$TEST_COLOR"
-            echo "coverage_pct=$COVERAGE_PCT"
-            echo "coverage_color=$COVERAGE_COLOR"
-            echo "mypy_status=$MYPY_STATUS"
-            echo "mypy_color=$MYPY_COLOR"
-            echo "security_status=$SECURITY_STATUS"
-            echo "security_color=$SECURITY_COLOR"
-            echo "deps_status=$DEPS_STATUS"
-            echo "deps_color=$DEPS_COLOR"
-            echo "quality_status=$QUALITY_STATUS"
-            echo "quality_color=$QUALITY_COLOR"
-            echo "deadcode_status=$DEADCODE_STATUS"
-            echo "deadcode_color=$DEADCODE_COLOR"
-            echo "docs_status=$DOCS_STATUS"
-            echo "docs_color=$DOCS_COLOR"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create badges directory
-        run: mkdir -p badges
-
-      - name: Generate badges
-        run: |
-          for badge in \
-            "tests|${{ steps.badges.outputs.test_status }}|${{ steps.badges.outputs.test_color }}" \
-            "coverage|${{ steps.badges.outputs.coverage_pct }}|${{ steps.badges.outputs.coverage_color }}" \
-            "types|${{ steps.badges.outputs.mypy_status }}|${{ steps.badges.outputs.mypy_color }}" \
-            "security|${{ steps.badges.outputs.security_status }}|${{ steps.badges.outputs.security_color }}" \
-            "dependencies|${{ steps.badges.outputs.deps_status }}|${{ steps.badges.outputs.deps_color }}" \
-            "complexity|${{ steps.badges.outputs.quality_status }}|${{ steps.badges.outputs.quality_color }}" \
-            "dead%20code|${{ steps.badges.outputs.deadcode_status }}|${{ steps.badges.outputs.deadcode_color }}" \
-            "docs|${{ steps.badges.outputs.docs_status }}|${{ steps.badges.outputs.docs_color }}"; do
-            name="${badge%%|*}"
-            rest="${badge#*|}"
-            status="${rest%%|*}"
-            color="${rest##*|}"
-            curl -sL "https://img.shields.io/badge/${name}-${status}-${color}" \
-              -o "badges/${name//%20/}.svg" || true
-          done
-
-      - name: Commit badges
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add badges/*.svg
-          if git diff --cached --quiet; then
-            echo "No badge changes to commit."
-          else
-            git commit -m "ci: update status badges [skip ci]"
-            git push
-            echo "Badges committed and pushed."
-          fi
-
   # ── GATE ─────────────────────────────────────────────────────────────────
   ci-gate:
     name: "CI Gate"
     if: always()
-    needs: [auto-fix, test, audit, badges]
+    needs: [auto-fix, test, audit]
     runs-on: ubuntu-latest
 
     steps:
@@ -643,7 +500,6 @@ jobs:
             echo "auto-fix: ${{ needs.auto-fix.result }}"
             echo "test:     ${{ needs.test.result }}"
             echo "audit:    ${{ needs.audit.result }}"
-            echo "badges:   ${{ needs.badges.result }}"
             echo ""
             echo "── KEY METRICS ───────────────────────────────────────────"
             echo "mypy errors:        ${{ needs.audit.outputs.mypy_errors }}"
