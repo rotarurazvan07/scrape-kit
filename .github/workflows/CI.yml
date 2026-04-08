@@ -10,75 +10,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# ════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
-#   All user-configurable values are in .github/workflows/ci-config.toml
-#   Edit the [ci] section there to adapt for your repo.
-# ════════════════════════════════════════════════════════════════════════════
-
-# ════════════════════════════════════════════════════════════════════════════
-# PHILOSOPHY
-#   auto-fix  — runs first, commits ALL mechanical improvements back to the
-#               branch so you never do them manually:
-#                 · removes unused imports/vars      (autoflake)
-#                 · modernises syntax                (pyupgrade)
-#                 · adds trivial type annotations    (autotyping)
-#                 · sorts imports                    (isort)
-#                 · formats code                     (ruff format)
-#                 · fixes lint + perf anti-patterns  (ruff --fix)
-#   test      — the ONLY job you need to read. Fails on logic bugs only.
-#   audit     — security / complexity / type / docs scans. Informational, never blocks.
-#   ci-gate   — the single required status check for branch protection.
-#               ALSO produces a consolidated report of ALL findings.
-# ════════════════════════════════════════════════════════════════════════════
+env:
+  PYTHON_VERSION: "3.10"
+  SRC_DIR: "scrape_kit"
+  TEST_DIR: "tests"
+  COVERAGE_FAIL_UNDER: "80"
 
 jobs:
-
-  # ── 0. LOAD CONFIG ────────────────────────────────────────────────────────
-  load-config:
-    name: "Load Config"
-    runs-on: ubuntu-latest
-    outputs:
-      python-version: ${{ steps.parse.outputs.python_version }}
-      src-dirs: ${{ steps.parse.outputs.src_dirs }}
-      test-dirs: ${{ steps.parse.outputs.test_dirs }}
-      all-dirs: ${{ steps.parse.outputs.all_dirs }}
-      coverage-fail-under: ${{ steps.parse.outputs.coverage_fail_under }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Parse ci-config.toml
-        id: parse
-        run: |
-          pip install tomli
-          pip install tomli
-          python3 << 'PYEOF'
-          import tomli, os
-
-          with open(".github/workflows/ci-config.toml", "rb") as f:
-              cfg = tomli.load(f)
-
-          ci = cfg.get("ci", {})
-          python_version = ci.get("python-version", "3.10")
-          src_dirs = ci.get("src-dirs", "src")
-          test_dirs = ci.get("test-dirs", "tests")
-          all_dirs = f"{src_dirs} {test_dirs}"
-          coverage_fail_under = str(ci.get("coverage-fail-under", 80))
-
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"python_version={python_version}\n")
-              out.write(f"src_dirs={src_dirs}\n")
-              out.write(f"test_dirs={test_dirs}\n")
-              out.write(f"all_dirs={all_dirs}\n")
-              out.write(f"coverage_fail_under={coverage_fail_under}\n")
-          PYEOF
-
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
   auto-fix:
     name: "Auto-fix"
     runs-on: ubuntu-latest
-    needs: [load-config]
     if: github.event_name == 'push'
     permissions:
       contents: write
@@ -92,85 +34,37 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ needs.load-config.outputs.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Prepare tool configs
-        run: |
-          pip install tomli
-          python3 << 'PYEOF'
-          import tomli, json
-
-          with open(".github/workflows/ci-config.toml", "rb") as f:
-              cfg = tomli.load(f)
-
-          tool_cfg = cfg.get("tool", {})
-          
-          # Generate and write each tool's config (bare, no [tool.xxx] wrapper)
-          def write_tool_config(name, config_dict):
-              lines = []
-              for key, val in config_dict.items():
-                  if isinstance(val, dict):
-                      lines.append(f"[{key}]")
-                      for k, v in val.items():
-                          if isinstance(v, list):
-                              lines.append(f'{k} = {json.dumps(v)}')
-                          elif isinstance(v, str):
-                              lines.append(f'{k} = "{v}"')
-                          else:
-                              lines.append(f'{k} = {v}')
-                  elif isinstance(val, list):
-                      lines.append(f'{key} = {json.dumps(val)}')
-                  elif isinstance(val, str):
-                      lines.append(f'{key} = "{val}"')
-                  else:
-                      lines.append(f'{key} = {val}')
-              
-              with open(f".config-{name}.toml", "w") as f:
-                  f.write("\n".join(lines))
-
-          for tool_name in ["ruff", "isort"]:
-              tool_config = tool_cfg.get(tool_name, {})
-              write_tool_config(tool_name, tool_config)
-          PYEOF
 
       - name: Install auto-fix tools
         run: |
-          pip install ruff isort pyupgrade autoflake autotyping
+          pip install autoflake pyupgrade autotyping isort ruff
 
       - name: autoflake — remove unused imports and variables
         run: |
-          autoflake --in-place --recursive \
-            --remove-all-unused-imports --remove-unused-variables \
-            --exclude .venv,__pycache__ \
-            ${{ needs.load-config.outputs.all-dirs }}
+          autoflake --in-place --recursive             --remove-all-unused-imports --remove-unused-variables             --exclude .venv,__pycache__             $SRC_DIR $TEST_DIR
 
       - name: pyupgrade — modernise syntax to Python 3.10+
         run: |
-          find ${{ needs.load-config.outputs.all-dirs }} -name "*.py" | \
-            xargs pyupgrade --py310-plus || true
+          find $SRC_DIR $TEST_DIR -name "*.py" |             xargs pyupgrade --py310-plus || true
 
       - name: autotyping — infer trivial return type annotations
         run: |
-          python -m autotyping --none-return --scalar-return --bool-param \
-            ${{ needs.load-config.outputs.src-dirs }}
+          python -m autotyping --none-return --scalar-return --bool-param             $SRC_DIR
 
       - name: isort — sort imports
-        run: isort --settings-path .config-isort.toml \
-          ${{ needs.load-config.outputs.all-dirs }}
+        run: |
+          isort --profile black --line-length 127             $SRC_DIR $TEST_DIR
 
       - name: ruff format
-        run: ruff format --config .config-ruff.toml \
-          ${{ needs.load-config.outputs.all-dirs }}
+        run: |
+          ruff format --line-length 127 --target-version py310             $SRC_DIR $TEST_DIR
 
       - name: ruff lint --fix
         run: |
-          ruff check --config .config-ruff.toml \
-            --fix --unsafe-fixes --output-format=concise \
-            ${{ needs.load-config.outputs.all-dirs }} 2>&1 | tee ruff-fix-output.txt || true
-          ruff check --config .config-ruff.toml \
-            --fix --unsafe-fixes --output-format=github \
-            ${{ needs.load-config.outputs.all-dirs }} || true
+          ruff check --select E,F,B,C,SIM,PERF --ignore UP             --fix --unsafe-fixes --output-format=concise             $SRC_DIR $TEST_DIR 2>&1 | tee ruff-fix-output.txt || true
+          ruff check --select E,F,B,C,SIM,PERF --ignore UP             --fix --unsafe-fixes --output-format=github             $SRC_DIR $TEST_DIR || true
 
       - name: Commit fixes (if any)
         run: |
@@ -197,7 +91,7 @@ jobs:
   test:
     name: "Test (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
-    needs: [auto-fix, load-config]
+    needs: [auto-fix]
     if: always()
     strategy:
       fail-fast: false
@@ -234,15 +128,7 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest \
-            --cov=${{ needs.load-config.outputs.src-dirs }} \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            --cov-report=html:htmlcov \
-            --cov-fail-under=${{ needs.load-config.outputs.coverage-fail-under }} \
-            --junitxml=test-results.xml \
-            --timeout=60 \
-            -n auto -v ${{ needs.load-config.outputs.test-dirs }}
+          pytest             --cov=$SRC_DIR             --cov-report=term-missing             --cov-report=xml:coverage.xml             --cov-report=html:htmlcov             --cov-fail-under=$COVERAGE_FAIL_UNDER             --junitxml=test-results.xml             --timeout=60             -n auto -v $TEST_DIR
 
       - name: Upload coverage report
         if: always()
@@ -263,9 +149,9 @@ jobs:
       - name: Upload test summary
         if: always()
         run: |
-          SAFE_PY=$(echo "${{ matrix.python-version }}" | tr '.' '_')
-          echo "## Python ${{ matrix.python-version }} Test Summary" > test-summary-py${SAFE_PY}.md
-          echo "" >> test-summary-py${SAFE_PY}.md
+          SUMMARY_FILE="test-summary-py${{ matrix.python-version }}.md"
+          echo "## Python ${{ matrix.python-version }} Test Summary" > "$SUMMARY_FILE"
+          echo "" >> "$SUMMARY_FILE"
           if [ -f test-results.xml ]; then
             TESTS=$(python3 -c "
             import xml.etree.ElementTree as ET
@@ -278,7 +164,7 @@ jobs:
             passed = tests - failures - errors - skipped
             print(f'Passed: {passed}, Failed: {failures}, Errors: {errors}, Skipped: {skipped}, Total: {tests}')
             " 2>/dev/null || echo "N/A")
-            echo "Results: $TESTS" >> test-summary-py${SAFE_PY}.md
+            echo "Results: $TESTS" >> "$SUMMARY_FILE"
           fi
           if [ -f coverage.xml ]; then
             COV=$(python3 -c "
@@ -289,7 +175,7 @@ jobs:
             pct = round(float(line_rate) * 100, 1)
             print(f'{pct}%')
             " 2>/dev/null || echo "N/A")
-            echo "Coverage: $COV" >> test-summary-py${SAFE_PY}.md
+            echo "Coverage: $COV" >> "$SUMMARY_FILE"
           fi
 
       - name: Upload test summary artifact
@@ -297,14 +183,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-summary-py${{ matrix.python-version }}
-          path: test-summary-py$(echo "${{ matrix.python-version }}" | tr '.' '_').md
+          path: test-summary-py${{ matrix.python-version }}.md
           retention-days: 14
 
   # ── 3. AUDIT ─────────────────────────────────────────────────────────────
   audit:
     name: "Audit (security · complexity · types · docs)"
     runs-on: ubuntu-latest
-    needs: [auto-fix, load-config]
+    needs: [auto-fix]
     if: always()
 
     outputs:
@@ -323,65 +209,36 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ needs.load-config.outputs.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-
-      - name: Prepare tool configs
-        run: |
-          pip install tomli
-          python3 << 'PYEOF'
-          import tomli, json
-
-          with open(".github/workflows/ci-config.toml", "rb") as f:
-              cfg = tomli.load(f)
-
-          tool_cfg = cfg.get("tool", {})
-          
-          # Generate and write mypy config (bare, no [tool.mypy] wrapper)
-          def write_tool_config(name, config_dict):
-              lines = []
-              for key, val in config_dict.items():
-                  if isinstance(val, dict):
-                      lines.append(f"[{key}]")
-                      for k, v in val.items():
-                          if isinstance(v, list):
-                              lines.append(f'{k} = {json.dumps(v)}')
-                          elif isinstance(v, str):
-                              lines.append(f'{k} = "{v}"')
-                          else:
-                              lines.append(f'{k} = {v}')
-                  elif isinstance(val, list):
-                      lines.append(f'{key} = {json.dumps(val)}')
-                  elif isinstance(val, str):
-                      lines.append(f'{key} = "{val}"')
-                  else:
-                      lines.append(f'{key} = {val}')
-              
-              with open(f".config-{name}.toml", "w") as f:
-                  f.write("\n".join(lines))
-
-          mypy_config = tool_cfg.get("mypy", {})
-          write_tool_config("mypy", mypy_config)
-          PYEOF
 
       - name: Install audit tools
         run: |
           pip install -e .
-          pip install bandit pip-audit radon vulture mypy interrogate
+          pip install bandit pip-audit radon vulture mypy interrogate semgrep
 
-      - name: Install semgrep (via official action)
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: p/auto
-        continue-on-error: true
+      - name: semgrep — pattern-based security & bug detection
+        id: semgrep
+        run: |
+          semgrep scan --config p/auto --json --output semgrep-report.json $SRC_DIR 2>&1 | tee semgrep-output.txt || true
+          SEMGREP_FINDINGS=$(python3 -c "
+          import json
+          try:
+              with open('semgrep-report.json') as f:
+                  data = json.load(f)
+              print(len(data.get('results', [])))
+          except:
+              print('0')
+          " 2>/dev/null || echo "0")
+          SEMGREP_FINDINGS=$(echo "$SEMGREP_FINDINGS" | tr -d '[:space:]')
+          echo "semgrep_findings=${SEMGREP_FINDINGS:-0}" >> "$GITHUB_OUTPUT"
+          echo "Found ${SEMGREP_FINDINGS:-0} semgrep finding(s)."
 
       - name: mypy — static type checking
         id: mypy
         run: |
           echo "── Type Checking ─────────────────────────────────────────────"
-          mypy ${{ needs.load-config.outputs.src-dirs }} \
-            --config-file .config-mypy.toml \
-            --no-error-summary 2>&1 | tee mypy-output.txt || true
+          mypy $SRC_DIR             --strict             --ignore-missing-imports             --python-version 3.10             --no-error-summary 2>&1 | tee mypy-output.txt || true
           MYPY_ERRORS=$(grep -c "error:" mypy-output.txt 2>/dev/null || echo "0")
           MYPY_ERRORS=$(echo "$MYPY_ERRORS" | tr -d '[:space:]')
           echo "mypy_errors=${MYPY_ERRORS:-0}" >> "$GITHUB_OUTPUT"
@@ -390,33 +247,12 @@ jobs:
       - name: bandit — security SAST
         id: bandit
         run: |
-          bandit -r ${{ needs.load-config.outputs.src-dirs }} -ll -ii \
-            --format json --output bandit-report.json || true
-          bandit -r ${{ needs.load-config.outputs.src-dirs }} -ll -ii 2>&1 | tee bandit-output.txt || true
+          bandit -r $SRC_DIR -ll -ii             --format json --output bandit-report.json || true
+          bandit -r $SRC_DIR -ll -ii 2>&1 | tee bandit-output.txt || true
           BANDIT_ISSUES=$(grep -c ">> Issue" bandit-output.txt 2>/dev/null || echo "0")
           BANDIT_ISSUES=$(echo "$BANDIT_ISSUES" | tr -d '[:space:]')
           echo "bandit_issues=${BANDIT_ISSUES:-0}" >> "$GITHUB_OUTPUT"
           echo "Found ${BANDIT_ISSUES:-0} security issue(s)."
-
-      - name: semgrep — pattern-based security & bug detection
-        id: semgrep
-        run: |
-          if [ -f "semgrep-report.json" ]; then
-            SEMGREP_FINDINGS=$(python3 -c "
-            import json
-            try:
-                with open('semgrep-report.json') as f:
-                    data = json.load(f)
-                print(len(data.get('results', [])))
-            except:
-                print('0')
-            " 2>/dev/null || echo "0")
-          else
-            SEMGREP_FINDINGS="0"
-          fi
-          SEMGREP_FINDINGS=$(echo "$SEMGREP_FINDINGS" | tr -d '[:space:]')
-          echo "semgrep_findings=${SEMGREP_FINDINGS:-0}" >> "$GITHUB_OUTPUT"
-          echo "Found ${SEMGREP_FINDINGS:-0} semgrep finding(s)."
 
       - name: pip-audit — dependency CVE scan
         id: pip_audit
@@ -440,14 +276,12 @@ jobs:
         id: radon
         run: |
           echo "── Cyclomatic Complexity ────────────────────────────────────"
-          radon cc ${{ needs.load-config.outputs.src-dirs }} \
-            --show-complexity --average --json > radon-cc-report.json || true
-          radon cc ${{ needs.load-config.outputs.src-dirs }} \
-            --min C --show-complexity --average 2>&1 | tee radon-cc-output.txt || true
+          radon cc $SRC_DIR             --show-complexity --average --json > radon-cc-report.json || true
+          radon cc $SRC_DIR             --min C --show-complexity --average 2>&1 | tee radon-cc-output.txt || true
           echo ""
           echo "── Maintainability Index ────────────────────────────────────"
-          radon mi ${{ needs.load-config.outputs.src-dirs }} --json > radon-mi-report.json || true
-          radon mi ${{ needs.load-config.outputs.src-dirs }} --show --min B || true
+          radon mi $SRC_DIR --json > radon-mi-report.json || true
+          radon mi $SRC_DIR --show --min B || true
           RADON_COMPLEXITY=$(python3 -c "
           import json
           try:
@@ -465,8 +299,7 @@ jobs:
       - name: vulture — dead code detection
         id: vulture
         run: |
-          vulture ${{ needs.load-config.outputs.src-dirs }} \
-            --min-confidence 80 | tee vulture-report.txt || true
+          vulture $SRC_DIR             --min-confidence 80 | tee vulture-report.txt || true
           VULTURE_DEAD=$(wc -l < vulture-report.txt 2>/dev/null || echo "0")
           VULTURE_DEAD=$(echo "$VULTURE_DEAD" | tr -d '[:space:]')
           echo "vulture_dead=${VULTURE_DEAD:-0}" >> "$GITHUB_OUTPUT"
@@ -475,8 +308,7 @@ jobs:
       - name: interrogate — docstring coverage
         id: interrogate
         run: |
-          interrogate ${{ needs.load-config.outputs.src-dirs }} \
-            -v --fail-under=0 2>&1 | tee interrogate-output.txt || true
+          interrogate $SRC_DIR             -v --fail-under=0 2>&1 | tee interrogate-output.txt || true
           INTERROGATE_PCT=$(grep -oP '\d+%' interrogate-output.txt | tail -1 | tr -d '%' || echo "0")
           INTERROGATE_PCT=$(echo "$INTERROGATE_PCT" | tr -d '[:space:]')
           echo "interrogate_pct=${INTERROGATE_PCT:-0}" >> "$GITHUB_OUTPUT"
@@ -491,6 +323,7 @@ jobs:
           path: |
             bandit-report.json
             semgrep-report.json
+            semgrep-output.txt
             pip-audit-report.json
             radon-cc-report.json
             radon-mi-report.json
@@ -506,13 +339,7 @@ jobs:
 
           HEADER
 
-          for section in "Type Checking (mypy)|mypy-output.txt" \
-                         "Security (bandit)|bandit-output.txt" \
-                         "Pattern Security (semgrep)|semgrep-output.txt" \
-                         "Dependencies (pip-audit)|pip-audit-output.txt" \
-                         "Complexity (radon)|radon-cc-output.txt" \
-                         "Dead Code (vulture)|vulture-report.txt" \
-                         "Docstring Coverage (interrogate)|interrogate-output.txt"; do
+          for section in "Type Checking (mypy)|mypy-output.txt"                          "Security (bandit)|bandit-output.txt"                          "Pattern Security (semgrep)|semgrep-output.txt"                          "Dependencies (pip-audit)|pip-audit-output.txt"                          "Complexity (radon)|radon-cc-output.txt"                          "Dead Code (vulture)|vulture-report.txt"                          "Docstring Coverage (interrogate)|interrogate-output.txt"; do
             title="${section%%|*}"
             file="${section##*|}"
             echo "## $title" >> audit-summary.md
@@ -568,9 +395,8 @@ jobs:
             echo ""
             echo "── TEST RESULTS ──────────────────────────────────────────"
             for py in 3.10 3.11 3.12; do
-              safe_py=$(echo "$py" | tr '.' '_')
-              if [ -f "artifacts/test-summary-py${safe_py}/test-summary-py${safe_py}.md" ]; then
-                cat "artifacts/test-summary-py${safe_py}/test-summary-py${safe_py}.md"
+              if [ -f "artifacts/test-summary-py${py}/test-summary-py${py}.md" ]; then
+                cat "artifacts/test-summary-py${py}/test-summary-py${py}.md"
               else
                 echo "Python $py: No test summary available."
               fi
