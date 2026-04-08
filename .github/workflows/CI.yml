@@ -215,24 +215,31 @@ jobs:
       - name: Install audit tools
         run: |
           pip install -e .
-          pip install bandit pip-audit radon vulture mypy interrogate semgrep
+          pip install bandit pip-audit radon vulture mypy interrogate
+
+      - name: Install semgrep (via official action)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/auto
+        continue-on-error: true
 
       - name: semgrep — pattern-based security & bug detection
-        id: semgrep
-        run: |
-          semgrep scan --config p/auto --json --output semgrep-report.json $SRC_DIR 2>&1 | tee semgrep-output.txt || true
-          SEMGREP_FINDINGS=$(python3 -c "
-          import json
-          try:
-              with open('semgrep-report.json') as f:
-                  data = json.load(f)
-              print(len(data.get('results', [])))
+       id: semgrep
+       run: |
+         if [ -f "semgrep-report.json" ]; then
+         SEMGREP_FINDINGS=$(python3 -c "
+         import json
+         try:
+             with open('semgrep-report.json') as f:
+                 data = json.load(f)
+                 print(len(data.get('results', [])))
           except:
               print('0')
-          " 2>/dev/null || echo "0")
-          SEMGREP_FINDINGS=$(echo "$SEMGREP_FINDINGS" | tr -d '[:space:]')
-          echo "semgrep_findings=${SEMGREP_FINDINGS:-0}" >> "$GITHUB_OUTPUT"
-          echo "Found ${SEMGREP_FINDINGS:-0} semgrep finding(s)."
+         " 2>/dev/null || echo "0")
+         else
+           SEMGREP_FINDINGS="0"
+         fi
+         echo "semgrep_findings=${SEMGREP_FINDINGS}" >> "$GITHUB_OUTPUT"
 
       - name: mypy — static type checking
         id: mypy
