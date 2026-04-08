@@ -217,9 +217,19 @@ jobs:
         run: |
           pip install -e .
           pip install pytest pytest-cov pytest-xdist pytest-timeout
+          
+      - name: Cache Playwright Browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Use a key that changes when your requirements change
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
 
-      - name: scrapling install (browser binaries)
-        run: scrapling install
+      - name: Install Playwright Browsers (Only if Cache Miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          scrapling install
 
       - name: Run tests
         run: |
