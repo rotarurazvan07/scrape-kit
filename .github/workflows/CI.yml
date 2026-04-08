@@ -45,7 +45,7 @@ jobs:
       test-dirs: ${{ steps.parse.outputs.test_dirs }}
       all-dirs: ${{ steps.parse.outputs.all_dirs }}
       coverage-fail-under: ${{ steps.parse.outputs.coverage_fail_under }}
-      mypy-config: ${{ steps.parse.outputs.mypy_config }}
+      config-file: ${{ steps.parse.outputs.config_file }}
 
     steps:
       - uses: actions/checkout@v4
@@ -66,8 +66,7 @@ jobs:
           all_dirs = f"{src_dirs} {test_dirs}"
           coverage_fail_under = str(ci.get("coverage-fail-under", 80))
 
-          # mypy config: use ci-config.toml itself
-          mypy_config = ".github/workflows/ci-config.toml"
+          config_file = ".github/workflows/ci-config.toml"
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"python_version={python_version}\n")
@@ -75,7 +74,7 @@ jobs:
               out.write(f"test_dirs={test_dirs}\n")
               out.write(f"all_dirs={all_dirs}\n")
               out.write(f"coverage_fail_under={coverage_fail_under}\n")
-              out.write(f"mypy_config={mypy_config}\n")
+              out.write(f"config_file={config_file}\n")
           PYEOF
 
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
@@ -121,16 +120,20 @@ jobs:
             ${{ needs.load-config.outputs.src-dirs }}
 
       - name: isort — sort imports
-        run: isort ${{ needs.load-config.outputs.all-dirs }}
+        run: isort --settings-path ${{ needs.load-config.outputs.config-file }} \
+          ${{ needs.load-config.outputs.all-dirs }}
 
       - name: ruff format
-        run: ruff format ${{ needs.load-config.outputs.all-dirs }}
+        run: ruff format --config ${{ needs.load-config.outputs.config-file }} \
+          ${{ needs.load-config.outputs.all-dirs }}
 
       - name: ruff lint --fix
         run: |
-          ruff check --fix --unsafe-fixes --output-format=concise \
+          ruff check --config ${{ needs.load-config.outputs.config-file }} \
+            --fix --unsafe-fixes --output-format=concise \
             ${{ needs.load-config.outputs.all-dirs }} 2>&1 | tee ruff-fix-output.txt || true
-          ruff check --fix --unsafe-fixes --output-format=github \
+          ruff check --config ${{ needs.load-config.outputs.config-file }} \
+            --fix --unsafe-fixes --output-format=github \
             ${{ needs.load-config.outputs.all-dirs }} || true
 
       - name: Commit fixes (if any)
@@ -293,7 +296,7 @@ jobs:
         run: |
           echo "── Type Checking ─────────────────────────────────────────────"
           mypy ${{ needs.load-config.outputs.src-dirs }} \
-            --config-file ${{ needs.load-config.outputs.mypy-config }} \
+            --config-file ${{ needs.load-config.outputs.config-file }} \
             --no-error-summary 2>&1 | tee mypy-output.txt || true
           MYPY_ERRORS=$(grep -c "error:" mypy-output.txt 2>/dev/null || echo "0")
           MYPY_ERRORS=$(echo "$MYPY_ERRORS" | tr -d '[:space:]')
