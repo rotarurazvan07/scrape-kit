@@ -106,12 +106,12 @@ jobs:
 
           tool_cfg = cfg.get("tool", {})
           
-          # Generate and write each tool's config
+          # Generate and write each tool's config (bare, no [tool.xxx] wrapper)
           def write_tool_config(name, config_dict):
-              lines = [f"[tool.{name}]"]
+              lines = []
               for key, val in config_dict.items():
                   if isinstance(val, dict):
-                      lines.append(f"\n[tool.{name}.{key}]")
+                      lines.append(f"[{key}]")
                       for k, v in val.items():
                           if isinstance(v, list):
                               lines.append(f'{k} = {json.dumps(v)}')
@@ -337,12 +337,12 @@ jobs:
 
           tool_cfg = cfg.get("tool", {})
           
-          # Generate and write mypy config
+          # Generate and write mypy config (bare, no [tool.mypy] wrapper)
           def write_tool_config(name, config_dict):
-              lines = [f"[tool.{name}]"]
+              lines = []
               for key, val in config_dict.items():
                   if isinstance(val, dict):
-                      lines.append(f"\n[tool.{name}.{key}]")
+                      lines.append(f"[{key}]")
                       for k, v in val.items():
                           if isinstance(v, list):
                               lines.append(f'{k} = {json.dumps(v)}')
