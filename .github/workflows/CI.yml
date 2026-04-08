@@ -44,18 +44,15 @@ jobs:
       test-dirs: ${{ steps.parse.outputs.test_dirs }}
       all-dirs: ${{ steps.parse.outputs.all_dirs }}
       coverage-fail-under: ${{ steps.parse.outputs.coverage_fail_under }}
-      ruff-config: ${{ steps.parse.outputs.ruff_config }}
-      mypy-config: ${{ steps.parse.outputs.mypy_config }}
-      isort-config: ${{ steps.parse.outputs.isort_config }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse ci-config.toml and encode tool configs
+      - name: Parse ci-config.toml
         id: parse
         run: |
           python3 << 'PYEOF'
-          import tomllib, os, base64, json
+          import tomllib, os
 
           with open(".github/workflows/ci-config.toml", "rb") as f:
               cfg = tomllib.load(f)
@@ -67,52 +64,12 @@ jobs:
           all_dirs = f"{src_dirs} {test_dirs}"
           coverage_fail_under = str(ci.get("coverage-fail-under", 80))
 
-          # Extract tool-specific configs
-          tool_cfg = cfg.get("tool", {})
-          ruff_cfg = tool_cfg.get("ruff", {})
-          mypy_cfg = tool_cfg.get("mypy", {})
-          isort_cfg = tool_cfg.get("isort", {})
-
-          # Generate TOML content for each tool
-          def tool_config_toml(name, config_dict):
-              """Generate TOML content for a tool."""
-              lines = [f"[tool.{name}]"]
-              for key, val in config_dict.items():
-                  if isinstance(val, dict):
-                      lines.append(f"\n[tool.{name}.{key}]")
-                      for k, v in val.items():
-                          if isinstance(v, list):
-                              lines.append(f'{k} = {json.dumps(v)}')
-                          elif isinstance(v, str):
-                              lines.append(f'{k} = "{v}"')
-                          else:
-                              lines.append(f'{k} = {v}')
-                  elif isinstance(val, list):
-                      lines.append(f'{key} = {json.dumps(val)}')
-                  elif isinstance(val, str):
-                      lines.append(f'{key} = "{val}"')
-                  else:
-                      lines.append(f'{key} = {val}')
-              return "\n".join(lines)
-
-          ruff_toml = tool_config_toml("ruff", ruff_cfg)
-          mypy_toml = tool_config_toml("mypy", mypy_cfg)
-          isort_toml = tool_config_toml("isort", isort_cfg)
-
-          # Encode as base64 for safe shell passing
-          ruff_b64 = base64.b64encode(ruff_toml.encode()).decode()
-          mypy_b64 = base64.b64encode(mypy_toml.encode()).decode()
-          isort_b64 = base64.b64encode(isort_toml.encode()).decode()
-
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"python_version={python_version}\n")
               out.write(f"src_dirs={src_dirs}\n")
               out.write(f"test_dirs={test_dirs}\n")
               out.write(f"all_dirs={all_dirs}\n")
               out.write(f"coverage_fail_under={coverage_fail_under}\n")
-              out.write(f"ruff_config={ruff_b64}\n")
-              out.write(f"mypy_config={mypy_b64}\n")
-              out.write(f"isort_config={isort_b64}\n")
           PYEOF
 
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
@@ -136,20 +93,42 @@ jobs:
           python-version: ${{ needs.load-config.outputs.python-version }}
           cache: pip
 
-      - name: Decode and write tool configs
+      - name: Prepare tool configs
         run: |
           python3 << 'PYEOF'
-          import base64
+          import tomllib, json
+
+          with open(".github/workflows/ci-config.toml", "rb") as f:
+              cfg = tomllib.load(f)
+
+          tool_cfg = cfg.get("tool", {})
           
-          configs = {
-              ".config-ruff.toml": "${{ needs.load-config.outputs.ruff-config }}",
-              ".config-isort.toml": "${{ needs.load-config.outputs.isort-config }}",
-          }
-          
-          for filename, b64_content in configs.items():
-              content = base64.b64decode(b64_content).decode()
-              with open(filename, "w") as f:
-                  f.write(content)
+          # Generate and write each tool's config
+          def write_tool_config(name, config_dict):
+              lines = [f"[tool.{name}]"]
+              for key, val in config_dict.items():
+                  if isinstance(val, dict):
+                      lines.append(f"\n[tool.{name}.{key}]")
+                      for k, v in val.items():
+                          if isinstance(v, list):
+                              lines.append(f'{k} = {json.dumps(v)}')
+                          elif isinstance(v, str):
+                              lines.append(f'{k} = "{v}"')
+                          else:
+                              lines.append(f'{k} = {v}')
+                  elif isinstance(val, list):
+                      lines.append(f'{key} = {json.dumps(val)}')
+                  elif isinstance(val, str):
+                      lines.append(f'{key} = "{val}"')
+                  else:
+                      lines.append(f'{key} = {val}')
+              
+              with open(f".config-{name}.toml", "w") as f:
+                  f.write("\n".join(lines))
+
+          for tool_name in ["ruff", "isort"]:
+              tool_config = tool_cfg.get(tool_name, {})
+              write_tool_config(tool_name, tool_config)
           PYEOF
 
       - name: Install auto-fix tools
@@ -344,19 +323,41 @@ jobs:
           python-version: ${{ needs.load-config.outputs.python-version }}
           cache: pip
 
-      - name: Decode and write tool configs
+      - name: Prepare tool configs
         run: |
           python3 << 'PYEOF'
-          import base64
+          import tomllib, json
+
+          with open(".github/workflows/ci-config.toml", "rb") as f:
+              cfg = tomllib.load(f)
+
+          tool_cfg = cfg.get("tool", {})
           
-          configs = {
-              ".config-mypy.toml": "${{ needs.load-config.outputs.mypy-config }}",
-          }
-          
-          for filename, b64_content in configs.items():
-              content = base64.b64decode(b64_content).decode()
-              with open(filename, "w") as f:
-                  f.write(content)
+          # Generate and write mypy config
+          def write_tool_config(name, config_dict):
+              lines = [f"[tool.{name}]"]
+              for key, val in config_dict.items():
+                  if isinstance(val, dict):
+                      lines.append(f"\n[tool.{name}.{key}]")
+                      for k, v in val.items():
+                          if isinstance(v, list):
+                              lines.append(f'{k} = {json.dumps(v)}')
+                          elif isinstance(v, str):
+                              lines.append(f'{k} = "{v}"')
+                          else:
+                              lines.append(f'{k} = {v}')
+                  elif isinstance(val, list):
+                      lines.append(f'{key} = {json.dumps(val)}')
+                  elif isinstance(val, str):
+                      lines.append(f'{key} = "{val}"')
+                  else:
+                      lines.append(f'{key} = {val}')
+              
+              with open(f".config-{name}.toml", "w") as f:
+                  f.write("\n".join(lines))
+
+          mypy_config = tool_cfg.get("mypy", {})
+          write_tool_config("mypy", mypy_config)
           PYEOF
 
       - name: Install audit tools
