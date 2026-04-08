@@ -51,11 +51,13 @@ jobs:
       - name: Parse ci-config.toml
         id: parse
         run: |
+          pip install tomli
+          pip install tomli
           python3 << 'PYEOF'
-          import tomllib, os
+          import tomli, os
 
           with open(".github/workflows/ci-config.toml", "rb") as f:
-              cfg = tomllib.load(f)
+              cfg = tomli.load(f)
 
           ci = cfg.get("ci", {})
           python_version = ci.get("python-version", "3.10")
@@ -95,11 +97,12 @@ jobs:
 
       - name: Prepare tool configs
         run: |
+          pip install tomli
           python3 << 'PYEOF'
-          import tomllib, json
+          import tomli, json
 
           with open(".github/workflows/ci-config.toml", "rb") as f:
-              cfg = tomllib.load(f)
+              cfg = tomli.load(f)
 
           tool_cfg = cfg.get("tool", {})
           
@@ -325,11 +328,12 @@ jobs:
 
       - name: Prepare tool configs
         run: |
+          pip install tomli
           python3 << 'PYEOF'
-          import tomllib, json
+          import tomli, json
 
           with open(".github/workflows/ci-config.toml", "rb") as f:
-              cfg = tomllib.load(f)
+              cfg = tomli.load(f)
 
           tool_cfg = cfg.get("tool", {})
           
