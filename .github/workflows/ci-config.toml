@@ -1,14 +1,8 @@
 # ════════════════════════════════════════════════════════════════════════════
 # CI Configuration
 # ════════════════════════════════════════════════════════════════════════════
-# Edit the [ci] section below to adapt this workflow for your repo.
-# Only 4 values need to be changed:
-#   python-version   — Python version for non-matrix jobs
-#   src-dirs         — Source code dirs (space-separated)
-#   test-dirs        — Test dirs (space-separated)
-#   coverage-fail-under — Min coverage % to pass
-#
-# The [mypy], [ruff], [isort] sections are used directly by those tools.
+# Edit the [ci] section to adapt for your repo.
+# Edit the [tool.*] sections to configure ruff, mypy, isort, etc.
 # ════════════════════════════════════════════════════════════════════════════
 
 [ci]
@@ -17,31 +11,24 @@ src-dirs = "scrape_kit"
 test-dirs = "tests"
 coverage-fail-under = 80
 
-# ── Tool configs (used directly by the tools) ───────────────────────────────
+# ── Tool Configurations ─────────────────────────────────────────────────────
 
-[ruff]
+[tool.ruff]
 line-length = 127
 target-version = "py310"
 
-[ruff.lint]
+[tool.ruff.lint]
 select = ["E", "F", "B", "C", "SIM", "PERF"]
 ignore = ["UP"]
 
-[ruff.format]
+[tool.ruff.format]
 quote-style = "double"
 
-[mypy]
+[tool.mypy]
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
 
-[isort]
+[tool.isort]
 profile = "black"
 line_length = 127
-
-[coverage]
-source = ["scrape_kit"]
-omit = ["tests/*"]
-
-[pytest]
-testpaths = ["tests"]
