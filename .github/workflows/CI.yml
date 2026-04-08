@@ -1,4 +1,3 @@
-
 name: CI
 
 on:
@@ -45,16 +44,18 @@ jobs:
       test-dirs: ${{ steps.parse.outputs.test_dirs }}
       all-dirs: ${{ steps.parse.outputs.all_dirs }}
       coverage-fail-under: ${{ steps.parse.outputs.coverage_fail_under }}
-      config-file: ${{ steps.parse.outputs.config_file }}
+      ruff-config: ${{ steps.parse.outputs.ruff_config }}
+      mypy-config: ${{ steps.parse.outputs.mypy_config }}
+      isort-config: ${{ steps.parse.outputs.isort_config }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse ci-config.toml
+      - name: Parse ci-config.toml and create tool configs
         id: parse
         run: |
           python3 << 'PYEOF'
-          import tomllib, os
+          import tomllib, os, json, tempfile
 
           with open(".github/workflows/ci-config.toml", "rb") as f:
               cfg = tomllib.load(f)
@@ -66,7 +67,39 @@ jobs:
           all_dirs = f"{src_dirs} {test_dirs}"
           coverage_fail_under = str(ci.get("coverage-fail-under", 80))
 
-          config_file = ".github/workflows/ci-config.toml"
+          # Extract tool-specific configs
+          tool_cfg = cfg.get("tool", {})
+          ruff_cfg = tool_cfg.get("ruff", {})
+          mypy_cfg = tool_cfg.get("mypy", {})
+          isort_cfg = tool_cfg.get("isort", {})
+
+          # Create temporary tool config files for each tool
+          def write_tool_config(name, config_dict):
+              """Write a tool config file and return its path."""
+              path = f".config-{name}.toml"
+              with open(path, "w") as f:
+                  f.write(f"[tool.{name}]\n")
+                  for key, val in config_dict.items():
+                      if isinstance(val, dict):
+                          f.write(f"\n[tool.{name}.{key}]\n")
+                          for k, v in val.items():
+                              if isinstance(v, list):
+                                  f.write(f'{k} = {json.dumps(v)}\n')
+                              elif isinstance(v, str):
+                                  f.write(f'{k} = "{v}"\n')
+                              else:
+                                  f.write(f'{k} = {v}\n')
+                      elif isinstance(val, list):
+                          f.write(f'{key} = {json.dumps(val)}\n')
+                      elif isinstance(val, str):
+                          f.write(f'{key} = "{val}"\n')
+                      else:
+                          f.write(f'{key} = {val}\n')
+              return path
+
+          ruff_path = write_tool_config("ruff", ruff_cfg)
+          mypy_path = write_tool_config("mypy", mypy_cfg)
+          isort_path = write_tool_config("isort", isort_cfg)
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"python_version={python_version}\n")
@@ -74,7 +107,9 @@ jobs:
               out.write(f"test_dirs={test_dirs}\n")
               out.write(f"all_dirs={all_dirs}\n")
               out.write(f"coverage_fail_under={coverage_fail_under}\n")
-              out.write(f"config_file={config_file}\n")
+              out.write(f"ruff_config={ruff_path}\n")
+              out.write(f"mypy_config={mypy_path}\n")
+              out.write(f"isort_config={isort_path}\n")
           PYEOF
 
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
@@ -120,19 +155,19 @@ jobs:
             ${{ needs.load-config.outputs.src-dirs }}
 
       - name: isort — sort imports
-        run: isort --settings-path ${{ needs.load-config.outputs.config-file }} \
+        run: isort --settings-path ${{ needs.load-config.outputs.isort-config }} \
           ${{ needs.load-config.outputs.all-dirs }}
 
       - name: ruff format
-        run: ruff format --config ${{ needs.load-config.outputs.config-file }} \
+        run: ruff format --config ${{ needs.load-config.outputs.ruff-config }} \
           ${{ needs.load-config.outputs.all-dirs }}
 
       - name: ruff lint --fix
         run: |
-          ruff check --config ${{ needs.load-config.outputs.config-file }} \
+          ruff check --config ${{ needs.load-config.outputs.ruff-config }} \
             --fix --unsafe-fixes --output-format=concise \
             ${{ needs.load-config.outputs.all-dirs }} 2>&1 | tee ruff-fix-output.txt || true
-          ruff check --config ${{ needs.load-config.outputs.config-file }} \
+          ruff check --config ${{ needs.load-config.outputs.ruff-config }} \
             --fix --unsafe-fixes --output-format=github \
             ${{ needs.load-config.outputs.all-dirs }} || true
 
@@ -296,7 +331,7 @@ jobs:
         run: |
           echo "── Type Checking ─────────────────────────────────────────────"
           mypy ${{ needs.load-config.outputs.src-dirs }} \
-            --config-file ${{ needs.load-config.outputs.config-file }} \
+            --config-file ${{ needs.load-config.outputs.mypy-config }} \
             --no-error-summary 2>&1 | tee mypy-output.txt || true
           MYPY_ERRORS=$(grep -c "error:" mypy-output.txt 2>/dev/null || echo "0")
           MYPY_ERRORS=$(echo "$MYPY_ERRORS" | tr -d '[:space:]')
