@@ -51,11 +51,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse ci-config.toml and create tool configs
+      - name: Parse ci-config.toml and encode tool configs
         id: parse
         run: |
           python3 << 'PYEOF'
-          import tomllib, os, json, tempfile
+          import tomllib, os, base64, json
 
           with open(".github/workflows/ci-config.toml", "rb") as f:
               cfg = tomllib.load(f)
@@ -73,33 +73,36 @@ jobs:
           mypy_cfg = tool_cfg.get("mypy", {})
           isort_cfg = tool_cfg.get("isort", {})
 
-          # Create temporary tool config files for each tool
-          def write_tool_config(name, config_dict):
-              """Write a tool config file and return its path."""
-              path = f".config-{name}.toml"
-              with open(path, "w") as f:
-                  f.write(f"[tool.{name}]\n")
-                  for key, val in config_dict.items():
-                      if isinstance(val, dict):
-                          f.write(f"\n[tool.{name}.{key}]\n")
-                          for k, v in val.items():
-                              if isinstance(v, list):
-                                  f.write(f'{k} = {json.dumps(v)}\n')
-                              elif isinstance(v, str):
-                                  f.write(f'{k} = "{v}"\n')
-                              else:
-                                  f.write(f'{k} = {v}\n')
-                      elif isinstance(val, list):
-                          f.write(f'{key} = {json.dumps(val)}\n')
-                      elif isinstance(val, str):
-                          f.write(f'{key} = "{val}"\n')
-                      else:
-                          f.write(f'{key} = {val}\n')
-              return path
+          # Generate TOML content for each tool
+          def tool_config_toml(name, config_dict):
+              """Generate TOML content for a tool."""
+              lines = [f"[tool.{name}]"]
+              for key, val in config_dict.items():
+                  if isinstance(val, dict):
+                      lines.append(f"\n[tool.{name}.{key}]")
+                      for k, v in val.items():
+                          if isinstance(v, list):
+                              lines.append(f'{k} = {json.dumps(v)}')
+                          elif isinstance(v, str):
+                              lines.append(f'{k} = "{v}"')
+                          else:
+                              lines.append(f'{k} = {v}')
+                  elif isinstance(val, list):
+                      lines.append(f'{key} = {json.dumps(val)}')
+                  elif isinstance(val, str):
+                      lines.append(f'{key} = "{val}"')
+                  else:
+                      lines.append(f'{key} = {val}')
+              return "\n".join(lines)
 
-          ruff_path = write_tool_config("ruff", ruff_cfg)
-          mypy_path = write_tool_config("mypy", mypy_cfg)
-          isort_path = write_tool_config("isort", isort_cfg)
+          ruff_toml = tool_config_toml("ruff", ruff_cfg)
+          mypy_toml = tool_config_toml("mypy", mypy_cfg)
+          isort_toml = tool_config_toml("isort", isort_cfg)
+
+          # Encode as base64 for safe shell passing
+          ruff_b64 = base64.b64encode(ruff_toml.encode()).decode()
+          mypy_b64 = base64.b64encode(mypy_toml.encode()).decode()
+          isort_b64 = base64.b64encode(isort_toml.encode()).decode()
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"python_version={python_version}\n")
@@ -107,9 +110,9 @@ jobs:
               out.write(f"test_dirs={test_dirs}\n")
               out.write(f"all_dirs={all_dirs}\n")
               out.write(f"coverage_fail_under={coverage_fail_under}\n")
-              out.write(f"ruff_config={ruff_path}\n")
-              out.write(f"mypy_config={mypy_path}\n")
-              out.write(f"isort_config={isort_path}\n")
+              out.write(f"ruff_config={ruff_b64}\n")
+              out.write(f"mypy_config={mypy_b64}\n")
+              out.write(f"isort_config={isort_b64}\n")
           PYEOF
 
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
@@ -133,6 +136,22 @@ jobs:
           python-version: ${{ needs.load-config.outputs.python-version }}
           cache: pip
 
+      - name: Decode and write tool configs
+        run: |
+          python3 << 'PYEOF'
+          import base64
+          
+          configs = {
+              ".config-ruff.toml": "${{ needs.load-config.outputs.ruff-config }}",
+              ".config-isort.toml": "${{ needs.load-config.outputs.isort-config }}",
+          }
+          
+          for filename, b64_content in configs.items():
+              content = base64.b64decode(b64_content).decode()
+              with open(filename, "w") as f:
+                  f.write(content)
+          PYEOF
+
       - name: Install auto-fix tools
         run: |
           pip install ruff isort pyupgrade autoflake autotyping
@@ -155,19 +174,19 @@ jobs:
             ${{ needs.load-config.outputs.src-dirs }}
 
       - name: isort — sort imports
-        run: isort --settings-path ${{ needs.load-config.outputs.isort-config }} \
+        run: isort --settings-path .config-isort.toml \
           ${{ needs.load-config.outputs.all-dirs }}
 
       - name: ruff format
-        run: ruff format --config ${{ needs.load-config.outputs.ruff-config }} \
+        run: ruff format --config .config-ruff.toml \
           ${{ needs.load-config.outputs.all-dirs }}
 
       - name: ruff lint --fix
         run: |
-          ruff check --config ${{ needs.load-config.outputs.ruff-config }} \
+          ruff check --config .config-ruff.toml \
             --fix --unsafe-fixes --output-format=concise \
             ${{ needs.load-config.outputs.all-dirs }} 2>&1 | tee ruff-fix-output.txt || true
-          ruff check --config ${{ needs.load-config.outputs.ruff-config }} \
+          ruff check --config .config-ruff.toml \
             --fix --unsafe-fixes --output-format=github \
             ${{ needs.load-config.outputs.all-dirs }} || true
 
@@ -217,19 +236,19 @@ jobs:
         run: |
           pip install -e .
           pip install pytest pytest-cov pytest-xdist pytest-timeout
-          
+
       - name: Cache Playwright Browsers
         id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          # Use a key that changes when your requirements change
-          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements*.txt', '**/setup.py', '**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
-      - name: Install Playwright Browsers (Only if Cache Miss)
+      - name: Install Playwright Browsers (if cache miss)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: |
-          scrapling install
+        run: scrapling install
 
       - name: Run tests
         run: |
@@ -325,6 +344,21 @@ jobs:
           python-version: ${{ needs.load-config.outputs.python-version }}
           cache: pip
 
+      - name: Decode and write tool configs
+        run: |
+          python3 << 'PYEOF'
+          import base64
+          
+          configs = {
+              ".config-mypy.toml": "${{ needs.load-config.outputs.mypy-config }}",
+          }
+          
+          for filename, b64_content in configs.items():
+              content = base64.b64decode(b64_content).decode()
+              with open(filename, "w") as f:
+                  f.write(content)
+          PYEOF
+
       - name: Install audit tools
         run: |
           pip install -e .
@@ -341,7 +375,7 @@ jobs:
         run: |
           echo "── Type Checking ─────────────────────────────────────────────"
           mypy ${{ needs.load-config.outputs.src-dirs }} \
-            --config-file ${{ needs.load-config.outputs.mypy-config }} \
+            --config-file .config-mypy.toml \
             --no-error-summary 2>&1 | tee mypy-output.txt || true
           MYPY_ERRORS=$(grep -c "error:" mypy-output.txt 2>/dev/null || echo "0")
           MYPY_ERRORS=$(echo "$MYPY_ERRORS" | tr -d '[:space:]')
