@@ -224,22 +224,22 @@ jobs:
         continue-on-error: true
 
       - name: semgrep — pattern-based security & bug detection
-       id: semgrep
-       run: |
-         if [ -f "semgrep-report.json" ]; then
-         SEMGREP_FINDINGS=$(python3 -c "
-         import json
-         try:
-             with open('semgrep-report.json') as f:
-                 data = json.load(f)
-                 print(len(data.get('results', [])))
+        id: semgrep
+        run: |
+          if [ -f "semgrep-report.json" ]; then
+          SEMGREP_FINDINGS=$(python3 -c "
+          import json
+          try:
+              with open('semgrep-report.json') as f:
+                  data = json.load(f)
+                  print(len(data.get('results', [])))
           except:
               print('0')
-         " 2>/dev/null || echo "0")
-         else
-           SEMGREP_FINDINGS="0"
-         fi
-         echo "semgrep_findings=${SEMGREP_FINDINGS}" >> "$GITHUB_OUTPUT"
+          " 2>/dev/null || echo "0")
+          else   
+            SEMGREP_FINDINGS="0"
+          fi   
+          echo "semgrep_findings=${SEMGREP_FINDINGS}" >> "$GITHUB_OUTPUT"
 
       - name: mypy — static type checking
         id: mypy
