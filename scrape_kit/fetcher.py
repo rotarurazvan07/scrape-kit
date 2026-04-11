@@ -274,7 +274,7 @@ class WebFetcher:
             raise ValueError("retries must be >= 1")
 
         for attempt in range(1, retries + 1):
-            try:
+            try:  # nosec PERF203
                 html = self._fetch_attempt(url, stealthy_headers, attempt, retries, backoff)
                 if html is not None:
                     return html
@@ -442,7 +442,7 @@ class WebFetcher:
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
             futures = [pool.submit(self._fetch_one_fast, url, callback) for url in urls]
             for future in futures:
-                try:
+                try:  # nosec PERF203
                     future.result()
                 except Exception as exc:
                     errors.append((getattr(exc, "url", "unknown"), exc))

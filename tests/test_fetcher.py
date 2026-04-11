@@ -738,9 +738,8 @@ class TestEscalateToBrowser:
         mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
         mock_browser_session.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(fetcher, "browser", return_value=mock_browser_session):
-            with pytest.raises(FetcherError, match="Escalation returned no content"):
-                fetcher._escalate_to_browser("http://test.com", "blocked")
+        with patch.object(fetcher, "browser", return_value=mock_browser_session), pytest.raises(FetcherError, match="Escalation returned no content"):
+            fetcher._escalate_to_browser("http://test.com", "blocked")
 
     def test_error_escalate_to_browser_failure(self):
         """Test lines 339-341 - browser escalation fails"""
@@ -750,9 +749,8 @@ class TestEscalateToBrowser:
         mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
         mock_browser_session.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(fetcher, "browser", return_value=mock_browser_session):
-            with pytest.raises(FetcherError, match="Escalation failed"):
-                fetcher._escalate_to_browser("http://test.com", "blocked")
+        with patch.object(fetcher, "browser", return_value=mock_browser_session), pytest.raises(FetcherError, match="Escalation failed"):
+            fetcher._escalate_to_browser("http://test.com", "blocked")
 
 
 class TestFetchOneFast:
@@ -763,29 +761,20 @@ class TestFetchOneFast:
         fetcher = WebFetcher(block_indicators=[])
 
         # Make fetch always raise an exception
-        with patch.object(fetcher, "fetch", side_effect=Exception("Network error")):
-            with pytest.raises(FetcherError, match="Fast scrape failed for http://test.com"):
-                fetcher._fetch_one_fast("http://test.com", MagicMock())
+        with patch.object(fetcher, "fetch", side_effect=Exception("Network error")), pytest.raises(FetcherError, match="Fast scrape failed for http://test.com"):
+            fetcher._fetch_one_fast("http://test.com", MagicMock())
 
     def test_error_fetch_one_fast_blocked_all_attempts(self):
         """Test lines 423-425 - all attempts blocked"""
         fetcher = WebFetcher(block_indicators=["blocked"])
 
         # Make fetch always return blocked content
-        with patch.object(fetcher, "fetch", return_value="<html>blocked</html>"):
-            with pytest.raises(FetcherError, match="Fast scrape remained blocked for http://test.com"):
-                fetcher._fetch_one_fast("http://test.com", MagicMock())
+        with patch.object(fetcher, "fetch", return_value="<html>blocked</html>"), pytest.raises(FetcherError, match="Fast scrape remained blocked for http://test.com"):
+            fetcher._fetch_one_fast("http://test.com", MagicMock())
 
 
 class TestScrapeStealth:
     """Test lines 428, 431-460, 463-479 - stealth scraping methods"""
-
-    def test_normal_scrape_stealth_empty_urls(self):
-        """Test line 382-383 - empty urls returns immediately"""
-        fetcher = WebFetcher()
-        callback = MagicMock()
-        # Should not raise any error
-        fetcher.scrape([], callback, mode="stealth")
 
     def test_normal_scrape_stealth_empty_urls(self):
         """Test line 382-383 - empty urls returns immediately"""

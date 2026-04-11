@@ -219,7 +219,7 @@ class BaseStorageManager:
 
                 # 2. Bulk Attach and Insert
                 for db_file in db_files:
-                    try:
+                    try:  # nosec PERF203
                         logger.debug("Staging merge from %s...", os.path.basename(db_file))
                         self.conn.execute("ATTACH DATABASE ? AS chunk", (db_file,))
                         self.conn.execute(

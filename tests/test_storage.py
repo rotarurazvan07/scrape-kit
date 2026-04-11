@@ -452,7 +452,7 @@ class TestFlushAndClose:
     def test_normal_connection_unusable_after_close(self, tmp_path):
         manager = MockDB(str(tmp_path / "close_test.db"))
         manager.flush_and_close()
-        with pytest.raises(Exception):
+        with pytest.raises((sqlite3.ProgrammingError, sqlite3.OperationalError)):
             manager.conn.execute("SELECT 1")
 
     def test_normal_data_persists_after_close_and_reopen(self, tmp_path):
@@ -873,7 +873,7 @@ class TestReopenEdgeCases:
         db.reopen_if_changed()
 
         # Connection should still be usable after reopen
-        db.conn  # Should not raise
+        assert db.conn is not None
 
     def test_edge_get_chunk_files_with_skip(self, tmp_path):
         """Test line 336 - get_chunk_files with skip_file"""
