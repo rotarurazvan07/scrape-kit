@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore
 
 from .errors import SettingsError
 from .logger import get_logger
@@ -14,6 +14,11 @@ class SettingsManager:
     """Recursively loads all YAML files in a directory and provides atomic writes."""
 
     def __init__(self, directory: str) -> None:
+        """Initialize the SettingsManager.
+
+        Args:
+            directory: Path to the directory containing YAML configuration files.
+        """
         self._directory = Path(directory)
         self.settings: dict[str, Any] = {}
         self._load()
@@ -21,7 +26,11 @@ class SettingsManager:
         logger.info("SettingsManager initialized with settings: %s", self.settings)
 
     def _load(self) -> None:
-        """Reload all .yaml files from the directory tree into self.settings."""
+        """Reload all YAML files from the directory tree into self.settings.
+
+        Supports both a single file or a directory tree. Builds nested dictionaries
+        based on the directory structure relative to the parent of the config directory.
+        """
         logger.debug("Reloading settings from %s...", self._directory)
         self.settings = {}
 
@@ -57,7 +66,21 @@ class SettingsManager:
                 self.settings[yaml_file.stem] = data
 
     def get(self, *keys: str) -> Any | None:
-        """Fetch a value using dict paths: get('nested', 'key'). Reloads before fetch."""
+        """Fetch a configuration value using a path of keys.
+
+        The method reloads settings before each fetch to ensure fresh data.
+        If the exact path is not found, it performs a depth-first search for
+        the final key as a fallback.
+
+        Args:
+            *keys: A sequence of keys representing the path to the value.
+
+        Returns:
+            The value if found, None otherwise.
+
+        Raises:
+            SettingsError: If no keys are provided.
+        """
         if not keys:
             raise SettingsError("At least one key must be provided")
 
@@ -68,12 +91,14 @@ class SettingsManager:
             if not isinstance(node, dict):
                 break
             node = node.get(key)
+            if node is None:
+                break
         else:
             if node is not None:
                 return node
 
         # Fallback to a global depth-first search for the last key
-        def _search(d: dict, target: str) -> Any | None:
+        def _search(d: dict[str, Any], target: str) -> Any | None:
             if target in d:
                 return d[target]
             for v in d.values():
@@ -86,11 +111,31 @@ class SettingsManager:
         return _search(self.settings, keys[-1])
 
     def _resolve_target(self, name: str, subpath: str | Path | None = None) -> Path:
+        """Resolve the full path for a settings file.
+
+        Args:
+            name: The base name of the settings file (without extension).
+            subpath: Optional subdirectory within the config directory.
+
+        Returns:
+            The full Path to the YAML file.
+        """
         base_dir = self._directory if subpath is None else self._directory / Path(subpath)
         return base_dir / f"{name}.yaml"
 
     def write(self, name: str, data: dict[str, Any], *, subpath: str | Path | None = None) -> None:
-        """Write settings atomically under the manager's configured directory."""
+        """Write settings atomically to a YAML file.
+
+        Uses a temporary file and atomic rename to prevent corruption.
+
+        Args:
+            name: The base name of the settings file (without extension).
+            data: The dictionary data to write as YAML.
+            subpath: Optional subdirectory within the config directory.
+
+        Raises:
+            SettingsError: If writing fails due to I/O or YAML errors.
+        """
         try:
             p = self._resolve_target(name, subpath)
             logger.info("Writing settings to %s...", p)
@@ -105,7 +150,12 @@ class SettingsManager:
             raise SettingsError(f"write failed for {name}: {e}") from e
 
     def delete(self, name: str, *, subpath: str | Path | None = None) -> None:
-        """Delete a YAML setting file out of the tracked directory tree."""
+        """Delete a YAML settings file.
+
+        Args:
+            name: The base name of the settings file (without extension).
+            subpath: Optional subdirectory within the config directory.
+        """
         try:
             p = self._resolve_target(name, subpath)
             if p.exists():

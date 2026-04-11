@@ -53,7 +53,7 @@ def browser(**kwargs: Any) -> "InteractiveSession":
     return _get_shared().browser(**kwargs)
 
 
-def scrape(urls: list[str], callback: Callable, **kwargs: Any) -> None:
+def scrape(urls: list[str], callback: Callable[[str, str], None], **kwargs: Any) -> None:
     """Module-level proxy — delegates to the shared WebFetcher instance."""
     return _get_shared().scrape(urls, callback, **kwargs)
 
@@ -69,18 +69,35 @@ class InteractiveSession:
     """Wrapper around Scrapling session to provide persistent page and JS execution."""
 
     def __init__(self, session: DynamicSession | StealthySession) -> None:
+        """Initialize an interactive session with a Scrapling session.
+
+        Args:
+            session: A Scrapling DynamicSession or StealthySession instance.
+        """
         self.session = session
         self.page = None
         logger.debug("InteractiveSession initialized with %s", type(session).__name__)
 
-    def __enter__(self):
+    def __enter__(self) -> "InteractiveSession":
+        """Start the browser session and create a new page.
+
+        Returns:
+            The InteractiveSession instance for use in context manager.
+        """
         logger.info("Starting browser session...")
         self.session.start()
         self.page = self.session.context.new_page()
         logger.debug("Browser page created and session started")
         return self
 
-    def __exit__(self, _exc_type, _exc_val, _exc_tb):
+    def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
+        """Cleanly close the browser session and page.
+
+        Args:
+            _exc_type: Exception type if an exception occurred.
+            _exc_val: Exception value if an exception occurred.
+            _exc_tb: Traceback if an exception occurred.
+        """
         try:
             if self.page:
                 logger.debug("Closing browser page...")
@@ -89,9 +106,23 @@ class InteractiveSession:
             logger.error(f"Error during cleanup: {e}")
             raise FetcherError(f"Cleanup failed: {e}") from e
         logger.info("Closing browser session")
-        self.session.close()
+        # close() method exists on both DynamicSession and StealthySession
+        self.session.close()  # type: ignore[no-untyped-call]
 
     def fetch(self, url: str, timeout: int = 90000, wait_until: str = "load") -> SimpleNamespace:
+        """Navigate to a URL and retrieve the page content.
+
+        Args:
+            url: The URL to fetch.
+            timeout: Timeout in milliseconds. Defaults to 90000.
+            wait_until: Page load state to wait for. Defaults to "load".
+
+        Returns:
+            SimpleNamespace with html_content attribute containing the page HTML.
+
+        Raises:
+            RuntimeError: If the session has not been started.
+        """
         if not self.page:
             raise RuntimeError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
         logger.info("Browser fetching: %s (timeout=%dms)", url, timeout)
@@ -103,6 +134,18 @@ class InteractiveSession:
         return SimpleNamespace(html_content=content)
 
     def execute_script(self, script: str) -> Any:
+        """Execute JavaScript in the page context.
+
+        Args:
+            script: JavaScript code to execute. If it starts with "return ", the
+                    expression is wrapped in an arrow function and its result is returned.
+
+        Returns:
+            The result of the script execution, if any.
+
+        Raises:
+            RuntimeError: If fetch() has not been called first.
+        """
         if not self.page:
             raise RuntimeError("Call fetch() first")
         clean_script = script.strip()
@@ -116,21 +159,60 @@ class InteractiveSession:
             raise
 
     def wait_for_selector(self, selector: str, timeout: int = 30000, **kwargs: Any) -> None:
+        """Wait for a DOM element to appear.
+
+        Args:
+            selector: CSS selector to wait for.
+            timeout: Maximum wait time in milliseconds. Defaults to 30000.
+            **kwargs: Additional arguments passed to Playwright's wait_for_selector.
+
+        Raises:
+            RuntimeError: If fetch() has not been called first.
+        """
         if not self.page:
             raise RuntimeError("Call fetch() first")
         self.page.wait_for_selector(selector, timeout=timeout, **kwargs)
 
     def wait_for_function(self, expression: str, timeout: int = 30000, **kwargs: Any) -> None:
+        """Wait for a JavaScript function to return a truthy value.
+
+        Args:
+            expression: JavaScript function or expression to evaluate.
+            timeout: Maximum wait time in milliseconds. Defaults to 30000.
+            **kwargs: Additional arguments passed to Playwright's wait_for_function.
+
+        Raises:
+            RuntimeError: If fetch() has not been called first.
+        """
         if not self.page:
             raise RuntimeError("Call fetch() first")
         self.page.wait_for_function(expression, timeout=timeout, **kwargs)
 
     def click(self, selector: str, timeout: int = 30000, **kwargs: Any) -> None:
+        """Click a DOM element.
+
+        Args:
+            selector: CSS selector for the element to click.
+            timeout: Maximum wait time in milliseconds. Defaults to 30000.
+            **kwargs: Additional arguments passed to Playwright's click.
+
+        Raises:
+            RuntimeError: If fetch() has not been called first.
+        """
         if not self.page:
             raise RuntimeError("Call fetch() first")
         self.page.click(selector, timeout=timeout, **kwargs)
 
     def wait_for_timeout(self, ms: int, **kwargs: Any) -> None:
+        """Pause execution for a specified duration.
+
+        Args:
+            ms: Time to wait in milliseconds.
+            **kwargs: Additional arguments passed to Playwright's wait_for_timeout.
+
+        Raises:
+            RuntimeError: If fetch() has not been called first.
+        """
         if not self.page:
             raise RuntimeError("Call fetch() first")
         self.page.wait_for_timeout(ms, **kwargs)
@@ -188,6 +270,12 @@ class WebFetcher:
         retry_indicators: list[str] | None = None,
         block_indicators: list[str] | None = None,
     ) -> None:
+        """Initialize a WebFetcher with custom retry and block indicators.
+
+        Args:
+            retry_indicators: List of strings that indicate a retry is needed.
+            block_indicators: List of strings that indicate the request is blocked.
+        """
         self.retry_indicators = retry_indicators if retry_indicators is not None else []
         self.block_indicators = block_indicators if block_indicators is not None else []
 
@@ -227,7 +315,7 @@ class WebFetcher:
         from .settings import SettingsManager
 
         sm = SettingsManager(config_path)
-        cfg: dict = sm.get(config_key) or {}
+        cfg: dict[str, Any] = sm.get(config_key) or {}
 
         retry = cfg.get("retry_indicators", cls._DEFAULT_RETRY)
         block = cfg.get("block_indicators", cls._DEFAULT_BLOCK)
@@ -270,6 +358,21 @@ class WebFetcher:
         retries: int = 3,
         backoff: float = 5.0,
     ) -> str:
+        """Fetch a URL with retry logic and automatic escalation.
+
+        Args:
+            url: The URL to fetch.
+            stealthy_headers: Whether to use stealthy headers. Defaults to False.
+            retries: Number of retry attempts. Defaults to 3.
+            backoff: Backoff multiplier in seconds. Defaults to 5.0.
+
+        Returns:
+            The HTML content as a string.
+
+        Raises:
+            ValueError: If retries is less than 1.
+            FetcherError: If fetching fails after all retries.
+        """
         if retries < 1:
             raise ValueError("retries must be >= 1")
 
@@ -376,19 +479,39 @@ class WebFetcher:
             raise FetcherError(f"Fetch failed after {retries} attempts: {error}") from error
 
     def _escalate_to_browser(self, url: str, blocked_by: str) -> str:
+        """Escalate to a browser session to bypass blocking.
+
+        Args:
+            url: The URL that was blocked.
+            blocked_by: The indicator that triggered the block.
+
+        Returns:
+            The HTML content fetched via browser.
+
+        Raises:
+            FetcherError: If browser escalation fails.
+        """
         logger.info("'%s' detected on %s — escalating to browser...", blocked_by, url)
         try:
             with self.browser(solve_cloudflare=True, headless=True) as session:
                 resp = session.fetch(url, timeout=120000)
                 if resp and hasattr(resp, "html_content"):
                     logger.info("Browser successfully bypassed challenge for %s", url)
-                    return resp.html_content
+                    return str(resp.html_content)
         except Exception as browser_e:
             logger.error("Browser escalation failed for %s: %s", url, browser_e)
             raise FetcherError(f"Escalation failed: {browser_e}") from browser_e
         raise FetcherError(f"Escalation returned no content for {url}")
 
     def is_blocked(self, html: str) -> bool:
+        """Check if the HTML content indicates blocking.
+
+        Args:
+            html: The HTML content to check.
+
+        Returns:
+            True if blocking indicators are found, False otherwise.
+        """
         if not html:
             return True
         return any(indicator.lower() in html.lower() for indicator in self.block_indicators)
@@ -400,6 +523,17 @@ class WebFetcher:
         interactive: bool = True,
         **kwargs: Any,
     ) -> InteractiveSession:
+        """Create an interactive browser session.
+
+        Args:
+            headless: Whether to run in headless mode. Defaults to True.
+            solve_cloudflare: Enable Cloudflare challenge solving. Defaults to False.
+            interactive: Enable interactive features. Defaults to True.
+            **kwargs: Additional arguments passed to the Scrapling session.
+
+        Returns:
+            An InteractiveSession instance.
+        """
         is_heavy = interactive or solve_cloudflare
         defaults = {
             "disable_resources": not is_heavy,
@@ -415,17 +549,28 @@ class WebFetcher:
         if solve_cloudflare:
             session = StealthySession(headless=headless, solve_cloudflare=True, **kwargs)
         else:
-            session = DynamicSession(headless=headless, **kwargs)
+            session: DynamicSession | StealthySession = DynamicSession(headless=headless, **kwargs)
 
         return InteractiveSession(session)
 
     def scrape(
         self,
         urls: list[str],
-        callback: Callable,
+        callback: Callable[[str, str], None],
         mode: Literal["fast", "stealth"] = ScrapeMode.FAST,
         max_concurrency: int = 1,
     ) -> None:
+        """Scrape multiple URLs using the specified mode.
+
+        Args:
+            urls: List of URLs to scrape.
+            callback: Function to call with (url, html) for each successful fetch.
+            mode: Scraping mode - "fast" or "stealth". Defaults to ScrapeMode.FAST.
+            max_concurrency: Maximum concurrent requests. Defaults to 1.
+
+        Raises:
+            FetcherError: If scraping encounters failures.
+        """
         if not urls:
             return
         if mode == ScrapeMode.FAST:
@@ -437,7 +582,17 @@ class WebFetcher:
         else:
             raise ValueError(f"Unsupported scrape mode: {mode}")
 
-    def _scrape_fast(self, urls: list[str], callback: Callable, max_concurrency: int) -> None:
+    def _scrape_fast(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+        """Scrape URLs using fast mode with thread pool parallelism.
+
+        Args:
+            urls: List of URLs to scrape.
+            callback: Function to call with (url, html) for each successful fetch.
+            max_concurrency: Maximum number of concurrent threads.
+
+        Raises:
+            FetcherError: If any fetches fail.
+        """
         errors: list[tuple[str, Exception]] = []
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
             futures = [pool.submit(self._fetch_one_fast, url, callback) for url in urls]
@@ -450,7 +605,16 @@ class WebFetcher:
             summary = ", ".join(f"{url}: {err}" for url, err in errors[:5])
             raise FetcherError(f"Fast scrape had {len(errors)} failures. Sample: {summary}")
 
-    def _fetch_one_fast(self, url: str, callback: Callable) -> None:
+    def _fetch_one_fast(self, url: str, callback: Callable[[str, str], None]) -> None:
+        """Fetch a single URL in fast mode with retry logic.
+
+        Args:
+            url: The URL to fetch.
+            callback: Function to call with (url, html) on success.
+
+        Raises:
+            FetcherError: If fetching fails or remains blocked.
+        """
         last_error: Exception | None = None
         for stealthy_headers in (False, True):
             try:
@@ -471,10 +635,27 @@ class WebFetcher:
         failure.url = url  # type: ignore[attr-defined]
         raise failure
 
-    def _scrape_stealth(self, urls: list[str], callback: Callable, max_concurrency: int) -> None:
+    def _scrape_stealth(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+        """Scrape URLs using stealth mode with async concurrency.
+
+        Args:
+            urls: List of URLs to scrape.
+            callback: Function to call with (url, html) for each successful fetch.
+            max_concurrency: Maximum number of concurrent async operations.
+
+        Raises:
+            FetcherError: If any fetches fail.
+        """
         asyncio.run(self._async_stealth_loop(urls, callback, max_concurrency))
 
-    async def _async_stealth_loop(self, urls: list[str], callback: Callable, max_concurrency: int) -> None:
+    async def _async_stealth_loop(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+        """Async worker loop for stealth mode scraping.
+
+        Args:
+            urls: List of URLs to scrape.
+            callback: Function to call with (url, html) for each successful fetch.
+            max_concurrency: Maximum number of concurrent workers.
+        """
         concurrency = max(1, min(max_concurrency, len(urls)))
         queue: asyncio.Queue[str] = asyncio.Queue()
         for url in urls:
@@ -506,7 +687,17 @@ class WebFetcher:
             summary = ", ".join(f"{url}: {err}" for url, err in errors[:5])
             raise FetcherError(f"Stealth scrape had {len(errors)} failures. Sample: {summary}")
 
-    async def _fetch_one_stealth(self, url: str, session: Any, callback: Callable) -> None:
+    async def _fetch_one_stealth(self, url: str, session: Any, callback: Callable[[str, str], None]) -> None:
+        """Fetch a single URL in stealth mode with retry logic.
+
+        Args:
+            url: The URL to fetch.
+            session: The AsyncStealthySession to use.
+            callback: Function to call with (url, html) on success.
+
+        Raises:
+            FetcherError: If fetching fails after retries.
+        """
         loop = asyncio.get_running_loop()
         for attempt in range(1, 5):
             try:

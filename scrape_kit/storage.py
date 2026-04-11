@@ -17,6 +17,8 @@ logger = get_logger(__name__)
 
 @dataclass
 class MergeReport:
+    """Report from a database merge operation."""
+
     processed_chunks: int = 0
     skipped_chunks: int = 0
     processed_rows: int = 0
@@ -51,6 +53,18 @@ class BaseStorageManager:
     # ── Serialization ─────────────────────────────────────────────────────────
 
     def serialize_json(self, obj: Any) -> str | None:
+        """Serialize an object to a JSON string.
+
+        Args:
+            obj: The object to serialize. Can be any JSON-serializable object
+                 or an object with a __dict__ attribute.
+
+        Returns:
+            The JSON string, or None if obj is None.
+
+        Raises:
+            StorageError: If serialization fails.
+        """
         if obj is None:
             return None
         try:
@@ -61,6 +75,14 @@ class BaseStorageManager:
             raise StorageError(f"Serialization failed for {type(obj).__name__}: {e}") from e
 
     def deserialize_json(self, json_str: str | None) -> Any:
+        """Deserialize a JSON string to a Python object.
+
+        Args:
+            json_str: The JSON string to parse, or None.
+
+        Returns:
+            The parsed Python object, or None if input is None/empty/invalid.
+        """
         if json_str is None or json_str == "" or (isinstance(json_str, float) and json_str != json_str):
             return None
         try:
@@ -70,6 +92,14 @@ class BaseStorageManager:
             return None
 
     def row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Convert a sqlite3.Row to a plain dictionary.
+
+        Args:
+            row: The sqlite3.Row to convert.
+
+        Returns:
+            A dictionary mapping column names to values.
+        """
         return dict(row)
 
     # ── Data Fetching ─────────────────────────────────────────────────────────
@@ -263,6 +293,19 @@ class BaseStorageManager:
         read_batch_size: int = 1000,
         flush_every_rows: int | None = None,
     ) -> MergeReport:
+        """Merge chunk databases row by row with callback processing.
+
+        Args:
+            input_dir: Directory containing chunk .db files.
+            table_name: Name of the table to merge.
+            row_callback: Function to call for each row (allows custom processing).
+            flush_callback: Optional function to call at flush intervals.
+            read_batch_size: Number of rows to fetch at a time from each chunk.
+            flush_every_rows: How many rows to process before calling flush_callback.
+
+        Returns:
+            A MergeReport summarizing the operation.
+        """
         report = MergeReport()
         rows_since_flush = 0
         for db_file in self.get_chunk_files(input_dir, skip_file=self.db_path):
@@ -287,7 +330,14 @@ class BaseStorageManager:
         return report
 
     def _is_valid_chunk(self, db_file: str) -> bool:
-        """Check if chunk file exists and is large enough."""
+        """Check if a chunk file is valid for merging.
+
+        Args:
+            db_file: Path to the chunk database file.
+
+        Returns:
+            True if the file exists and is larger than 100 bytes.
+        """
         return os.path.exists(db_file) and os.path.getsize(db_file) > 100
 
     def _process_chunk(
@@ -301,7 +351,21 @@ class BaseStorageManager:
         rows_since_flush: int,
         report: MergeReport,
     ) -> tuple[int, int]:
-        """Process a single chunk file row by row."""
+        """Process a single chunk file row by row.
+
+        Args:
+            db_file: Path to the chunk database.
+            table_name: Name of the table to read from.
+            row_callback: Function to call for each row.
+            flush_callback: Optional function to call at flush intervals.
+            read_batch_size: Number of rows to fetch per batch.
+            flush_every_rows: Row threshold to trigger flush_callback.
+            rows_since_flush: Current count of rows since last flush.
+            report: The MergeReport to update.
+
+        Returns:
+            A tuple of (total_processed_rows, rows_since_flush).
+        """
         logger.info("Merging chunk %s...", os.path.basename(db_file))
         temp_conn: sqlite3.Connection | None = None
         try:
@@ -330,7 +394,16 @@ class BaseStorageManager:
         flush_every_rows: int | None,
         rows_since_flush: int,
     ) -> int:
-        """Flush if row threshold reached. Returns updated rows_since_flush."""
+        """Flush the buffer if the row threshold is reached.
+
+        Args:
+            flush_callback: Function to call when flushing.
+            flush_every_rows: The row threshold.
+            rows_since_flush: Current count of rows since last flush.
+
+        Returns:
+            Updated rows_since_flush (0 if flushed, otherwise unchanged).
+        """
         if flush_callback and flush_every_rows and rows_since_flush >= flush_every_rows:
             flush_callback()
             return 0
@@ -342,7 +415,13 @@ class BaseStorageManager:
         error: sqlite3.Error,
         report: MergeReport,
     ) -> None:
-        """Log chunk error and update report."""
+        """Handle an error during chunk processing.
+
+        Args:
+            db_file: The chunk file that caused the error.
+            error: The exception that occurred.
+            report: The MergeReport to update.
+        """
         logger.error("Skipping chunk %s: %s", db_file, error)
         report.skipped_chunks += 1
         report.errors.append(f"{db_file}: {error}")
@@ -375,6 +454,15 @@ class BaseStorageManager:
 
     @staticmethod
     def get_chunk_files(input_dir: str, skip_file: str | None = None) -> list[str]:
+        """Get all .db files in a directory, optionally excluding one.
+
+        Args:
+            input_dir: Directory to search for .db files.
+            skip_file: Optional file path to exclude from results.
+
+        Returns:
+            A list of absolute paths to .db files.
+        """
         candidates = [os.path.abspath(f) for f in glob.glob(os.path.join(input_dir, "*.db"))]
         if skip_file:
             skip_abs = os.path.abspath(skip_file)
@@ -412,6 +500,7 @@ class BufferedStorageManager(BaseStorageManager):
         super().__init__(db_path)
 
     def _materialize_pending_rows(self) -> None:
+        """Merge pending rows into the buffer DataFrame."""
         if not self._pending_rows:
             return
 
@@ -485,6 +574,19 @@ class BufferedStorageManager(BaseStorageManager):
         return target_value in df[column_name].values
 
     def insert(self, table_name: str | Mapping[str, Any], data: Mapping[str, Any] | None = None) -> None:
+        """Insert a row into the buffer.
+
+        Supports two call signatures:
+          - insert(data) - legacy buffered style, uses the manager's bound table.
+          - insert(table_name, data) - explicit table name.
+
+        Args:
+            table_name: Table name (or data dict in legacy mode).
+            data: Row data dictionary (or None in legacy mode).
+
+        Raises:
+            StorageError: If the table name doesn't match the bound table.
+        """
         if data is None:
             # Legacy buffered call shape: insert(data)
             table = self._table_name
@@ -519,5 +621,6 @@ class BufferedStorageManager(BaseStorageManager):
             self._dirty = False
 
     def close(self) -> None:
+        """Close the storage manager, flushing any pending changes."""
         self.flush()
         self.flush_and_close()

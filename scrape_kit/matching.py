@@ -48,6 +48,14 @@ class SimilarityEngine:
         self._result_cache: dict[tuple[str, str], tuple[bool, float]] = {}
 
     def _soundex(self, name: str) -> str:
+        """Compute the Soundex code for a name.
+
+        Args:
+            name: The name to compute Soundex for.
+
+        Returns:
+            A 4-character Soundex code.
+        """
         if name in self._soundex_cache:
             return self._soundex_cache[name]
 
@@ -74,6 +82,14 @@ class SimilarityEngine:
         return res
 
     def _normalize(self, match_name: str) -> str:
+        """Normalize a string for matching: lowercase, strip diacritics, apply synonyms/acronyms.
+
+        Args:
+            match_name: The string to normalize.
+
+        Returns:
+            The normalized string.
+        """
         if match_name in self._norm_cache:
             return self._norm_cache[match_name]
 
@@ -98,12 +114,32 @@ class SimilarityEngine:
         return name
 
     def _share_token(self, s1: str, s2: str) -> bool:
-        """Fast pre-filter: check if s1 and s2 share at least one word token."""
+        """Check if two strings share at least one word token.
+
+        Args:
+            s1: First string.
+            s2: Second string.
+
+        Returns:
+            True if they share at least one token, False otherwise.
+        """
         tokens1 = set(s1.split())
         tokens2 = set(s2.split())
         return not tokens1.isdisjoint(tokens2)
 
     def hybrid_match(self, s1: str, s2: str) -> float:
+        """Compute a hybrid similarity score between two strings.
+
+        The score combines token set ratio, substring presence, phonetic (Soundex),
+        and raw ratio using configured weights.
+
+        Args:
+            s1: First string.
+            s2: Second string.
+
+        Returns:
+            A float score between 0 and 100.
+        """
         # Fast path: token pre-filter
         if not self._share_token(s1, s2):
             return 0.0
@@ -126,8 +162,17 @@ class SimilarityEngine:
         return final_score
 
     def is_similar(self, s1: str, s2: str) -> tuple[bool, float]:
-        """Check similarity between two raw strings. Normalization and caching are handled internally."""
-        cache_key = tuple(sorted([s1, s2]))
+        """Check if two strings are similar based on the configured threshold.
+
+        Args:
+            s1: First string.
+            s2: Second string.
+
+        Returns:
+            A tuple of (is_similar, score) where is_similar is True if score
+            exceeds the threshold, and score is the hybrid match score.
+        """
+        cache_key = tuple(sorted([s1, s2]))  # type: ignore[assignment]
         if cache_key in self._result_cache:
             return self._result_cache[cache_key]
 

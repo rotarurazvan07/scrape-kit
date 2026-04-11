@@ -93,7 +93,7 @@ def time_profiler(level: int = logging.DEBUG) -> Callable[..., Any]:
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.perf_counter()
             result = func(*args, **kwargs)
             end_time = time.perf_counter()
