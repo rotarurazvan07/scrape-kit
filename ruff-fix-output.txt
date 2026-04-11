@@ -1,0 +1,4 @@
+scrape_kit/fetcher.py:281:13: PERF203 `try`-`except` within a loop incurs performance overhead
+scrape_kit/fetcher.py:447:17: PERF203 `try`-`except` within a loop incurs performance overhead
+scrape_kit/storage.py:232:21: PERF203 `try`-`except` within a loop incurs performance overhead
+Found 3 errors.

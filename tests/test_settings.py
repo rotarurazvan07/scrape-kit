@@ -378,7 +378,10 @@ class TestSettingsScenarios:
             manager = SettingsManager(str(cfg))
 
             # Mock os.replace to raise OSError
-            with patch("os.replace", side_effect=OSError("Permission denied")), pytest.raises(SettingsError, match="write failed"):
+            with (
+                patch("os.replace", side_effect=OSError("Permission denied")),
+                pytest.raises(SettingsError, match="write failed"),
+            ):
                 manager.write("test", {"key": "value"})
 
     class TestDeleteEdgeCases:
@@ -391,5 +394,8 @@ class TestSettingsScenarios:
             manager = SettingsManager(str(cfg))
 
             # Mock unlink to raise OSError
-            with patch.object(Path, "unlink", side_effect=OSError("Permission denied")), pytest.raises(SettingsError, match="delete failed"):
+            with (
+                patch.object(Path, "unlink", side_effect=OSError("Permission denied")),
+                pytest.raises(SettingsError, match="delete failed"),
+            ):
                 manager.delete("to_delete")

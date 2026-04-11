@@ -738,7 +738,10 @@ class TestEscalateToBrowser:
         mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
         mock_browser_session.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(fetcher, "browser", return_value=mock_browser_session), pytest.raises(FetcherError, match="Escalation returned no content"):
+        with (
+            patch.object(fetcher, "browser", return_value=mock_browser_session),
+            pytest.raises(FetcherError, match="Escalation returned no content"),
+        ):
             fetcher._escalate_to_browser("http://test.com", "blocked")
 
     def test_error_escalate_to_browser_failure(self):
@@ -749,7 +752,10 @@ class TestEscalateToBrowser:
         mock_browser_session.__enter__ = MagicMock(return_value=mock_browser_session)
         mock_browser_session.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(fetcher, "browser", return_value=mock_browser_session), pytest.raises(FetcherError, match="Escalation failed"):
+        with (
+            patch.object(fetcher, "browser", return_value=mock_browser_session),
+            pytest.raises(FetcherError, match="Escalation failed"),
+        ):
             fetcher._escalate_to_browser("http://test.com", "blocked")
 
 
@@ -761,7 +767,10 @@ class TestFetchOneFast:
         fetcher = WebFetcher(block_indicators=[])
 
         # Make fetch always raise an exception
-        with patch.object(fetcher, "fetch", side_effect=Exception("Network error")), pytest.raises(FetcherError, match="Fast scrape failed for http://test.com"):
+        with (
+            patch.object(fetcher, "fetch", side_effect=Exception("Network error")),
+            pytest.raises(FetcherError, match="Fast scrape failed for http://test.com"),
+        ):
             fetcher._fetch_one_fast("http://test.com", MagicMock())
 
     def test_error_fetch_one_fast_blocked_all_attempts(self):
@@ -769,7 +778,10 @@ class TestFetchOneFast:
         fetcher = WebFetcher(block_indicators=["blocked"])
 
         # Make fetch always return blocked content
-        with patch.object(fetcher, "fetch", return_value="<html>blocked</html>"), pytest.raises(FetcherError, match="Fast scrape remained blocked for http://test.com"):
+        with (
+            patch.object(fetcher, "fetch", return_value="<html>blocked</html>"),
+            pytest.raises(FetcherError, match="Fast scrape remained blocked for http://test.com"),
+        ):
             fetcher._fetch_one_fast("http://test.com", MagicMock())
 
 
