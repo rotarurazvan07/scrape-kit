@@ -20,13 +20,12 @@ env:
   
   # Coverage threshold
   COVERAGE_FAIL_UNDER: "80"
-  
-  # Requirements files (template - customize these for your project)
-  REQUIREMENTS_FILES: |
-    requirements.txt
-  
+    
   # Additional install commands (e.g., scrapling install, playwright install)
   POST_INSTALL_CMDS: "scrapling install"
+  
+  # Package installation command (editable install by default)
+  PACKAGE_INSTALL_CMD: "pip install -e ."
 
 jobs:
   # ── 1. AUTO-FIX ───────────────────────────────────────────────────────────
@@ -140,6 +139,14 @@ jobs:
               echo "Warning: Requirements file not found: $req_file"
             fi
           done <<< "$REQUIREMENTS_FILES"
+          
+          # Install the package (configurable via PACKAGE_INSTALL_CMD)
+          if [ -n "$PACKAGE_INSTALL_CMD" ]; then
+            echo "Installing package with: $PACKAGE_INSTALL_CMD"
+            eval "$PACKAGE_INSTALL_CMD"
+          else
+            echo "No PACKAGE_INSTALL_CMD specified, skipping package installation"
+          fi
           
           # Install test dependencies
           pip install pytest pytest-cov pytest-xdist pytest-timeout
@@ -261,6 +268,14 @@ jobs:
             fi
           done <<< "$REQUIREMENTS_FILES"
           
+          # Install the package (configurable via PACKAGE_INSTALL_CMD)
+          if [ -n "$PACKAGE_INSTALL_CMD" ]; then
+            echo "Installing package with: $PACKAGE_INSTALL_CMD"
+            eval "$PACKAGE_INSTALL_CMD"
+          else
+            echo "No PACKAGE_INSTALL_CMD specified, skipping package installation"
+          fi
+
           # Install audit tools
           pip install bandit pip-audit radon vulture mypy interrogate
           
