@@ -12,50 +12,9 @@ dependencies = [
     "scrapling[fetchers]",
     "pandas",
 ]
-
 [tool.setuptools.packages.find]
 # Discovers scrape_kit/ automatically.
 # When you add sub-packages (e.g. scrape_kit/fetchers/) they are picked
 # up without any changes here.
 where = ["."]
 include = ["scrape_kit*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-
-[tool.coverage.run]
-source = ["scrape_kit"]
-omit = ["tests/*"]
-
-[tool.ruff]
-line-length = 127
-target-version = "py310"
-
-[tool.ruff.lint]
-select = [
-    "E",    # pycodestyle errors
-    "F",    # pyflakes
-    "B",    # flake8-bugbear
-    "C",    # flake8-comprehensions
-    "SIM",  # flake8-simplify
-    "PERF", # perflint — catches performance anti-patterns in loops
-]
-# UP (pyupgrade rules) intentionally excluded — ruff + UP --unsafe-fixes
-# rewrites f-string escapes into Python 3.12-only nested-quote syntax
-# (PEP 701), breaking the 3.10/3.11 matrix jobs. pyupgrade --py310-plus
-# in the auto-fix job handles modernisation correctly instead.
-ignore = ["UP"]
-
-[tool.ruff.format]
-# double-quote style prevents the formatter swapping quote types inside
-# f-string expressions and producing 3.12-only syntax.
-quote-style = "double"
-
-[tool.isort]
-profile = "black"
-line_length = 127
-
-[tool.mypy]
-python_version = "3.10"
-strict = true
-ignore_missing_imports = true

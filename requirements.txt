@@ -1,0 +1,4 @@
+PyYAML
+rapidfuzz
+scrapling[fetchers]
+pandas
