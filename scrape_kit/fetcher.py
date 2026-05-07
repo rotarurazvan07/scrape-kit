@@ -127,8 +127,65 @@ class InteractiveSession:
             raise RuntimeError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
         logger.info("Browser fetching: %s (timeout=%dms)", url, timeout)
         self.page.goto(url, wait_until=wait_until, timeout=timeout)
-        logger.debug("Waiting 2s for dynamic content / Cloudflare settle...")
-        self.page.wait_for_timeout(2000)
+        logger.debug("Waiting for site to settle ...")
+        import time
+
+        max_wait = 30  # maximum seconds to keep trying
+        start_time = time.time()
+
+        while True:
+            try:
+                self.execute_script("""
+                    (function() {
+                        return new Promise((resolve) => {
+                            var prevHeight = document.documentElement.scrollHeight;
+                            var prevHTML = document.body.innerHTML.length;
+
+                            var timeout = setTimeout(() => {
+                                observer.disconnect();
+                                resolve();
+                            }, 10000);  // hard cap
+
+                            var idleTimer = setTimeout(() => {
+                                observer.disconnect();
+                                clearTimeout(timeout);
+                                resolve();
+                            }, 2000);  // resolve after 2s of no changes
+
+                            var observer = new MutationObserver(() => {
+                                var newHeight = document.documentElement.scrollHeight;
+                                var newHTML = document.body.innerHTML.length;
+
+                                if (newHeight !== prevHeight || newHTML !== prevHTML) {
+                                    prevHeight = newHeight;
+                                    prevHTML = newHTML;
+                                    clearTimeout(idleTimer);
+                                    idleTimer = setTimeout(() => {
+                                        observer.disconnect();
+                                        clearTimeout(timeout);
+                                        resolve();
+                                    }, 2000);
+                                }
+                            });
+
+                            observer.observe(document.body, {
+                                childList: true,
+                                subtree: true,
+                                attributes: true,
+                                characterData: true
+                            });
+                        });
+                    })()
+                """)
+                break  # success, exit loop
+
+            except Exception as e:
+                elapsed = time.time() - start_time
+                if elapsed >= max_wait:
+                    logger.warning(f"Page settle script failed after {max_wait}s, giving up: {e}")
+                    break
+                logger.debug(f"Page settle script failed ({e}), retrying in 1s...")
+                time.sleep(1)
         content = self.page.content()
         logger.debug("Fetch complete, content length: %d", len(content))
         return SimpleNamespace(html_content=content)
