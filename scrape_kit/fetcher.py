@@ -245,21 +245,6 @@ class InteractiveSession:
             raise RuntimeError("Call fetch() first")
         self.page.wait_for_function(expression, timeout=timeout, **kwargs)
 
-    def click(self, selector: str, timeout: int = 30000, **kwargs: Any) -> None:
-        """Click a DOM element.
-
-        Args:
-            selector: CSS selector for the element to click.
-            timeout: Maximum wait time in milliseconds. Defaults to 30000.
-            **kwargs: Additional arguments passed to Playwright's click.
-
-        Raises:
-            RuntimeError: If fetch() has not been called first.
-        """
-        if not self.page:
-            raise RuntimeError("Call fetch() first")
-        self.page.click(selector, timeout=timeout, **kwargs)
-
     def wait_for_timeout(self, ms: int, **kwargs: Any) -> None:
         """Pause execution for a specified duration.
 
@@ -273,6 +258,91 @@ class InteractiveSession:
         if not self.page:
             raise RuntimeError("Call fetch() first")
         self.page.wait_for_timeout(ms, **kwargs)
+
+    def scroll_to_bottom(self, infinite=True, idle_ms=10000, cycle_delay_ms=None):
+        cycle_delay_ms = cycle_delay_ms if cycle_delay_ms is not None else idle_ms // 5
+        self.execute_script(f"""
+            (function() {{
+                return new Promise((resolve) => {{
+                    var infinite = {'true' if infinite else 'false'};
+                    var idle_ms = {idle_ms};
+                    var cycle_delay_ms = {cycle_delay_ms};
+                    function cycle() {{
+                        var maxScroll = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+                        document.body.scrollTop = maxScroll;
+                        document.documentElement.scrollTop = maxScroll;
+                        var prevHeight = maxScroll;
+                        var idleTimeout = setTimeout(() => {{ observer.disconnect(); resolve(); }}, idle_ms);
+                        var observer = new MutationObserver(() => {{
+                            var newHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+                            if (newHeight > prevHeight) {{
+                                clearTimeout(idleTimeout);
+                                observer.disconnect();
+                                infinite ? setTimeout(cycle, cycle_delay_ms) : resolve();
+                            }}
+                        }});
+                        observer.observe(document.body, {{childList: true, subtree: true}});
+                    }}
+                    cycle();
+                }});
+            }})()
+        """)
+
+    def click(self, selector, text=None, visible_only=False, idle_ms=5000, hard_cap_ms=None):
+        hard_cap_ms = hard_cap_ms if hard_cap_ms is not None else idle_ms * 6
+        return self.execute_script(
+            f"""
+            (function() {{
+                return new Promise((resolve) => {{
+                    try {{
+                        var idle_ms = {idle_ms};
+                        var hard_cap_ms = {hard_cap_ms};
+
+                        function isVisible(el) {{
+                            if (!el) return false;
+                            var s = window.getComputedStyle(el);
+                            return s.display !== 'none' && s.visibility !== 'hidden'
+                                && s.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
+                        }}
+
+                        var el;
+                        if ({'true' if text else 'false'}) {{
+                            el = Array.from(document.querySelectorAll('{selector}'))
+                                .find(e => e.textContent.trim() === '{text}');
+                        }} else {{
+                            el = document.querySelector('{selector}');
+                        }}
+
+                        if (!el) {{ resolve(false); return; }}
+                        if ({'true' if visible_only else 'false'} && !isVisible(el)) {{ resolve(false); return; }}
+
+                        el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
+
+                        var prevHeight = document.documentElement.scrollHeight;
+                        var prevHTML = document.body.innerHTML.length;
+                        var observer = null;
+
+                        var hardCap = setTimeout(() => {{ observer && observer.disconnect(); resolve(true); }}, hard_cap_ms);
+                        var idleTimer = setTimeout(() => {{ observer && observer.disconnect(); clearTimeout(hardCap); resolve(true); }}, idle_ms);
+
+                        observer = new MutationObserver(() => {{
+                            var newHeight = document.documentElement.scrollHeight;
+                            var newHTML = document.body.innerHTML.length;
+                            if (newHeight !== prevHeight || newHTML !== prevHTML) {{
+                                prevHeight = newHeight;
+                                prevHTML = newHTML;
+                                clearTimeout(idleTimer);
+                                idleTimer = setTimeout(() => {{ observer && observer.disconnect(); clearTimeout(hardCap); resolve(true); }}, idle_ms);
+                            }}
+                        }});
+
+                        observer.observe(document.body, {{ childList: true, subtree: true, attributes: true, characterData: true }});
+
+                    }} catch(e) {{ resolve(false); }}
+                }});
+            }})()
+            """
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.session, name)
