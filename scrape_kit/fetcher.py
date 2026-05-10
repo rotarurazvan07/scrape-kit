@@ -259,12 +259,12 @@ class InteractiveSession:
             raise RuntimeError("Call fetch() first")
         self.page.wait_for_timeout(ms, **kwargs)
 
-    def scroll_to_bottom(self, infinite=True, idle_ms=10000, cycle_delay_ms=None):
+    def scroll_to_bottom(self, infinite: bool = True, idle_ms=10000, cycle_delay_ms=None) -> None:
         cycle_delay_ms = cycle_delay_ms if cycle_delay_ms is not None else idle_ms // 5
         self.execute_script(f"""
             (function() {{
                 return new Promise((resolve) => {{
-                    var infinite = {'true' if infinite else 'false'};
+                    var infinite = {"true" if infinite else "false"};
                     var idle_ms = {idle_ms};
                     var cycle_delay_ms = {cycle_delay_ms};
                     function cycle() {{
@@ -288,7 +288,7 @@ class InteractiveSession:
             }})()
         """)
 
-    def click(self, selector, text=None, visible_only=False, idle_ms=5000, hard_cap_ms=None):
+    def click(self, selector, text=None, visible_only: bool = False, idle_ms=5000, hard_cap_ms=None):
         hard_cap_ms = hard_cap_ms if hard_cap_ms is not None else idle_ms * 6
         return self.execute_script(
             f"""
@@ -306,7 +306,7 @@ class InteractiveSession:
                         }}
 
                         var el;
-                        if ({'true' if text else 'false'}) {{
+                        if ({"true" if text else "false"}) {{
                             el = Array.from(document.querySelectorAll('{selector}'))
                                 .find(e => e.textContent.trim() === '{text}');
                         }} else {{
@@ -314,7 +314,7 @@ class InteractiveSession:
                         }}
 
                         if (!el) {{ resolve(false); return; }}
-                        if ({'true' if visible_only else 'false'} && !isVisible(el)) {{ resolve(false); return; }}
+                        if ({"true" if visible_only else "false"} && !isVisible(el)) {{ resolve(false); return; }}
 
                         el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
 
