@@ -233,6 +233,13 @@ class TestNormalize:
         eng = SimilarityEngine(cfg)
         assert eng._normalize("Al-Ahli") == "ahli"
 
+    def test_normal_exact_synonym_is_protected_from_acronyms(self):
+        cfg = RICH_CONFIG.copy()
+        cfg["synonyms"] = {"inter": "inter milan"}
+        cfg["acronyms"] = {"inter ": ""}
+        eng = SimilarityEngine(cfg)
+        assert eng._normalize("Inter") == "inter milan"
+
     def test_normal_result_cached_on_second_call(self, engine):
         engine._normalize("Cache Test")
         assert "cache test" in engine._norm_cache.values()
@@ -355,6 +362,38 @@ class TestMatchingScenarios:
         match, score = eng.is_similar("Real Betis", "Betis")
         assert match is True
         assert score > 65
+
+    def test_scenario_weak_tokens_do_not_establish_match_alone(self):
+        """Ambiguous shared words should not merge clearly different clubs."""
+        cfg = RICH_CONFIG.copy()
+        cfg.update(
+            {
+                "threshold": 65,
+                "weak_tokens": ["new", "york", "sporting", "inter"],
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        match, score = eng.is_similar("New York City", "New York Red Bulls")
+        assert match is False
+        assert score == 0.0
+
+        match, score = eng.is_similar("Sporting CP", "Sporting Kansas City")
+        assert match is False
+        assert score == 0.0
+
+    def test_scenario_weak_tokens_still_allow_exact_canonical_synonyms(self):
+        cfg = RICH_CONFIG.copy()
+        cfg.update(
+            {
+                "threshold": 65,
+                "synonyms": {"inter": "inter milan"},
+                "weak_tokens": ["inter"],
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        match, score = eng.is_similar("Inter", "Inter Milan")
+        assert match is True
+        assert score == pytest.approx(100.0)
 
     def test_scenario_token_weight_vs_ratio_weight_on_reordered_names(self):
         """Token set ratio handles order-independence; character ratio does not."""

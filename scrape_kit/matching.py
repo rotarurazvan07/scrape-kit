@@ -23,6 +23,7 @@ class SimilarityEngine:
         Configuration accepts:
           acronyms: dict for generic sub-string replacement
           synonyms: exact match replacement dict (e.g. "teamA": "teamB")
+          weak_tokens: tokens too ambiguous to establish a match by themselves
           weights: token, substr, phonetic, ratio
           threshold: integer threshold for is_similar
         """
@@ -31,6 +32,7 @@ class SimilarityEngine:
         else:
             self.acronyms = cfg.get("acronyms", {})
             self.synonyms = cfg.get("synonyms", {})
+            self.weak_tokens = {str(t).lower() for t in cfg.get("weak_tokens", [])}
 
             # weights for hybrid matching
             weights = cfg.get("weights")
@@ -100,10 +102,13 @@ class SimilarityEngine:
 
         name = " ".join(name.split()).lower()
 
-        # Exact match replacements
+        # Exact synonyms are trusted canonical forms.  Return immediately so a
+        # later generic acronym rule cannot damage the canonical value.
         for k, v in self.synonyms.items():
             if name == k:
-                name = v
+                name = " ".join(str(v).lower().split())
+                self._norm_cache[match_name] = name
+                return name
 
         # Token-aware acronym replacements.  Config keys often include spaces to
         # express prefix/suffix intent, e.g. "real " or " fc"; raw substring
@@ -112,6 +117,12 @@ class SimilarityEngine:
             name = self._replace_acronym(name, k, v)
 
         name = " ".join(name.split())
+
+        # Acronym cleanup can expose an exact synonym key.
+        for k, v in self.synonyms.items():
+            if name == k:
+                name = " ".join(str(v).lower().split())
+                break
 
         self._norm_cache[match_name] = name
         return name
@@ -139,19 +150,36 @@ class SimilarityEngine:
 
         return re.sub(pattern, repl, name)
 
-    def _share_token(self, s1: str, s2: str) -> bool:
-        """Check if two strings share at least one word token.
+    def _only_shares_weak_tokens(self, s1: str, s2: str) -> bool:
+        """Return True when overlap is only ambiguous location/franchise words.
 
-        Args:
-            s1: First string.
-            s2: Second string.
-
-        Returns:
-            True if they share at least one token, False otherwise.
+        This method is called *after* a check for `tokens1.isdisjoint(tokens2)`
+        in `hybrid_match`, so `shared` is guaranteed to be non-empty here.
         """
+        if not self.weak_tokens:
+            return False
+
         tokens1 = set(s1.split())
         tokens2 = set(s2.split())
-        return not tokens1.isdisjoint(tokens2)
+        shared = tokens1 & tokens2
+
+        # If all shared tokens are weak, then the overlap is *only* weak tokens.
+        return shared.issubset(self.weak_tokens)
+
+    def hybrid_match(self, s1: str, s2: str) -> float:
+        """Return True when overlap is only ambiguous location/franchise words."""
+        if not self.weak_tokens:
+            return False
+
+        tokens1 = set(s1.split())
+        tokens2 = set(s2.split())
+        shared = tokens1 & tokens2
+        if not shared or not shared.issubset(self.weak_tokens):
+            return False
+
+        # At this point, we know 'shared' is not empty because of the prior check in hybrid_match.
+        # If all shared tokens are weak, then the overlap is *only* weak tokens.
+        return shared.issubset(self.weak_tokens)
 
     def hybrid_match(self, s1: str, s2: str) -> float:
         """Compute a hybrid similarity score between two strings.
@@ -166,8 +194,16 @@ class SimilarityEngine:
         Returns:
             A float score between 0 and 100.
         """
-        # Fast path: token pre-filter
-        if not self._share_token(s1, s2):
+        # First, a strict check: if no tokens are shared at all, return 0.0.
+        # This handles cases like "apple pie" vs "orange juice" and empty strings.
+        tokens1 = set(s1.split())
+        tokens2 = set(s2.split())
+        if tokens1.isdisjoint(tokens2):
+            return 0.0
+
+        # Filter out cases where the only commonality is weak/ambiguous words (e.g., "FC" vs "FC")
+        # This still requires at least one shared token to trigger.
+        if self._only_shares_weak_tokens(s1, s2):
             return 0.0
 
         token_score = fuzz.token_set_ratio(s1, s2)
