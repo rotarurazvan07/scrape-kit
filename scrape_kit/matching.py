@@ -105,13 +105,39 @@ class SimilarityEngine:
             if name == k:
                 name = v
 
-        # Sub-string acronym replacements
+        # Token-aware acronym replacements.  Config keys often include spaces to
+        # express prefix/suffix intent, e.g. "real " or " fc"; raw substring
+        # replacement would corrupt names like "real betis" via an "al " rule.
         for k, v in self.acronyms.items():
-            if k in name:
-                name = name.replace(k, v)
+            name = self._replace_acronym(name, k, v)
+
+        name = " ".join(name.split())
 
         self._norm_cache[match_name] = name
         return name
+
+    def _replace_acronym(self, name: str, key: str, replacement: str) -> str:
+        """Apply one acronym replacement without matching inside other words."""
+        token = " ".join(key.split()).lower()
+        if not token:
+            return name
+
+        repl = f" {replacement.strip()} " if replacement.strip() else " "
+
+        if key.startswith(" ") and key.endswith(" "):
+            pattern = rf"(?<!\S){re.escape(token)}(?!\S)"
+        elif key.startswith(" "):
+            pattern = rf"(?<!\S){re.escape(token)}$"
+        elif key.endswith(" "):
+            pattern = rf"^{re.escape(token)}(?!\S)"
+        elif re.search(r"\W$", key):
+            pattern = rf"^{re.escape(token)}"
+        elif re.search(r"^\W", key):
+            pattern = rf"{re.escape(token)}$"
+        else:
+            pattern = rf"(?<!\w){re.escape(token)}(?!\w)"
+
+        return re.sub(pattern, repl, name)
 
     def _share_token(self, s1: str, s2: str) -> bool:
         """Check if two strings share at least one word token.

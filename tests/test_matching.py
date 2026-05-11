@@ -215,11 +215,23 @@ class TestNormalize:
         result = eng._normalize("Man Utd FC")
         assert result == "man utd fc"
 
-    def test_normal_acronym_substring_replaced(self):
+    def test_normal_acronym_token_replaced(self):
         cfg = RICH_CONFIG.copy()
         cfg["acronyms"] = {"fc": "football club"}
         eng = SimilarityEngine(cfg)
         assert "football club" in eng._normalize("Liverpool FC")
+
+    def test_edge_acronym_does_not_replace_inside_word(self):
+        cfg = RICH_CONFIG.copy()
+        cfg["acronyms"] = {"al ": "", "real ": ""}
+        eng = SimilarityEngine(cfg)
+        assert eng._normalize("Real Betis") == "betis"
+
+    def test_normal_acronym_prefix_with_separator_replaced(self):
+        cfg = RICH_CONFIG.copy()
+        cfg["acronyms"] = {"al ": "", "al-": ""}
+        eng = SimilarityEngine(cfg)
+        assert eng._normalize("Al-Ahli") == "ahli"
 
     def test_normal_result_cached_on_second_call(self, engine):
         engine._normalize("Cache Test")
@@ -329,6 +341,20 @@ class TestMatchingScenarios:
         assert match is True
         match2, _ = eng.is_similar("Man Utd", "Man United")
         assert match2 is True
+
+    def test_scenario_short_prefix_rule_does_not_break_real_betis(self):
+        """Short prefix rules must not corrupt longer words before matching."""
+        cfg = RICH_CONFIG.copy()
+        cfg.update(
+            {
+                "threshold": 65,
+                "acronyms": {"al ": "", "real ": ""},
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        match, score = eng.is_similar("Real Betis", "Betis")
+        assert match is True
+        assert score > 65
 
     def test_scenario_token_weight_vs_ratio_weight_on_reordered_names(self):
         """Token set ratio handles order-independence; character ratio does not."""
