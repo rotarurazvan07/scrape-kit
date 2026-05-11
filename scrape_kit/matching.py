@@ -62,9 +62,7 @@ class SimilarityEngine:
 
         self.acronyms: dict[str, str] = cfg.get("acronyms", {})
         self.synonyms: dict[str, str] = cfg.get("synonyms", {})
-        self.weak_tokens: frozenset[str] = frozenset(
-            str(t).lower() for t in cfg.get("weak_tokens", [])
-        )
+        self.weak_tokens: frozenset[str] = frozenset(str(t).lower() for t in cfg.get("weak_tokens", []))
 
         w = cfg.get("weights", {})
         self.token_weight: float = w.get("token", 0.40)
@@ -123,11 +121,7 @@ class SimilarityEngine:
             return 0.0
 
         smaller, larger = (strong1, strong2) if len(strong1) <= len(strong2) else (strong2, strong1)
-        matches = sum(
-            1
-            for t in smaller
-            if any(self._soundex(t) == self._soundex(u) for u in larger)
-        )
+        matches = sum(1 for t in smaller if any(self._soundex(t) == self._soundex(u) for u in larger))
         return 100.0 * matches / len(smaller)
 
     # ------------------------------------------------------------------
@@ -307,7 +301,10 @@ class SimilarityEngine:
             if strong1.isdisjoint(strong2) and phonetic_score == 0.0:
                 logger.debug(
                     "Strong-token mismatch: %s ↔ %s  (strong: %s vs %s)",
-                    s1, s2, strong1, strong2,
+                    s1,
+                    s2,
+                    strong1,
+                    strong2,
                 )
                 return min(base_score, self.strong_mismatch_cap)
 
@@ -317,17 +314,20 @@ class SimilarityEngine:
             if not strong1.issubset(tokens2):
                 logger.debug(
                     "Strong-token containment miss (s1→s2): %s ↔ %s  (strong1: %s)",
-                    s1, s2, strong1,
+                    s1,
+                    s2,
+                    strong1,
                 )
                 return min(base_score, self.strong_mismatch_cap)
 
-        elif not strong1 and strong2:
-            if not strong2.issubset(tokens1):
-                logger.debug(
-                    "Strong-token containment miss (s2→s1): %s ↔ %s  (strong2: %s)",
-                    s1, s2, strong2,
-                )
-                return min(base_score, self.strong_mismatch_cap)
+        elif not strong1 and strong2 and not strong2.issubset(tokens1):
+            logger.debug(
+                "Strong-token containment miss (s2→s1): %s ↔ %s  (strong2: %s)",
+                s1,
+                s2,
+                strong2,
+            )
+            return min(base_score, self.strong_mismatch_cap)
 
         # Both empty → neither name has discriminative tokens; use full score.
 
