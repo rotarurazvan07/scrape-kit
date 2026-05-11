@@ -10,60 +10,90 @@ logger = get_logger(__name__)
 
 
 class SimilarityEngine:
-    """Encapsulates string similarity logic, primarily designed for entities/names.
-    Exposes a single function `is_similar(a, b)` for external use. It normalizes inputs,
-    strips diacritics, hashes them, and caches intermediate operations for high performance.
-    """
+    """Encapsulates string similarity logic for sports team names and similar entities.
 
-    # If you want singleton behavior per-app, manage the instance from the app level.
-    # Leaving out the strict __new__ singleton forces callers to instantiate properly and pass config.
+    Exposes ``is_similar(a, b)`` for external use.  Normalizes inputs (diacritic
+    stripping, acronym removal, synonym expansion), then applies a hybrid scoring
+    strategy with *strong-token enforcement*:
+
+    - Tokens not in ``weak_tokens`` are considered *discriminative* (strong).
+    - When BOTH sides carry strong tokens that are completely disjoint – even
+      phonetically – the score is capped at ``strong_mismatch_cap`` regardless of
+      how similar the weak/location tokens look.  This prevents "New York City" from
+      merging with "New York Bulls" while still allowing "Manchester United" (strong =
+      {united}) to merge with every source that normalises to the same string.
+    - When only ONE side carries strong tokens, those tokens must appear verbatim in
+      the other side's full token set; otherwise the same cap applies.
+    - When NEITHER side has strong tokens (both names are purely location/generic
+      words after normalization) the full fuzzy score is used unchanged.
+
+    The cap is intentionally not zero: it preserves a small residual signal so that
+    callers can inspect scores for debugging without hitting a hard wall.
+    """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
         """
-        Configuration accepts:
-          acronyms: dict for generic sub-string replacement
-          synonyms: exact match replacement dict (e.g. "teamA": "teamB")
-          weak_tokens: tokens too ambiguous to establish a match by themselves
-          weights: token, substr, phonetic, ratio
-          threshold: integer threshold for is_similar
+        Configuration keys
+        ------------------
+        acronyms          : dict  – organisational prefix/suffix patterns to strip
+                                    (e.g. ``"fc ": ""``).
+        synonyms          : dict  – canonical expansions applied before and after
+                                    acronym stripping (e.g. ``"man utd": "manchester united"``).
+        weak_tokens       : list  – geographic / franchise words that alone cannot
+                                    establish a positive match (e.g. ``new``, ``york``,
+                                    ``inter``, ``dynamo``).
+                                    Do NOT include discriminative qualifiers like
+                                    ``city`` or ``united`` here – those ARE the
+                                    tokens that tell two clubs apart.
+        weights           : dict  – scoring weights:
+                              token              (default 0.40) – best of token_set/sort ratio
+                              substr             (default 0.10) – shared full-word bonus
+                              phonetic           (default 0.10) – Soundex similarity across
+                                                                  strong tokens
+                              ratio              (default 0.30) – character-level ratio
+                              partial            (default 0.10) – partial_ratio, applied only
+                                                                  when the shorter string ≤ 8 chars
+                              strong_mismatch_cap (default 35)  – score ceiling when strong
+                                                                  tokens are present but disjoint
+        threshold         : float – minimum score for ``is_similar`` to return True (default 65).
         """
         if not cfg:
             raise ValueError("Configuration is required for SimilarityEngine")
-        else:
-            self.acronyms = cfg.get("acronyms", {})
-            self.synonyms = cfg.get("synonyms", {})
-            self.weak_tokens = {str(t).lower() for t in cfg.get("weak_tokens", [])}
 
-            # weights for hybrid matching
-            weights = cfg.get("weights")
-            self.token_weight = weights.get("token")
-            self.substr_weight = weights.get("substr")
-            self.phonetic_weight = weights.get("phonetic")
-            self.ratio_weight = weights.get("ratio")
+        self.acronyms: dict[str, str] = cfg.get("acronyms", {})
+        self.synonyms: dict[str, str] = cfg.get("synonyms", {})
+        self.weak_tokens: frozenset[str] = frozenset(
+            str(t).lower() for t in cfg.get("weak_tokens", [])
+        )
 
-            # similarity threshold
-            self.similarity_threshold = cfg.get("threshold")
+        w = cfg.get("weights", {})
+        self.token_weight: float = w.get("token", 0.40)
+        self.substr_weight: float = w.get("substr", 0.10)
+        self.phonetic_weight: float = w.get("phonetic", 0.10)
+        self.ratio_weight: float = w.get("ratio", 0.30)
+        self.partial_weight: float = w.get("partial", 0.10)
+        self.strong_mismatch_cap: float = w.get("strong_mismatch_cap", 35.0)
 
-        # Caches
+        self.similarity_threshold: float = cfg.get("threshold", 65.0)
+
         self._norm_cache: dict[str, str] = {}
         self._soundex_cache: dict[str, str] = {}
         self._result_cache: dict[tuple[str, str], tuple[bool, float]] = {}
 
-    def _soundex(self, name: str) -> str:
-        """Compute the Soundex code for a name.
+    # ------------------------------------------------------------------
+    # Phonetic helpers
+    # ------------------------------------------------------------------
 
-        Args:
-            name: The name to compute Soundex for.
+    def _soundex(self, word: str) -> str:
+        """Return the 4-character Soundex code for a single word."""
+        if word in self._soundex_cache:
+            return self._soundex_cache[word]
 
-        Returns:
-            A 4-character Soundex code.
-        """
-        if name in self._soundex_cache:
-            return self._soundex_cache[name]
+        upper = word.upper()
+        if not upper:
+            return "0000"
 
-        orig_name = name
-        name = name.upper()
-        replacements = {
+        table = {
             "BFPV": "1",
             "CGJKQSXZ": "2",
             "DT": "3",
@@ -71,64 +101,91 @@ class SimilarityEngine:
             "MN": "5",
             "R": "6",
         }
-        if not name:
-            return "0000"
-        soundex_code = name[0]
-        for char in name[1:]:
-            for key, value in replacements.items():
-                if char in key and soundex_code[-1] != value:
-                    soundex_code += value
-        soundex_code = soundex_code[:4].ljust(4, "0")
-        res = soundex_code[:4]
-        self._soundex_cache[orig_name] = res
-        return res
+        code = upper[0]
+        for ch in upper[1:]:
+            for chars, digit in table.items():
+                if ch in chars and code[-1] != digit:
+                    code += digit
+                    break
 
-    def _normalize(self, match_name: str) -> str:
-        """Normalize a string for matching: lowercase, strip diacritics, apply synonyms/acronyms.
+        result = (code + "000")[:4]
+        self._soundex_cache[word] = result
+        return result
 
-        Args:
-            match_name: The string to normalize.
+    def _phonetic_overlap(self, strong1: frozenset[str], strong2: frozenset[str]) -> float:
+        """Fraction of strong tokens in the smaller set that have a Soundex match in the other.
 
-        Returns:
-            The normalized string.
+        Returns a value in [0, 100].  We use the *smaller* set as the numerator so
+        that a single-token abbreviation matching one of several long-form tokens
+        still scores well.
         """
-        if match_name in self._norm_cache:
-            return self._norm_cache[match_name]
+        if not strong1 or not strong2:
+            return 0.0
 
-        # Decompose Unicode and remove diacritics
-        name = unicodedata.normalize("NFD", match_name)
+        smaller, larger = (strong1, strong2) if len(strong1) <= len(strong2) else (strong2, strong1)
+        matches = sum(
+            1
+            for t in smaller
+            if any(self._soundex(t) == self._soundex(u) for u in larger)
+        )
+        return 100.0 * matches / len(smaller)
+
+    # ------------------------------------------------------------------
+    # Normalisation
+    # ------------------------------------------------------------------
+
+    def _normalize(self, raw: str) -> str:
+        """Normalise a raw team/entity name for matching.
+
+        Steps
+        -----
+        1. Unicode NFD decomposition → strip combining diacritics (accents).
+        2. Remove punctuation noise; collapse whitespace; lowercase.
+        3. Synonym pass 1 – pre-acronym canonical expansions take priority so that
+           e.g. ``"man utd"`` → ``"manchester united"`` before any acronym rule fires.
+        4. Acronym stripping – removes organisational prefixes/suffixes.
+        5. Synonym pass 2 – a stripped name may now equal a synonym key
+           (e.g. ``"ac milan"`` → ``"milan"`` … unlikely but guarded).
+        """
+        if raw in self._norm_cache:
+            return self._norm_cache[raw]
+
+        # 1. Strip diacritics
+        name = unicodedata.normalize("NFD", raw)
         name = "".join(ch for ch in name if unicodedata.category(ch) != "Mn")
-        name = re.sub(r"[(),.`]", "", name)
 
+        # 2. Punctuation / whitespace cleanup
+        name = re.sub(r"[(),.`'\-]+", " ", name)
         name = " ".join(name.split()).lower()
 
-        # Exact synonyms are trusted canonical forms.  Return immediately so a
-        # later generic acronym rule cannot damage the canonical value.
-        for k, v in self.synonyms.items():
-            if name == k:
-                name = " ".join(str(v).lower().split())
-                self._norm_cache[match_name] = name
-                return name
+        # 3. Synonym pass 1
+        resolved = self.synonyms.get(name)
+        if resolved is not None:
+            name = " ".join(str(resolved).lower().split())
+            self._norm_cache[raw] = name
+            return name
 
-        # Token-aware acronym replacements.  Config keys often include spaces to
-        # express prefix/suffix intent, e.g. "real " or " fc"; raw substring
-        # replacement would corrupt names like "real betis" via an "al " rule.
+        # 4. Acronym stripping
         for k, v in self.acronyms.items():
             name = self._replace_acronym(name, k, v)
-
         name = " ".join(name.split())
 
-        # Acronym cleanup can expose an exact synonym key.
-        for k, v in self.synonyms.items():
-            if name == k:
-                name = " ".join(str(v).lower().split())
-                break
+        # 5. Synonym pass 2
+        resolved = self.synonyms.get(name)
+        if resolved is not None:
+            name = " ".join(str(resolved).lower().split())
 
-        self._norm_cache[match_name] = name
+        self._norm_cache[raw] = name
         return name
 
     def _replace_acronym(self, name: str, key: str, replacement: str) -> str:
-        """Apply one acronym replacement without matching inside other words."""
+        """Apply one acronym substitution respecting word boundaries.
+
+        Keys with leading/trailing spaces encode positional intent:
+          ``"fc "``  → strip only at the *start* of the string
+          ``" fc"``  → strip only at the *end*
+          ``" de "`` → strip only when surrounded by spaces (mid-word safe)
+        """
         token = " ".join(key.split()).lower()
         if not token:
             return name
@@ -136,10 +193,13 @@ class SimilarityEngine:
         repl = f" {replacement.strip()} " if replacement.strip() else " "
 
         if key.startswith(" ") and key.endswith(" "):
+            # Interior word – must be surrounded by non-word boundaries
             pattern = rf"(?<!\S){re.escape(token)}(?!\S)"
         elif key.startswith(" "):
+            # Suffix
             pattern = rf"(?<!\S){re.escape(token)}$"
         elif key.endswith(" "):
+            # Prefix
             pattern = rf"^{re.escape(token)}(?!\S)"
         elif re.search(r"\W$", key):
             pattern = rf"^{re.escape(token)}"
@@ -150,102 +210,156 @@ class SimilarityEngine:
 
         return re.sub(pattern, repl, name)
 
-    def _only_shares_weak_tokens(self, s1: str, s2: str) -> bool:
-        """Return True when overlap is only ambiguous location/franchise words.
+    # ------------------------------------------------------------------
+    # Token helpers
+    # ------------------------------------------------------------------
 
-        This method is called *after* a check for `tokens1.isdisjoint(tokens2)`
-        in `hybrid_match`, so `shared` is guaranteed to be non-empty here.
-        """
-        if not self.weak_tokens:
-            return False
+    def _strong_tokens(self, s: str) -> frozenset[str]:
+        """Return the subset of tokens that are NOT in ``weak_tokens``."""
+        return frozenset(t for t in s.split() if t not in self.weak_tokens)
 
-        tokens1 = set(s1.split())
-        tokens2 = set(s2.split())
-        shared = tokens1 & tokens2
-
-        # If all shared tokens are weak, then the overlap is *only* weak tokens.
-        return shared.issubset(self.weak_tokens)
+    # ------------------------------------------------------------------
+    # Scoring
+    # ------------------------------------------------------------------
 
     def hybrid_match(self, s1: str, s2: str) -> float:
-        """Return True when overlap is only ambiguous location/franchise words."""
-        if not self.weak_tokens:
-            return False
+        """Return a 0–100 similarity score for two *already-normalised* strings.
 
-        tokens1 = set(s1.split())
-        tokens2 = set(s2.split())
-        shared = tokens1 & tokens2
-        if not shared or not shared.issubset(self.weak_tokens):
-            return False
+        Scoring pipeline
+        ----------------
+        1. Compute four fuzzy metrics:
+             - ``token_set_ratio``  – order-insensitive, rewards subset matches
+             - ``token_sort_ratio`` – good for word-order inversions
+             - ``ratio``            – raw character-level Levenshtein
+             - ``partial_ratio``    – substring containment; applied conservatively
+                                      only for short strings (≤ 8 chars on either side)
+        2. Word-level shared-token bonus (``substr_score``).
+        3. Phonetic score across *strong* tokens only (multi-token Soundex).
+        4. Weighted sum → ``base_score``.
 
-        # At this point, we know 'shared' is not empty because of the prior check in hybrid_match.
-        # If all shared tokens are weak, then the overlap is *only* weak tokens.
-        return shared.issubset(self.weak_tokens)
+        Strong-token enforcement (the key guard)
+        -----------------------------------------
+        After computing ``base_score``, classify each side's tokens as strong
+        (discriminative, not in ``weak_tokens``) or weak (geographic / franchise
+        filler).
 
-    def hybrid_match(self, s1: str, s2: str) -> float:
-        """Compute a hybrid similarity score between two strings.
+        • **Both sides have strong tokens, and they are disjoint (no shared token,
+          no phonetic match)**
+          → These strings almost certainly name *different* entities.
+          Cap the score at ``strong_mismatch_cap``.
+          Example: "new york city" vs "new york bulls"
+                   strong1={city}, strong2={bulls} → disjoint → capped.
 
-        The score combines token set ratio, substring presence, phonetic (Soundex),
-        and raw ratio using configured weights.
+        • **One side has strong tokens, the other has none**
+          → The all-weak side cannot confirm the strong tokens exist there.
+          Cap unless the strong tokens appear verbatim in the other's token set.
+          Example: "new york city" (strong={city}) vs "new york" (strong={})
+                   "city" ∉ {"new","york"} → capped.
 
-        Args:
-            s1: First string.
-            s2: Second string.
+        • **Neither side has strong tokens**
+          → Both names are purely geographic/generic after normalisation; fall
+          through to the full ``base_score`` (rare, but e.g. two city-only names).
 
-        Returns:
-            A float score between 0 and 100.
+        Phonetic overlap in the cap check means a typo like "sevlla" vs "sevilla"
+        (same Soundex S140) still passes even though the tokens aren't identical.
         """
-        # First, a strict check: if no tokens are shared at all, return 0.0.
-        # This handles cases like "apple pie" vs "orange juice" and empty strings.
-        tokens1 = set(s1.split())
-        tokens2 = set(s2.split())
-        if tokens1.isdisjoint(tokens2):
+        if not s1 or not s2:
             return 0.0
 
-        # Filter out cases where the only commonality is weak/ambiguous words (e.g., "FC" vs "FC")
-        # This still requires at least one shared token to trigger.
-        if self._only_shares_weak_tokens(s1, s2):
-            return 0.0
+        tokens1: frozenset[str] = frozenset(s1.split())
+        tokens2: frozenset[str] = frozenset(s2.split())
+        strong1 = self._strong_tokens(s1)
+        strong2 = self._strong_tokens(s2)
 
-        token_score = fuzz.token_set_ratio(s1, s2)
-        substr_presence = any(word in s2 for word in s1.split())
-        substr_score = 100 if substr_presence else 0
+        # --- Fuzzy metrics ---------------------------------------------------
+        tset = fuzz.token_set_ratio(s1, s2)
+        tsort = fuzz.token_sort_ratio(s1, s2)
+        ratio = fuzz.ratio(s1, s2)
 
-        soundex1 = self._soundex(s1.split()[0]) if s1.split() else "0000"
-        soundex2 = self._soundex(s2.split()[0]) if s2.split() else "0000"
-        phonetic_score = 100 if soundex1 == soundex2 else 0
-        ratio_score = fuzz.ratio(s1, s2)
+        # Best token-based score
+        best_token = float(max(tset, tsort))
 
-        final_score = (
-            self.token_weight * token_score
+        # partial_ratio helps short abbreviations/nicknames but can cause false
+        # positives on longer strings, so apply it only when one side is short.
+        partial_contribution = 0.0
+        if min(len(s1), len(s2)) <= 8:
+            partial_contribution = fuzz.partial_ratio(s1, s2) * 0.92
+
+        # Word-level overlap (full-word shared token, not substring)
+        substr_score = 100.0 if tokens1 & tokens2 else 0.0
+
+        # Phonetic similarity across strong tokens (0–100)
+        phonetic_score = self._phonetic_overlap(strong1, strong2)
+
+        # --- Weighted combination --------------------------------------------
+        base_score = (
+            self.token_weight * best_token
             + self.substr_weight * substr_score
             + self.phonetic_weight * phonetic_score
-            + self.ratio_weight * ratio_score
+            + self.ratio_weight * ratio
+            + self.partial_weight * partial_contribution
         )
-        return final_score
+
+        # --- Strong-token enforcement ----------------------------------------
+        if strong1 and strong2:
+            # Both sides are discriminative; they must share at least one strong
+            # token – or have a phonetic match – to avoid the cap.
+            if strong1.isdisjoint(strong2) and phonetic_score == 0.0:
+                logger.debug(
+                    "Strong-token mismatch: %s ↔ %s  (strong: %s vs %s)",
+                    s1, s2, strong1, strong2,
+                )
+                return min(base_score, self.strong_mismatch_cap)
+
+        elif strong1 and not strong2:
+            # s2 is all weak; s1's strong tokens must appear verbatim in s2's
+            # token set – otherwise s2 simply lacks the discriminative word.
+            if not strong1.issubset(tokens2):
+                logger.debug(
+                    "Strong-token containment miss (s1→s2): %s ↔ %s  (strong1: %s)",
+                    s1, s2, strong1,
+                )
+                return min(base_score, self.strong_mismatch_cap)
+
+        elif not strong1 and strong2:
+            if not strong2.issubset(tokens1):
+                logger.debug(
+                    "Strong-token containment miss (s2→s1): %s ↔ %s  (strong2: %s)",
+                    s1, s2, strong2,
+                )
+                return min(base_score, self.strong_mismatch_cap)
+
+        # Both empty → neither name has discriminative tokens; use full score.
+
+        return base_score
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def is_similar(self, s1: str, s2: str) -> tuple[bool, float]:
-        """Check if two strings are similar based on the configured threshold.
+        """Return ``(is_similar, score)`` for two raw strings.
 
         Args:
-            s1: First string.
-            s2: Second string.
+            s1: First raw string.
+            s2: Second raw string.
 
         Returns:
-            A tuple of (is_similar, score) where is_similar is True if score
-            exceeds the threshold, and score is the hybrid match score.
+            Tuple of ``(bool, float)`` – True when score > threshold.
         """
-        cache_key = tuple(sorted([s1, s2]))  # type: ignore[assignment]
+        # Canonical cache key: order-independent
+        cache_key = (min(s1, s2), max(s1, s2))
         if cache_key in self._result_cache:
             return self._result_cache[cache_key]
 
         n1 = self._normalize(s1)
         n2 = self._normalize(s2)
 
-        logger.debug("Matching '%s' via '%s' vs '%s' via '%s'", s1, n1, s2, n2)
+        logger.debug("Matching '%s' → '%s'  vs  '%s' → '%s'", s1, n1, s2, n2)
 
         score = self.hybrid_match(n1, n2)
-        res = (score > self.similarity_threshold, score)
-        logger.debug("Match Result: %s | Score: %.2f", res[0], score)
+        result = (score > self.similarity_threshold, score)
 
-        self._result_cache[cache_key] = res
-        return res
+        logger.debug("Result: %s | Score: %.2f", result[0], score)
+        self._result_cache[cache_key] = result
+        return result
