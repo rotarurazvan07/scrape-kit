@@ -1,0 +1,1487 @@
+diff --git a/scrape_kit/__init__.py b/scrape_kit/__init__.py
+index 88a627d..76e8a84 100644
+--- a/scrape_kit/__init__.py
++++ b/scrape_kit/__init__.py
+@@ -1,95 +1,58 @@
+-"""
+-Scrape-Kit: A flexible, high-performance scraping framework.
+-
+-Quick-start (module-level static usage):
+-
+-    # One-time setup — load indicators from your project's config dir
+-    from scrape_kit import configure
+-    configure("path/to/config")          # reads scraper_config.yaml
+-
+-    # Or use built-in defaults with no config file needed
+-    from scrape_kit import configure_defaults
+-    configure_defaults()
+-
+-    # Then use module-level proxies anywhere
+-    from scrape_kit import fetch, browser, scrape, is_blocked
+-    html = fetch("https://example.com")
+-
+-Instance usage (explicit config per fetcher):
+-
+-    from scrape_kit import WebFetcher
+-    fetcher = WebFetcher(retry_indicators=[...], block_indicators=[...])
+-    html = fetcher.fetch("https://example.com")
+-
+-Legacy static-class pattern (still works):
+-
+-    from scrape_kit.fetcher import fetch, browser, scrape, is_blocked
+-    # Use directly — no instantiation needed after configure()
+-"""
+-
+-from .errors import FetcherError, ScrapeKitError, SettingsError, StorageError
+-from .fetcher import (  # Module-level proxies — use these after configure() or configure_defaults()
+-    InteractiveSession,
+-    ScrapeMode,
+-    WebFetcher,
+-    browser,
+-    fetch,
+-    is_blocked,
+-    scrape,
++from .dedup import DedupConfig
++from .errors import (
++    FetcherError,
++    FinderError,
++    ParserError,
++    ScrapeKitError,
++    SettingsError,
++    StorageError,
+ )
++from .fetcher import ScrapeMode, browser, configure, configure_defaults, fetch, is_blocked, scrape
++from .finder import BaseFinder
+ from .logger import get_logger, time_profiler
+-from .matching import SimilarityEngine
++from .matching import SimilarityEngine, make_similarity_fn
++from .page import Element, Page
+ from .settings import SettingsManager
+-from .storage import BaseStorageManager, BufferedStorageManager
+-
+-
+-def configure(config_path: str, config_key: str = "scraper_config") -> WebFetcher:
+-    """Load scraper indicators from a YAML config directory and set the shared instance.
+-
+-    Reads ``<config_path>/<config_key>.yaml`` (via SettingsManager) and
+-    configures the module-level shared WebFetcher used by ``fetch()``,
+-    ``scrape()``, ``browser()``, and ``is_blocked()``.
+-
+-    Returns the configured WebFetcher instance in case you need it directly.
+-    """
+-    return WebFetcher.configure(config_path, config_key=config_key, set_shared=True)
+-
+-
+-def configure_defaults() -> WebFetcher:
+-    """Set the shared instance using the built-in default indicator lists.
+-
+-    Use this when you don't have a config file but still want the full set
+-    of common retry/block indicators.
+-    """
+-    return WebFetcher.configure_defaults(set_shared=True)
+-
++from .storage import (
++    BaseStorageManager,
++    BufferedStorageManager,
++    MergeReport,
++)
+ 
+ __all__ = [
+-    # Settings
+-    "SettingsManager",
++    # Configure
++    "configure",
++    "configure_defaults",
++    # Fetch
++    "fetch",
++    "scrape",
++    "browser",
++    "is_blocked",
++    # Page parsing
++    "Page",
++    "Element",
++    # Finders
++    "BaseFinder",
++    "ScrapeMode",
+     # Storage
+     "BaseStorageManager",
+     "BufferedStorageManager",
+-    # Fetcher — class
+-    "WebFetcher",
+-    "InteractiveSession",
+-    "ScrapeMode",
+-    # Fetcher — module-level proxies (use after configure())
+-    "fetch",
+-    "is_blocked",
+-    "browser",
+-    "scrape",
+-    # Configure helpers
+-    "configure",
+-    "configure_defaults",
++    "MergeReport",
++    # Deduplication
++    "DedupConfig",
+     # Matching
+     "SimilarityEngine",
++    "make_similarity_fn",
++    # Settings
++    "SettingsManager",
++    # Logging
++    "get_logger",
++    "time_profiler",
+     # Errors
+     "ScrapeKitError",
+     "FetcherError",
+     "StorageError",
+     "SettingsError",
+-    # Logging
+-    "get_logger",
+-    "time_profiler",
++    "ParserError",
++    "FinderError",
+ ]
+diff --git a/scrape_kit/errors.py b/scrape_kit/errors.py
+index 91e7684..e507853 100644
+--- a/scrape_kit/errors.py
++++ b/scrape_kit/errors.py
+@@ -12,3 +12,11 @@ class StorageError(ScrapeKitError):
+ 
+ class SettingsError(ScrapeKitError):
+     """Raised when configuration/settings files are missing or malformed."""
++
++
++class ParserError(ScrapeKitError):
++    """Raised when HTML parsing fails or is invalid."""
++
++
++class FinderError(ScrapeKitError):
++    """Raised on fatal finder initialization or runtime failures."""
+diff --git a/scrape_kit/fetcher.py b/scrape_kit/fetcher.py
+index aebabe4..cf7d8ac 100644
+--- a/scrape_kit/fetcher.py
++++ b/scrape_kit/fetcher.py
+@@ -2,8 +2,7 @@ import asyncio
+ import time
+ from collections.abc import Callable
+ from concurrent.futures import ThreadPoolExecutor
+-from types import SimpleNamespace
+-from typing import Any, Literal, TypeVar
++from typing import Any, Literal
+ 
+ from scrapling.fetchers import (
+     AsyncStealthySession,
+@@ -14,15 +13,12 @@ from scrapling.fetchers import (
+ 
+ from .errors import FetcherError
+ from .logger import get_logger
++from .page import Page
++from .session import InteractiveSession
+ 
+ logger = get_logger(__name__)
+ 
+-T = TypeVar("T", bound="InteractiveSession")
+-
+ # ── Module-level shared instance ──────────────────────────────────────────────
+-# Populated by WebFetcher.configure() or set directly.
+-# Module-level proxy functions below delegate to this instance.
+-
+ _shared: "WebFetcher | None" = None
+ 
+ 
+@@ -35,335 +31,46 @@ def _get_shared() -> "WebFetcher":
+ 
+ 
+ # ── Public module-level proxies ───────────────────────────────────────────────
+-# These allow `from scrape_kit.fetcher import fetch` usage without instantiation.
+ 
+ 
+-def fetch(url: str, **kwargs: Any) -> str:
+-    """Module-level proxy — delegates to the shared WebFetcher instance."""
++def configure(config_path: str, config_key: str = "scraper_config") -> None:
++    """Populate the shared WebFetcher instance from YAML config."""
++    WebFetcher.configure(config_path, config_key, set_shared=True)
++
++
++def configure_defaults() -> None:
++    """Populate the shared WebFetcher instance with defaults."""
++    WebFetcher.configure_defaults(set_shared=True)
++
++
++def fetch(url: str, **kwargs: Any) -> Page:
++    """Fetch a single URL and return a Page object."""
+     return _get_shared().fetch(url, **kwargs)
+ 
+ 
+-def is_blocked(html: str) -> bool:
+-    """Module-level proxy — delegates to the shared WebFetcher instance."""
+-    return _get_shared().is_blocked(html)
++def is_blocked(page: Page) -> bool:
++    """Check if the given Page indicates we are blocked."""
++    return _get_shared().is_blocked(page)
+ 
+ 
+-def browser(**kwargs: Any) -> "InteractiveSession":
+-    """Module-level proxy — delegates to the shared WebFetcher instance."""
++def browser(**kwargs: Any) -> InteractiveSession:
++    """Open an InteractiveSession context manager."""
+     return _get_shared().browser(**kwargs)
+ 
+ 
+-def scrape(urls: list[str], callback: Callable[[str, str], None], **kwargs: Any) -> None:
+-    """Module-level proxy — delegates to the shared WebFetcher instance."""
++def scrape(urls: list[str], callback: Callable[[str, Page], None], **kwargs: Any) -> None:
++    """Batch scrape URLs, passing Page objects to the callback."""
+     return _get_shared().scrape(urls, callback, **kwargs)
+ 
+ 
+ class ScrapeMode:
+-    """Scraping mode constants."""
+-
+     FAST = "fast"
+     STEALTH = "stealth"
+ 
+ 
+-class InteractiveSession:
+-    """Wrapper around Scrapling session to provide persistent page and JS execution."""
+-
+-    def __init__(self, session: DynamicSession | StealthySession) -> None:
+-        """Initialize an interactive session with a Scrapling session.
+-
+-        Args:
+-            session: A Scrapling DynamicSession or StealthySession instance.
+-        """
+-        self.session = session
+-        self.page = None
+-        logger.debug("InteractiveSession initialized with %s", type(session).__name__)
+-
+-    def __enter__(self) -> "InteractiveSession":
+-        """Start the browser session and create a new page.
+-
+-        Returns:
+-            The InteractiveSession instance for use in context manager.
+-        """
+-        logger.info("Starting browser session...")
+-        self.session.start()
+-        self.page = self.session.context.new_page()
+-        logger.debug("Browser page created and session started")
+-        return self
+-
+-    def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
+-        """Cleanly close the browser session and page.
+-
+-        Args:
+-            _exc_type: Exception type if an exception occurred.
+-            _exc_val: Exception value if an exception occurred.
+-            _exc_tb: Traceback if an exception occurred.
+-        """
+-        try:
+-            if self.page:
+-                logger.debug("Closing browser page...")
+-                self.page.close()
+-        except Exception as e:
+-            logger.error(f"Error during cleanup: {e}")
+-            raise FetcherError(f"Cleanup failed: {e}") from e
+-        logger.info("Closing browser session")
+-        # close() method exists on both DynamicSession and StealthySession
+-        self.session.close()  # type: ignore[no-untyped-call]
+-
+-    def fetch(self, url: str, timeout: int = 90000, wait_until: str = "load") -> SimpleNamespace:
+-        """Navigate to a URL and retrieve the page content.
+-
+-        Args:
+-            url: The URL to fetch.
+-            timeout: Timeout in milliseconds. Defaults to 90000.
+-            wait_until: Page load state to wait for. Defaults to "load".
+-
+-        Returns:
+-            SimpleNamespace with html_content attribute containing the page HTML.
+-
+-        Raises:
+-            RuntimeError: If the session has not been started.
+-        """
+-        if not self.page:
+-            raise RuntimeError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
+-        logger.info("Browser fetching: %s (timeout=%dms)", url, timeout)
+-        self.page.goto(url, wait_until=wait_until, timeout=timeout)
+-        logger.debug("Waiting for site to settle ...")
+-        import time
+-
+-        max_wait = 30  # maximum seconds to keep trying
+-        start_time = time.time()
+-
+-        while True:
+-            try:
+-                self.execute_script("""
+-                    (function() {
+-                        return new Promise((resolve) => {
+-                            var prevHeight = document.documentElement.scrollHeight;
+-                            var prevHTML = document.body.innerHTML.length;
+-
+-                            var timeout = setTimeout(() => {
+-                                observer.disconnect();
+-                                resolve();
+-                            }, 10000);  // hard cap
+-
+-                            var idleTimer = setTimeout(() => {
+-                                observer.disconnect();
+-                                clearTimeout(timeout);
+-                                resolve();
+-                            }, 2000);  // resolve after 2s of no changes
+-
+-                            var observer = new MutationObserver(() => {
+-                                var newHeight = document.documentElement.scrollHeight;
+-                                var newHTML = document.body.innerHTML.length;
+-
+-                                if (newHeight !== prevHeight || newHTML !== prevHTML) {
+-                                    prevHeight = newHeight;
+-                                    prevHTML = newHTML;
+-                                    clearTimeout(idleTimer);
+-                                    idleTimer = setTimeout(() => {
+-                                        observer.disconnect();
+-                                        clearTimeout(timeout);
+-                                        resolve();
+-                                    }, 2000);
+-                                }
+-                            });
+-
+-                            observer.observe(document.body, {
+-                                childList: true,
+-                                subtree: true,
+-                                attributes: true,
+-                                characterData: true
+-                            });
+-                        });
+-                    })()
+-                """)
+-                break  # success, exit loop
+-
+-            except Exception as e:
+-                elapsed = time.time() - start_time
+-                if elapsed >= max_wait:
+-                    logger.warning(f"Page settle script failed after {max_wait}s, giving up: {e}")
+-                    break
+-                logger.debug(f"Page settle script failed ({e}), retrying in 1s...")
+-                time.sleep(1)
+-        content = self.page.content()
+-        logger.debug("Fetch complete, content length: %d", len(content))
+-        return SimpleNamespace(html_content=content)
+-
+-    def execute_script(self, script: str) -> Any:
+-        """Execute JavaScript in the page context.
+-
+-        Args:
+-            script: JavaScript code to execute. If it starts with "return ", the
+-                    expression is wrapped in an arrow function and its result is returned.
+-
+-        Returns:
+-            The result of the script execution, if any.
+-
+-        Raises:
+-            RuntimeError: If fetch() has not been called first.
+-        """
+-        if not self.page:
+-            raise RuntimeError("Call fetch() first")
+-        clean_script = script.strip()
+-        logger.debug("Executing script: %s...", clean_script[:50])
+-        try:
+-            if clean_script.startswith("return "):
+-                return self.page.evaluate(f"() => {{ {clean_script} }}")
+-            return self.page.evaluate(script)
+-        except Exception as e:
+-            logger.error(f"Script Execution Error: {e}")
+-            raise
+-
+-    def wait_for_selector(self, selector: str, timeout: int = 30000, **kwargs: Any) -> None:
+-        """Wait for a DOM element to appear.
+-
+-        Args:
+-            selector: CSS selector to wait for.
+-            timeout: Maximum wait time in milliseconds. Defaults to 30000.
+-            **kwargs: Additional arguments passed to Playwright's wait_for_selector.
+-
+-        Raises:
+-            RuntimeError: If fetch() has not been called first.
+-        """
+-        if not self.page:
+-            raise RuntimeError("Call fetch() first")
+-        self.page.wait_for_selector(selector, timeout=timeout, **kwargs)
+-
+-    def wait_for_function(self, expression: str, timeout: int = 30000, **kwargs: Any) -> None:
+-        """Wait for a JavaScript function to return a truthy value.
+-
+-        Args:
+-            expression: JavaScript function or expression to evaluate.
+-            timeout: Maximum wait time in milliseconds. Defaults to 30000.
+-            **kwargs: Additional arguments passed to Playwright's wait_for_function.
+-
+-        Raises:
+-            RuntimeError: If fetch() has not been called first.
+-        """
+-        if not self.page:
+-            raise RuntimeError("Call fetch() first")
+-        self.page.wait_for_function(expression, timeout=timeout, **kwargs)
+-
+-    def wait_for_timeout(self, ms: int, **kwargs: Any) -> None:
+-        """Pause execution for a specified duration.
+-
+-        Args:
+-            ms: Time to wait in milliseconds.
+-            **kwargs: Additional arguments passed to Playwright's wait_for_timeout.
+-
+-        Raises:
+-            RuntimeError: If fetch() has not been called first.
+-        """
+-        if not self.page:
+-            raise RuntimeError("Call fetch() first")
+-        self.page.wait_for_timeout(ms, **kwargs)
+-
+-    def scroll_to_bottom(self, infinite: bool = True, idle_ms=10000, cycle_delay_ms=None) -> None:
+-        cycle_delay_ms = cycle_delay_ms if cycle_delay_ms is not None else idle_ms // 5
+-        self.execute_script(f"""
+-            (function() {{
+-                return new Promise((resolve) => {{
+-                    var infinite = {"true" if infinite else "false"};
+-                    var idle_ms = {idle_ms};
+-                    var cycle_delay_ms = {cycle_delay_ms};
+-                    function cycle() {{
+-                        var maxScroll = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+-                        document.body.scrollTop = maxScroll;
+-                        document.documentElement.scrollTop = maxScroll;
+-                        var prevHeight = maxScroll;
+-                        var idleTimeout = setTimeout(() => {{ observer.disconnect(); resolve(); }}, idle_ms);
+-                        var observer = new MutationObserver(() => {{
+-                            var newHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+-                            if (newHeight > prevHeight) {{
+-                                clearTimeout(idleTimeout);
+-                                observer.disconnect();
+-                                infinite ? setTimeout(cycle, cycle_delay_ms) : resolve();
+-                            }}
+-                        }});
+-                        observer.observe(document.body, {{childList: true, subtree: true}});
+-                    }}
+-                    cycle();
+-                }});
+-            }})()
+-        """)
+-
+-    def click(self, selector, text=None, visible_only: bool = False, idle_ms=5000, hard_cap_ms=None):
+-        hard_cap_ms = hard_cap_ms if hard_cap_ms is not None else idle_ms * 6
+-        return self.execute_script(
+-            f"""
+-            (function() {{
+-                return new Promise((resolve) => {{
+-                    try {{
+-                        var idle_ms = {idle_ms};
+-                        var hard_cap_ms = {hard_cap_ms};
+-
+-                        function isVisible(el) {{
+-                            if (!el) return false;
+-                            var s = window.getComputedStyle(el);
+-                            return s.display !== 'none' && s.visibility !== 'hidden'
+-                                && s.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
+-                        }}
+-
+-                        var el;
+-                        if ({"true" if text else "false"}) {{
+-                            el = Array.from(document.querySelectorAll('{selector}'))
+-                                .find(e => e.textContent.trim() === '{text}');
+-                        }} else {{
+-                            el = document.querySelector('{selector}');
+-                        }}
+-
+-                        if (!el) {{ resolve(false); return; }}
+-                        if ({"true" if visible_only else "false"} && !isVisible(el)) {{ resolve(false); return; }}
+-
+-                        el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
+-
+-                        var prevHeight = document.documentElement.scrollHeight;
+-                        var prevHTML = document.body.innerHTML.length;
+-                        var observer = null;
+-
+-                        var hardCap = setTimeout(() => {{ observer && observer.disconnect(); resolve(true); }}, hard_cap_ms);
+-                        var idleTimer = setTimeout(() => {{ observer && observer.disconnect(); clearTimeout(hardCap); resolve(true); }}, idle_ms);
+-
+-                        observer = new MutationObserver(() => {{
+-                            var newHeight = document.documentElement.scrollHeight;
+-                            var newHTML = document.body.innerHTML.length;
+-                            if (newHeight !== prevHeight || newHTML !== prevHTML) {{
+-                                prevHeight = newHeight;
+-                                prevHTML = newHTML;
+-                                clearTimeout(idleTimer);
+-                                idleTimer = setTimeout(() => {{ observer && observer.disconnect(); clearTimeout(hardCap); resolve(true); }}, idle_ms);
+-                            }}
+-                        }});
+-
+-                        observer.observe(document.body, {{ childList: true, subtree: true, attributes: true, characterData: true }});
+-
+-                    }} catch(e) {{ resolve(false); }}
+-                }});
+-            }})()
+-            """
+-        )
+-
+-    def __getattr__(self, name: str) -> Any:
+-        return getattr(self.session, name)
+-
+-
+ class WebFetcher:
+-    """Web fetching framework wrapping scrapling.
+-
+-    Usage — instance (explicit config):
+-        fetcher = WebFetcher(retry_indicators=[...], block_indicators=[...])
+-
+-    Usage — YAML config (recommended for projects):
+-        WebFetcher.configure("path/to/config")   # reads scraper_config.yaml
+-        html = fetch(url)                         # module-level proxy
+-
+-    Usage — static class (legacy pattern, still works):
+-        class WebScraper:
+-            fetch = staticmethod(WebFetcher.configure(...).fetch)
+-    """
++    """Web fetching framework wrapping scrapling."""
+ 
+-    # ── Default indicators — override via configure() or __init__ ─────────────
+     _DEFAULT_RETRY: list[str] = [
+         "403 Forbidden",
+         "Access Denied",
+@@ -397,17 +104,9 @@ class WebFetcher:
+         retry_indicators: list[str] | None = None,
+         block_indicators: list[str] | None = None,
+     ) -> None:
+-        """Initialize a WebFetcher with custom retry and block indicators.
+-
+-        Args:
+-            retry_indicators: List of strings that indicate a retry is needed.
+-            block_indicators: List of strings that indicate the request is blocked.
+-        """
+         self.retry_indicators = retry_indicators if retry_indicators is not None else []
+         self.block_indicators = block_indicators if block_indicators is not None else []
+ 
+-    # ── Class-level factory: load from YAML ───────────────────────────────────
+-
+     @classmethod
+     def configure(
+         cls,
+@@ -415,30 +114,8 @@ class WebFetcher:
+         config_key: str = "scraper_config",
+         *,
+         set_shared: bool = True,
+-    ) -> "WebFetcher":
+-        """Load retry/block indicators from a YAML file and (optionally) set the
+-        module-level shared instance so module-proxy functions use it.
+-
+-        The YAML file should look like:
+-            retry_indicators:
+-              - "Just a moment"
+-              - "403 Forbidden"
+-            block_indicators:
+-              - "cf-browser-verification"
+-              - "Access Denied"
+-
+-        Args:
+-            config_path:  Path to config directory (or file) passed to SettingsManager.
+-            config_key:   YAML key / filename stem to look up.  Defaults to
+-                          "scraper_config", so it reads ``scraper_config.yaml``.
+-            set_shared:   If True (default), store the new instance as the module-level
+-                          shared instance used by the proxy functions.
+-
+-        Returns:
+-            The newly constructed WebFetcher instance.
+-        """
++    ) -> None:
+         global _shared
+-        # Import here to avoid circular imports at module load time
+         from .settings import SettingsManager
+ 
+         sm = SettingsManager(config_path)
+@@ -448,35 +125,18 @@ class WebFetcher:
+         block = cfg.get("block_indicators", cls._DEFAULT_BLOCK)
+ 
+         instance = cls(retry_indicators=retry, block_indicators=block)
+-        logger.info(
+-            "WebFetcher configured from '%s' (%d retry / %d block indicators)",
+-            config_path,
+-            len(retry),
+-            len(block),
+-        )
++        logger.info("WebFetcher configured from '%s'", config_path)
+ 
+         if set_shared:
+             _shared = instance
+ 
+-        return instance
+-
+     @classmethod
+-    def configure_defaults(cls, *, set_shared: bool = True) -> "WebFetcher":
+-        """Create an instance using the built-in default indicator lists.
+-        Useful when you want the full default indicator set without a config file.
+-        """
++    def configure_defaults(cls, *, set_shared: bool = True) -> None:
+         global _shared
+         instance = cls(retry_indicators=cls._DEFAULT_RETRY, block_indicators=cls._DEFAULT_BLOCK)
+         if set_shared:
+             _shared = instance
+-        logger.info(
+-            "WebFetcher configured with defaults (%d retry / %d block indicators)",
+-            len(cls._DEFAULT_RETRY),
+-            len(cls._DEFAULT_BLOCK),
+-        )
+-        return instance
+-
+-    # ── Instance methods ──────────────────────────────────────────────────────
++        logger.info("WebFetcher configured with defaults")
+ 
+     def fetch(
+         self,
+@@ -484,30 +144,16 @@ class WebFetcher:
+         stealthy_headers: bool = False,
+         retries: int = 3,
+         backoff: float = 5.0,
+-    ) -> str:
+-        """Fetch a URL with retry logic and automatic escalation.
+-
+-        Args:
+-            url: The URL to fetch.
+-            stealthy_headers: Whether to use stealthy headers. Defaults to False.
+-            retries: Number of retry attempts. Defaults to 3.
+-            backoff: Backoff multiplier in seconds. Defaults to 5.0.
+-
+-        Returns:
+-            The HTML content as a string.
+-
+-        Raises:
+-            ValueError: If retries is less than 1.
+-            FetcherError: If fetching fails after all retries.
+-        """
++    ) -> Page:
++        """Fetch a URL with retry logic and automatic escalation."""
+         if retries < 1:
+             raise ValueError("retries must be >= 1")
+ 
+         for attempt in range(1, retries + 1):
+-            try:  # nosec PERF203
+-                html = self._fetch_attempt(url, stealthy_headers, attempt, retries, backoff)
+-                if html is not None:
+-                    return html
++            try:
++                page = self._fetch_attempt(url, stealthy_headers, attempt, retries, backoff)
++                if page is not None:
++                    return page
+             except FetcherError:
+                 raise
+             except Exception as e:
+@@ -522,323 +168,139 @@ class WebFetcher:
+         attempt: int,
+         retries: int,
+         backoff: float,
+-    ) -> str | None:
+-        """Execute a single fetch attempt. Returns HTML on success, None to retry."""
++    ) -> Page | None:
+         logger.debug("Fast fetch attempt %d/%d for %s", attempt, retries, url)
+-        page = Fetcher.get(url, stealthy_headers=stealthy_headers)
+-
+-        status = getattr(page, "status", getattr(page, "status_code", 200))
+-        logger.debug("Response status for %s: %d", url, status)
++        resp = Fetcher.get(url, stealthy_headers=stealthy_headers)
+ 
++        status = getattr(resp, "status", getattr(resp, "status_code", 200))
+         if self._is_blocked_status(status, attempt, retries, url, backoff):
+             return None
+ 
+-        html = page.html_content
+-        matched = self._check_retry_indicators(html, url, attempt, retries, backoff)
++        html = resp.html_content
++        page = Page.from_html(html)
++
++        matched = self._check_retry_indicators(page.raw_html, url, attempt, retries, backoff)
+         if matched is not None:
+             if attempt >= retries:
+                 logger.info("Retries exhausted for %s, escalating to browser...", url)
+                 return self._escalate_to_browser(url, matched)
+             return None
+ 
+-        logger.debug("Successfully fetched content (len=%d) for %s", len(html), url)
+-        return html
++        return page
+ 
+-    def _is_blocked_status(
+-        self,
+-        status: int,
+-        attempt: int,
+-        retries: int,
+-        url: str,
+-        backoff: float,
+-    ) -> bool:
+-        """Check if status code indicates blocking. Returns True if should retry."""
++    def _is_blocked_status(self, status: int, attempt: int, retries: int, url: str, backoff: float) -> bool:
+         if status not in [403, 429, 503]:
+             return False
+         if attempt >= retries:
+             raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts")
+         wait = backoff * attempt
+-        logger.warning("Status %d on %s — retrying in %.0fs (attempt %d/%d)", status, url, wait, attempt, retries)
++        logger.warning("Status %d on %s — retrying in %.0fs", status, url, wait)
+         time.sleep(wait)
+         return True
+ 
+-    def _check_retry_indicators(
+-        self,
+-        html: str,
+-        url: str,
+-        attempt: int,
+-        retries: int,
+-        backoff: float,
+-    ) -> str | None:
+-        """Check retry indicators. Returns matched indicator or None."""
+-        matched = next(
+-            (ind for ind in self.retry_indicators if ind.lower() in html.lower()),
+-            None,
+-        )
++    def _check_retry_indicators(self, html: str, url: str, attempt: int, retries: int, backoff: float) -> str | None:
++        matched = next((ind for ind in self.retry_indicators if ind.lower() in html.lower()), None)
+         if matched and attempt < retries:
+             wait = backoff * attempt
+-            logger.warning(
+-                "Retry indicator '%s' on %s — retrying in %.0fs (attempt %d/%d)",
+-                matched,
+-                url,
+-                wait,
+-                attempt,
+-                retries,
+-            )
++            logger.warning("Retry indicator '%s' on %s — retrying in %.0fs", matched, url, wait)
+             time.sleep(wait)
+         return matched
+ 
+-    def _handle_fetch_error(
+-        self,
+-        url: str,
+-        error: Exception,
+-        attempt: int,
+-        retries: int,
+-        backoff: float,
+-    ) -> None:
+-        """Handle fetch error, retrying if attempts remain."""
++    def _handle_fetch_error(self, url: str, error: Exception, attempt: int, retries: int, backoff: float) -> None:
+         if attempt < retries:
+             wait = backoff * attempt
+-            logger.warning("Error on %s: %s — retrying in %.0fs (attempt %d/%d)", url, error, wait, attempt, retries)
++            logger.warning("Error on %s: %s — retrying in %.0fs", url, error, wait)
+             time.sleep(wait)
+         else:
+-            logger.error("Failed after %d attempts on %s: %s", retries, url, error)
+             raise FetcherError(f"Fetch failed after {retries} attempts: {error}") from error
+ 
+-    def _escalate_to_browser(self, url: str, blocked_by: str) -> str:
+-        """Escalate to a browser session to bypass blocking.
++    def _escalate_to_browser(self, url: str, blocked_by: str) -> Page:
++        logger.info("'%s' detected — escalating to browser for %s", blocked_by, url)
++        try:
++            with self.browser(solve_cloudflare=True, headless=True) as session:
++                return session.fetch(url)
++        except Exception as e:
++            logger.error("Browser escalation failed for %s: %s", url, e)
++            raise FetcherError(f"Escalation failed: {e}") from e
+ 
+-        Args:
+-            url: The URL that was blocked.
+-            blocked_by: The indicator that triggered the block.
++    def is_blocked(self, page: Page) -> bool:
++        """Check if the Page content indicates blocking."""
++        html = page.raw_html.lower()
++        return any(indicator.lower() in html for indicator in self.block_indicators)
+ 
+-        Returns:
+-            The HTML content fetched via browser.
++    def browser(self, headless: bool = True, solve_cloudflare: bool = False, **kwargs: Any) -> InteractiveSession:
++        """Create an InteractiveSession."""
++        is_heavy = solve_cloudflare
++        kwargs.setdefault("disable_resources", not is_heavy)
++        kwargs.setdefault("network_idle", is_heavy)
++        kwargs.setdefault("wait_until", "load")
+ 
+-        Raises:
+-            FetcherError: If browser escalation fails.
+-        """
+-        logger.info("'%s' detected on %s — escalating to browser...", blocked_by, url)
+-        try:
+-            with self.browser(solve_cloudflare=True, headless=True) as session:
+-                resp = session.fetch(url, timeout=120000)
+-                if resp and hasattr(resp, "html_content"):
+-                    logger.info("Browser successfully bypassed challenge for %s", url)
+-                    return str(resp.html_content)
+-        except Exception as browser_e:
+-            logger.error("Browser escalation failed for %s: %s", url, browser_e)
+-            raise FetcherError(f"Escalation failed: {browser_e}") from browser_e
+-        raise FetcherError(f"Escalation returned no content for {url}")
+-
+-    def is_blocked(self, html: str) -> bool:
+-        """Check if the HTML content indicates blocking.
+-
+-        Args:
+-            html: The HTML content to check.
+-
+-        Returns:
+-            True if blocking indicators are found, False otherwise.
+-        """
+-        if not html:
+-            return True
+-        return any(indicator.lower() in html.lower() for indicator in self.block_indicators)
+-
+-    def browser(
+-        self,
+-        headless: bool = True,
+-        solve_cloudflare: bool = False,
+-        interactive: bool = True,
+-        **kwargs: Any,
+-    ) -> InteractiveSession:
+-        """Create an interactive browser session.
+-
+-        Args:
+-            headless: Whether to run in headless mode. Defaults to True.
+-            solve_cloudflare: Enable Cloudflare challenge solving. Defaults to False.
+-            interactive: Enable interactive features. Defaults to True.
+-            **kwargs: Additional arguments passed to the Scrapling session.
+-
+-        Returns:
+-            An InteractiveSession instance.
+-        """
+-        is_heavy = interactive or solve_cloudflare
+-        defaults = {
+-            "disable_resources": not is_heavy,
+-            "network_idle": is_heavy,
+-            "wait_until": "load",
+-        }
+-        for key, value in defaults.items():
+-            kwargs.setdefault(key, value)
+-
+-        low_mem_flags = {"--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"}
+-        kwargs["args"] = list(set(kwargs.get("args", [])) | low_mem_flags)
++        low_mem_flags = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"]
++        kwargs["args"] = list(set(kwargs.get("args", [])) | set(low_mem_flags))
+ 
+         if solve_cloudflare:
+             session = StealthySession(headless=headless, solve_cloudflare=True, **kwargs)
+         else:
+-            session: DynamicSession | StealthySession = DynamicSession(headless=headless, **kwargs)
++            session = DynamicSession(headless=headless, **kwargs)
+ 
+         return InteractiveSession(session)
+ 
+     def scrape(
+         self,
+         urls: list[str],
+-        callback: Callable[[str, str], None],
+-        mode: Literal["fast", "stealth"] = ScrapeMode.FAST,
++        callback: Callable[[str, Page], None],
++        mode: str = ScrapeMode.FAST,
+         max_concurrency: int = 1,
+     ) -> None:
+-        """Scrape multiple URLs using the specified mode.
+-
+-        Args:
+-            urls: List of URLs to scrape.
+-            callback: Function to call with (url, html) for each successful fetch.
+-            mode: Scraping mode - "fast" or "stealth". Defaults to ScrapeMode.FAST.
+-            max_concurrency: Maximum concurrent requests. Defaults to 1.
+-
+-        Raises:
+-            FetcherError: If scraping encounters failures.
+-        """
+         if not urls:
+             return
+         if mode == ScrapeMode.FAST:
+-            logger.info("Batch scrape FAST %d URLs concurrency=%d", len(urls), max_concurrency)
+             self._scrape_fast(urls, callback, max_concurrency)
+         elif mode == ScrapeMode.STEALTH:
+-            logger.info("Batch scrape STEALTH %d URLs concurrency=%d", len(urls), max_concurrency)
+             self._scrape_stealth(urls, callback, max_concurrency)
+         else:
+             raise ValueError(f"Unsupported scrape mode: {mode}")
+ 
+-    def _scrape_fast(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+-        """Scrape URLs using fast mode with thread pool parallelism.
+-
+-        Args:
+-            urls: List of URLs to scrape.
+-            callback: Function to call with (url, html) for each successful fetch.
+-            max_concurrency: Maximum number of concurrent threads.
+-
+-        Raises:
+-            FetcherError: If any fetches fail.
+-        """
++    def _scrape_fast(self, urls: list[str], callback: Callable[[str, Page], None], max_concurrency: int) -> None:
+         errors: list[tuple[str, Exception]] = []
+         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+             futures = [pool.submit(self._fetch_one_fast, url, callback) for url in urls]
+             for future in futures:
+-                try:  # nosec PERF203
++                try:
+                     future.result()
+                 except Exception as exc:
+-                    errors.append((getattr(exc, "url", "unknown"), exc))
++                    errors.append(("unknown", exc))
+         if errors:
+-            summary = ", ".join(f"{url}: {err}" for url, err in errors[:5])
+-            raise FetcherError(f"Fast scrape had {len(errors)} failures. Sample: {summary}")
+-
+-    def _fetch_one_fast(self, url: str, callback: Callable[[str, str], None]) -> None:
+-        """Fetch a single URL in fast mode with retry logic.
+-
+-        Args:
+-            url: The URL to fetch.
+-            callback: Function to call with (url, html) on success.
++            raise FetcherError(f"Fast scrape had {len(errors)} failures.")
+ 
+-        Raises:
+-            FetcherError: If fetching fails or remains blocked.
+-        """
+-        last_error: Exception | None = None
++    def _fetch_one_fast(self, url: str, callback: Callable[[str, Page], None]) -> None:
+         for stealthy_headers in (False, True):
+             try:
+-                html = self.fetch(url, stealthy_headers=stealthy_headers)
+-                if self.is_blocked(html):
++                page = self.fetch(url, stealthy_headers=stealthy_headers)
++                if self.is_blocked(page):
+                     continue
+-                callback(url, html)
++                callback(url, page)
+                 return
+-            except Exception as exc:
+-                last_error = exc
+-
+-        if last_error is not None:
+-            failure = FetcherError(f"Fast scrape failed for {url}: {last_error}")
+-            failure.url = url  # type: ignore[attr-defined]
+-            raise failure from last_error
+-
+-        failure = FetcherError(f"Fast scrape remained blocked for {url}")
+-        failure.url = url  # type: ignore[attr-defined]
+-        raise failure
++            except Exception:
++                continue
++        raise FetcherError(f"Fast scrape failed for {url}")
+ 
+-    def _scrape_stealth(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+-        """Scrape URLs using stealth mode with async concurrency.
+-
+-        Args:
+-            urls: List of URLs to scrape.
+-            callback: Function to call with (url, html) for each successful fetch.
+-            max_concurrency: Maximum number of concurrent async operations.
+-
+-        Raises:
+-            FetcherError: If any fetches fail.
+-        """
++    def _scrape_stealth(self, urls: list[str], callback: Callable[[str, Page], None], max_concurrency: int) -> None:
+         asyncio.run(self._async_stealth_loop(urls, callback, max_concurrency))
+ 
+-    async def _async_stealth_loop(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+-        """Async worker loop for stealth mode scraping.
+-
+-        Args:
+-            urls: List of URLs to scrape.
+-            callback: Function to call with (url, html) for each successful fetch.
+-            max_concurrency: Maximum number of concurrent workers.
+-        """
++    async def _async_stealth_loop(self, urls: list[str], callback: Callable[[str, Page], None], max_concurrency: int) -> None:
+         concurrency = max(1, min(max_concurrency, len(urls)))
+         queue: asyncio.Queue[str] = asyncio.Queue()
+-        for url in urls:
+-            queue.put_nowait(url)
+-
+-        errors: list[tuple[str, Exception]] = []
++        for url in urls: queue.put_nowait(url)
+ 
+         async with AsyncStealthySession(max_pages=concurrency, headless=True, solve_cloudflare=True) as session:
+-
+-            async def _worker() -> None:
+-                while True:
+-                    try:
+-                        url = queue.get_nowait()
+-                    except asyncio.QueueEmpty:
+-                        return
+-
++            async def _worker():
++                while not queue.empty():
++                    url = await queue.get()
+                     try:
+-                        await self._fetch_one_stealth(url, session, callback)
+-                    except Exception as exc:
+-                        errors.append((url, exc))
++                        resp = await session.get(url)
++                        callback(url, Page.from_html(resp.html_content))
+                     finally:
+                         queue.task_done()
+-
+-            workers = [asyncio.create_task(_worker()) for _ in range(concurrency)]
+-            await queue.join()
+-            await asyncio.gather(*workers, return_exceptions=True)
+-
+-        if errors:
+-            summary = ", ".join(f"{url}: {err}" for url, err in errors[:5])
+-            raise FetcherError(f"Stealth scrape had {len(errors)} failures. Sample: {summary}")
+-
+-    async def _fetch_one_stealth(self, url: str, session: Any, callback: Callable[[str, str], None]) -> None:
+-        """Fetch a single URL in stealth mode with retry logic.
+-
+-        Args:
+-            url: The URL to fetch.
+-            session: The AsyncStealthySession to use.
+-            callback: Function to call with (url, html) on success.
+-
+-        Raises:
+-            FetcherError: If fetching fails after retries.
+-        """
+-        loop = asyncio.get_running_loop()
+-        for attempt in range(1, 5):
+-            try:
+-                page = await session.fetch(url, disable_resources=False, network_idle=True, timeout=90000)
+-                status = getattr(page, "status", getattr(page, "status_code", 200))
+-                if status in [429, 503]:
+-                    if attempt < 4:
+-                        await asyncio.sleep(30 * attempt)
+-                        continue
+-                    raise FetcherError(f"Blocked with status {status} on {url} after 4 attempts")
+-                await loop.run_in_executor(None, callback, url, page.html_content)
+-                return
+-            except Exception as e:
+-                if attempt < 4:
+-                    await asyncio.sleep(15 * attempt)
+-                else:
+-                    raise FetcherError(f"Stealth fetch failed after 4 retries: {e}") from e
++            
++            await asyncio.gather(*[_worker() for _ in range(concurrency)])
+diff --git a/scrape_kit/matching.py b/scrape_kit/matching.py
+index 45e8cca..da42c69 100644
+--- a/scrape_kit/matching.py
++++ b/scrape_kit/matching.py
+@@ -1,6 +1,6 @@
+ import re
+ import unicodedata
+-from typing import Any
++from typing import Any, Callable
+ 
+ from rapidfuzz import fuzz
+ 
+@@ -9,6 +9,15 @@ from .logger import get_logger
+ logger = get_logger(__name__)
+ 
+ 
++def make_similarity_fn(config: dict) -> Callable[[str, str], bool]:
++    """
++    Returns a plain callable (a, b) -> bool from a similarity config dict.
++    Useful for passing directly to DedupConfig.similarity_fn.
++    """
++    engine = SimilarityEngine(config)
++    return lambda a, b: engine.is_similar(a, b)[0]
++
++
+ class SimilarityEngine:
+     """Encapsulates string similarity logic for sports team names and similar entities.
+ 
+@@ -161,7 +170,22 @@ class SimilarityEngine:
+ 
+         # 4. Acronym stripping
+         for k, v in self.acronyms.items():
+-            name = self._replace_acronym(name, k, v)
++            token = k.strip().lower()
++            if not token:
++                continue
++
++            # Determine position based on whitespace in the key
++            if k.startswith(" ") and k.endswith(" "):
++                pattern = rf"\b{re.escape(token)}\b"
++            elif k.startswith(" "):
++                pattern = rf"\b{re.escape(token)}$"
++            elif k.endswith(" "):
++                pattern = rf"^{re.escape(token)}\b"
++            else:
++                pattern = rf"\b{re.escape(token)}\b"
++
++            name = re.sub(pattern, v, name)
++
+         name = " ".join(name.split())
+ 
+         # 5. Synonym pass 2
+@@ -172,38 +196,6 @@ class SimilarityEngine:
+         self._norm_cache[raw] = name
+         return name
+ 
+-    def _replace_acronym(self, name: str, key: str, replacement: str) -> str:
+-        """Apply one acronym substitution respecting word boundaries.
+-
+-        Keys with leading/trailing spaces encode positional intent:
+-          ``"fc "``  → strip only at the *start* of the string
+-          ``" fc"``  → strip only at the *end*
+-          ``" de "`` → strip only when surrounded by spaces (mid-word safe)
+-        """
+-        token = " ".join(key.split()).lower()
+-        if not token:
+-            return name
+-
+-        repl = f" {replacement.strip()} " if replacement.strip() else " "
+-
+-        if key.startswith(" ") and key.endswith(" "):
+-            # Interior word – must be surrounded by non-word boundaries
+-            pattern = rf"(?<!\S){re.escape(token)}(?!\S)"
+-        elif key.startswith(" "):
+-            # Suffix
+-            pattern = rf"(?<!\S){re.escape(token)}$"
+-        elif key.endswith(" "):
+-            # Prefix
+-            pattern = rf"^{re.escape(token)}(?!\S)"
+-        elif re.search(r"\W$", key):
+-            pattern = rf"^{re.escape(token)}"
+-        elif re.search(r"^\W", key):
+-            pattern = rf"{re.escape(token)}$"
+-        else:
+-            pattern = rf"(?<!\w){re.escape(token)}(?!\w)"
+-
+-        return re.sub(pattern, repl, name)
+-
+     # ------------------------------------------------------------------
+     # Token helpers
+     # ------------------------------------------------------------------
+diff --git a/scrape_kit/settings.py b/scrape_kit/settings.py
+index 5f1236b..d2043f1 100644
+--- a/scrape_kit/settings.py
++++ b/scrape_kit/settings.py
+@@ -65,50 +65,50 @@ class SettingsManager:
+                 # If path logic fails, just put it at root
+                 self.settings[yaml_file.stem] = data
+ 
+-    def get(self, *keys: str) -> Any | None:
+-        """Fetch a configuration value using a path of keys.
++    def reload(self) -> None:
++        """Explicitly reload all YAML files from the directory tree."""
++        self._load()
+ 
+-        The method reloads settings before each fetch to ensure fresh data.
+-        If the exact path is not found, it performs a depth-first search for
+-        the final key as a fallback.
++    def get(self, *keys: str, default: Any = None) -> Any:
++        """Fetch a configuration value using a path of keys.
+ 
+         Args:
+             *keys: A sequence of keys representing the path to the value.
++            default: Value to return if the path is not found.
+ 
+         Returns:
+-            The value if found, None otherwise.
+-
+-        Raises:
+-            SettingsError: If no keys are provided.
++            The value if found, else default.
+         """
+         if not keys:
+-            raise SettingsError("At least one key must be provided")
+-
+-        self._load()
++            return self.settings
+ 
+         node = self.settings
+         for key in keys:
+             if not isinstance(node, dict):
+-                break
++                return default
+             node = node.get(key)
+             if node is None:
+-                break
+-        else:
+-            if node is not None:
+-                return node
+-
+-        # Fallback to a global depth-first search for the last key
+-        def _search(d: dict[str, Any], target: str) -> Any | None:
+-            if target in d:
+-                return d[target]
+-            for v in d.values():
+-                if isinstance(v, dict):
+-                    result = _search(v, target)
+-                    if result is not None:
+-                        return result
+-            return None
+-
+-        return _search(self.settings, keys[-1])
++                return default
++
++        return node
++
++    def get_required(self, *keys: str) -> Any:
++        """Fetch a configuration value or raise SettingsError if not found.
++
++        Args:
++            *keys: A sequence of keys representing the path to the value.
++
++        Returns:
++            The value if found.
++
++        Raises:
++            SettingsError: If the value is not found.
++        """
++        val = self.get(*keys)
++        if val is None:
++            path = " -> ".join(keys)
++            raise SettingsError(f"Missing required setting: {path}")
++        return val
+ 
+     def _resolve_target(self, name: str, subpath: str | Path | None = None) -> Path:
+         """Resolve the full path for a settings file.
+diff --git a/scrape_kit/storage.py b/scrape_kit/storage.py
+index 139ee64..5cc67a5 100644
+--- a/scrape_kit/storage.py
++++ b/scrape_kit/storage.py
+@@ -9,6 +9,7 @@ from typing import Any
+ 
+ import pandas as pd
+ 
++from .dedup import DedupConfig
+ from .errors import StorageError
+ from .logger import get_logger
+ 
+@@ -227,13 +228,12 @@ class BaseStorageManager:
+         self,
+         input_dir: str,
+         table_name: str,
+-        end_process_query: str | None = None,
++        pre_merge_sql: str | list[str] | None = None,
++        post_merge_sql: str | list[str] | None = None,
+     ) -> MergeReport:
+         """Merge all .db chunks from input_dir into the main database.
+ 
+         Bulk-fetches data using SQLite ATTACH to a staging table.
+-        If end_process_query is provided, it must describe an INSERT INTO table_name SELECT ...
+-        pattern to move data from the staging table to the final destination.
+         """
+         db_files = self.get_chunk_files(input_dir, skip_file=self.db_path)
+         if not db_files:
+@@ -244,17 +244,22 @@ class BaseStorageManager:
+ 
+         with self.db_lock:
+             try:
+-                # 1. Prepare Staging
++                # 1. Pre-merge hooks
++                if pre_merge_sql:
++                    for sql in ([pre_merge_sql] if isinstance(pre_merge_sql, str) else pre_merge_sql):
++                        self.conn.execute(sql)
++                    self.conn.commit()
++
++                # 2. Prepare Staging
+                 self.create_staging_table(table_name, staging)
+ 
+-                # 2. Bulk Attach and Insert
++                # 3. Bulk Attach and Insert
+                 for db_file in db_files:
+-                    try:  # nosec PERF203
++                    try:
+                         logger.debug("Staging merge from %s...", os.path.basename(db_file))
+                         self.conn.execute("ATTACH DATABASE ? AS chunk", (db_file,))
+                         self.conn.execute(
+-                            f"INSERT INTO {_qi(staging)}"  # nosec B608
+-                            f" SELECT * FROM chunk.{_qi(table_name)}"
++                            f"INSERT INTO {_qi(staging)} SELECT * FROM chunk.{_qi(table_name)}"
+                         )
+                         self.conn.commit()
+                         self.conn.execute("DETACH DATABASE chunk")
+@@ -265,18 +270,20 @@ class BaseStorageManager:
+                         report.errors.append(f"{db_file}: {e}")
+                         try:
+                             self.conn.execute("DETACH DATABASE chunk")
+-                        except sqlite3.Error as detach_e:
+-                            logger.error("Error detaching after merge failure: %s", detach_e)
+-                            report.errors.append(f"{db_file} detach: {detach_e}")
++                        except sqlite3.Error:
++                            pass
+ 
+                 logger.info("Merged %d chunks into %s", report.processed_chunks, staging)
+ 
+-                # 3. Optional Deduplication/Finalization step
+-                if end_process_query:
+-                    logger.info("Running end process query...")
+-                    self.conn.execute(end_process_query)
+-                    self.conn.commit()
+-                    self.conn.execute(f"DROP TABLE IF EXISTS {_qi(staging)}")  # nosec B608
++                # 4. Finalize - move from staging to final
++                self.conn.execute(f"INSERT INTO {_qi(table_name)} SELECT * FROM {_qi(staging)}")
++                self.conn.execute(f"DROP TABLE IF EXISTS {_qi(staging)}")
++                self.conn.commit()
++
++                # 5. Post-merge hooks
++                if post_merge_sql:
++                    for sql in ([post_merge_sql] if isinstance(post_merge_sql, str) else post_merge_sql):
++                        self.conn.execute(sql)
+                     self.conn.commit()
+ 
+             except sqlite3.Error as e:
+@@ -543,65 +550,120 @@ class BufferedStorageManager(BaseStorageManager):
+             except Exception as e:
+                 raise StorageError(f"Buffer flush failed for {self._table_name}: {e}") from e
+ 
+-    def exists(
+-        self,
+-        table_name: str,
+-        column: str | None = None,
+-        value: Any | None = None,
+-    ) -> bool:
+-        if column is None:
+-            raise StorageError("exists requires either (table_name, column, value) or legacy (column, value)")
+-        if value is None:
+-            # Legacy buffered call shape: exists(column, value)
+-            column_name = table_name
+-            target_value = column
+-            table = self._table_name
+-        else:
+-            table = table_name
+-            column_name = column
+-            target_value = value
+-
+-        if table != self._table_name:
+-            raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
+-
++    def exists(self, column: str, value: Any) -> bool:
++        """Check if a value exists in the buffer or database."""
+         for row in self._pending_rows:
+-            if row.get(column_name) == target_value:
++            if row.get(column) == value:
+                 return True
+ 
+         df = self.ensure_buffer()
+         if df.empty:
+             return False
+-        return target_value in df[column_name].values
++        return value in df[column].values
+ 
+-    def insert(self, table_name: str | Mapping[str, Any], data: Mapping[str, Any] | None = None) -> None:
+-        """Insert a row into the buffer.
++    def insert(self, data: Mapping[str, Any]) -> None:
++        """Insert a row into the buffer."""
++        self._pending_rows.append(dict(data))
++        self._dirty = True
+ 
+-        Supports two call signatures:
+-          - insert(data) - legacy buffered style, uses the manager's bound table.
+-          - insert(table_name, data) - explicit table name.
++    def merge_with_dedup(
++        self,
++        input_dir: str,
++        dedup_config: DedupConfig | None = None,
++        pre_merge_sql: str | list[str] | None = None,
++        post_merge_sql: str | list[str] | None = None,
++        row_transform: Callable[[dict[str, Any]], Any] | None = None,
++        read_batch_size: int = 1000,
++        flush_every_rows: int = 5000,
++    ) -> MergeReport:
++        """Merge chunks with complex deduplication logic."""
++        if pre_merge_sql:
++            with self.db_lock:
++                for sql in ([pre_merge_sql] if isinstance(pre_merge_sql, str) else pre_merge_sql):
++                    self.conn.execute(sql)
++                self.conn.commit()
+ 
+-        Args:
+-            table_name: Table name (or data dict in legacy mode).
+-            data: Row data dictionary (or None in legacy mode).
++        # Invalidate buffer before starting merge to ensure we have fresh candidates
++        self._buffer = None
++        self._pending_rows.clear()
++        self._dirty = False
++
++        def _row_callback(row: sqlite3.Row) -> None:
++            data = dict(row)
++            if row_transform:
++                data = row_transform(data)
++                if data is None:
++                    return
++
++            if not dedup_config:
++                self.insert(data)
++                return
++
++            # Deduplication logic
++            candidates = self.ensure_buffer().to_dict("records")
++            if dedup_config.candidate_filter:
++                candidates = dedup_config.candidate_filter(candidates, data)
++
++            existing_match = None
++            for cand in candidates:
++                if dedup_config.similarity_fn(cand, data):
++                    existing_match = cand
++                    break
+ 
+-        Raises:
+-            StorageError: If the table name doesn't match the bound table.
+-        """
+-        if data is None:
+-            # Legacy buffered call shape: insert(data)
+-            table = self._table_name
+-            payload = table_name
+-            if not isinstance(payload, Mapping):
+-                raise StorageError("insert requires mapping payload")
+-        else:
+-            table = str(table_name)
+-            payload = data
+-
+-        if table != self._table_name:
+-            raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
+-
+-        self._pending_rows.append(dict(payload))
+-        self._dirty = True
++            if existing_match:
++                # Check source collision if configured
++                if dedup_config.source_field:
++                    new_source = data.get(dedup_config.source_field, [])
++                    if isinstance(new_source, str):
++                        new_source = json.loads(new_source)
++
++                    existing_sources = existing_match.get(dedup_config.source_field, [])
++                    if isinstance(existing_sources, str):
++                        existing_sources = json.loads(existing_sources)
++
++                    # Simple source key check
++                    new_keys = {s.get(dedup_config.source_key) for s in new_source}
++                    existing_keys = {s.get(dedup_config.source_key) for s in existing_sources}
++                    if not new_keys.isdisjoint(existing_keys):
++                        return  # Skip duplicate source
++
++                # Apply merge strategy
++                strategy = dedup_config.merge_strategy
++                if strategy == "update_missing":
++                    for k, v in data.items():
++                        if existing_match.get(k) is None:
++                            existing_match[k] = v
++                elif strategy == "prefer_new":
++                    existing_match.update(data)
++                elif strategy == "prefer_existing":
++                    pass
++                elif callable(strategy):
++                    merged = strategy(existing_match, data)
++                    existing_match.update(merged)
++
++                # Re-insert the updated match into buffer
++                # (Existing match is already in self._buffer, we just need to ensure it's written back)
++                self._dirty = True
++            else:
++                self.insert(data)
++
++        report = self.merge_row_by_row(
++            input_dir,
++            self._table_name,
++            _row_callback,
++            flush_callback=self.flush,
++            read_batch_size=read_batch_size,
++            flush_every_rows=flush_every_rows,
++        )
++
++        if post_merge_sql:
++            self.flush()
++            with self.db_lock:
++                for sql in ([post_merge_sql] if isinstance(post_merge_sql, str) else post_merge_sql):
++                    self.conn.execute(sql)
++                self.conn.commit()
++
++        return report
+ 
+     def clear_database(self, table_name: str) -> None:
+         """Clear SQL table and reset the buffer if it matches."""

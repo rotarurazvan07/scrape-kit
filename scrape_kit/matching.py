@@ -1,12 +1,21 @@
 import re
 import unicodedata
-from typing import Any
+from typing import Any, Callable
 
 from rapidfuzz import fuzz
 
 from .logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def make_similarity_fn(config: dict) -> Callable[[str, str], bool]:
+    """
+    Returns a plain callable (a, b) -> bool from a similarity config dict.
+    Useful for passing directly to DedupConfig.similarity_fn.
+    """
+    engine = SimilarityEngine(config)
+    return lambda a, b: engine.is_similar(a, b)[0]
 
 
 class SimilarityEngine:
@@ -161,7 +170,22 @@ class SimilarityEngine:
 
         # 4. Acronym stripping
         for k, v in self.acronyms.items():
-            name = self._replace_acronym(name, k, v)
+            token = k.strip().lower()
+            if not token:
+                continue
+
+            # Determine position based on whitespace in the key
+            if k.startswith(" ") and k.endswith(" "):
+                pattern = rf"\b{re.escape(token)}\b"
+            elif k.startswith(" "):
+                pattern = rf"\b{re.escape(token)}$"
+            elif k.endswith(" "):
+                pattern = rf"^{re.escape(token)}\b"
+            else:
+                pattern = rf"\b{re.escape(token)}\b"
+
+            name = re.sub(pattern, v, name)
+
         name = " ".join(name.split())
 
         # 5. Synonym pass 2
@@ -171,38 +195,6 @@ class SimilarityEngine:
 
         self._norm_cache[raw] = name
         return name
-
-    def _replace_acronym(self, name: str, key: str, replacement: str) -> str:
-        """Apply one acronym substitution respecting word boundaries.
-
-        Keys with leading/trailing spaces encode positional intent:
-          ``"fc "``  → strip only at the *start* of the string
-          ``" fc"``  → strip only at the *end*
-          ``" de "`` → strip only when surrounded by spaces (mid-word safe)
-        """
-        token = " ".join(key.split()).lower()
-        if not token:
-            return name
-
-        repl = f" {replacement.strip()} " if replacement.strip() else " "
-
-        if key.startswith(" ") and key.endswith(" "):
-            # Interior word – must be surrounded by non-word boundaries
-            pattern = rf"(?<!\S){re.escape(token)}(?!\S)"
-        elif key.startswith(" "):
-            # Suffix
-            pattern = rf"(?<!\S){re.escape(token)}$"
-        elif key.endswith(" "):
-            # Prefix
-            pattern = rf"^{re.escape(token)}(?!\S)"
-        elif re.search(r"\W$", key):
-            pattern = rf"^{re.escape(token)}"
-        elif re.search(r"^\W", key):
-            pattern = rf"{re.escape(token)}$"
-        else:
-            pattern = rf"(?<!\w){re.escape(token)}(?!\w)"
-
-        return re.sub(pattern, repl, name)
 
     # ------------------------------------------------------------------
     # Token helpers

@@ -65,50 +65,50 @@ class SettingsManager:
                 # If path logic fails, just put it at root
                 self.settings[yaml_file.stem] = data
 
-    def get(self, *keys: str) -> Any | None:
+    def reload(self) -> None:
+        """Explicitly reload all YAML files from the directory tree."""
+        self._load()
+
+    def get(self, *keys: str, default: Any = None) -> Any:
         """Fetch a configuration value using a path of keys.
 
-        The method reloads settings before each fetch to ensure fresh data.
-        If the exact path is not found, it performs a depth-first search for
-        the final key as a fallback.
+        Args:
+            *keys: A sequence of keys representing the path to the value.
+            default: Value to return if the path is not found.
+
+        Returns:
+            The value if found, else default.
+        """
+        if not keys:
+            return self.settings
+
+        node = self.settings
+        for key in keys:
+            if not isinstance(node, dict):
+                return default
+            node = node.get(key)
+            if node is None:
+                return default
+
+        return node
+
+    def get_required(self, *keys: str) -> Any:
+        """Fetch a configuration value or raise SettingsError if not found.
 
         Args:
             *keys: A sequence of keys representing the path to the value.
 
         Returns:
-            The value if found, None otherwise.
+            The value if found.
 
         Raises:
-            SettingsError: If no keys are provided.
+            SettingsError: If the value is not found.
         """
-        if not keys:
-            raise SettingsError("At least one key must be provided")
-
-        self._load()
-
-        node = self.settings
-        for key in keys:
-            if not isinstance(node, dict):
-                break
-            node = node.get(key)
-            if node is None:
-                break
-        else:
-            if node is not None:
-                return node
-
-        # Fallback to a global depth-first search for the last key
-        def _search(d: dict[str, Any], target: str) -> Any | None:
-            if target in d:
-                return d[target]
-            for v in d.values():
-                if isinstance(v, dict):
-                    result = _search(v, target)
-                    if result is not None:
-                        return result
-            return None
-
-        return _search(self.settings, keys[-1])
+        val = self.get(*keys)
+        if val is None:
+            path = " -> ".join(keys)
+            raise SettingsError(f"Missing required setting: {path}")
+        return val
 
     def _resolve_target(self, name: str, subpath: str | Path | None = None) -> Path:
         """Resolve the full path for a settings file.

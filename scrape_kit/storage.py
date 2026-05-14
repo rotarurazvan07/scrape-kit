@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 
+from .dedup import DedupConfig
 from .errors import StorageError
 from .logger import get_logger
 
@@ -227,13 +228,12 @@ class BaseStorageManager:
         self,
         input_dir: str,
         table_name: str,
-        end_process_query: str | None = None,
+        pre_merge_sql: str | list[str] | None = None,
+        post_merge_sql: str | list[str] | None = None,
     ) -> MergeReport:
         """Merge all .db chunks from input_dir into the main database.
 
         Bulk-fetches data using SQLite ATTACH to a staging table.
-        If end_process_query is provided, it must describe an INSERT INTO table_name SELECT ...
-        pattern to move data from the staging table to the final destination.
         """
         db_files = self.get_chunk_files(input_dir, skip_file=self.db_path)
         if not db_files:
@@ -244,17 +244,22 @@ class BaseStorageManager:
 
         with self.db_lock:
             try:
-                # 1. Prepare Staging
+                # 1. Pre-merge hooks
+                if pre_merge_sql:
+                    for sql in ([pre_merge_sql] if isinstance(pre_merge_sql, str) else pre_merge_sql):
+                        self.conn.execute(sql)
+                    self.conn.commit()
+
+                # 2. Prepare Staging
                 self.create_staging_table(table_name, staging)
 
-                # 2. Bulk Attach and Insert
+                # 3. Bulk Attach and Insert
                 for db_file in db_files:
-                    try:  # nosec PERF203
+                    try:
                         logger.debug("Staging merge from %s...", os.path.basename(db_file))
                         self.conn.execute("ATTACH DATABASE ? AS chunk", (db_file,))
                         self.conn.execute(
-                            f"INSERT INTO {_qi(staging)}"  # nosec B608
-                            f" SELECT * FROM chunk.{_qi(table_name)}"
+                            f"INSERT INTO {_qi(staging)} SELECT * FROM chunk.{_qi(table_name)}"
                         )
                         self.conn.commit()
                         self.conn.execute("DETACH DATABASE chunk")
@@ -265,18 +270,20 @@ class BaseStorageManager:
                         report.errors.append(f"{db_file}: {e}")
                         try:
                             self.conn.execute("DETACH DATABASE chunk")
-                        except sqlite3.Error as detach_e:
-                            logger.error("Error detaching after merge failure: %s", detach_e)
-                            report.errors.append(f"{db_file} detach: {detach_e}")
+                        except sqlite3.Error:
+                            pass
 
                 logger.info("Merged %d chunks into %s", report.processed_chunks, staging)
 
-                # 3. Optional Deduplication/Finalization step
-                if end_process_query:
-                    logger.info("Running end process query...")
-                    self.conn.execute(end_process_query)
-                    self.conn.commit()
-                    self.conn.execute(f"DROP TABLE IF EXISTS {_qi(staging)}")  # nosec B608
+                # 4. Finalize - move from staging to final
+                self.conn.execute(f"INSERT INTO {_qi(table_name)} SELECT * FROM {_qi(staging)}")
+                self.conn.execute(f"DROP TABLE IF EXISTS {_qi(staging)}")
+                self.conn.commit()
+
+                # 5. Post-merge hooks
+                if post_merge_sql:
+                    for sql in ([post_merge_sql] if isinstance(post_merge_sql, str) else post_merge_sql):
+                        self.conn.execute(sql)
                     self.conn.commit()
 
             except sqlite3.Error as e:
@@ -543,65 +550,132 @@ class BufferedStorageManager(BaseStorageManager):
             except Exception as e:
                 raise StorageError(f"Buffer flush failed for {self._table_name}: {e}") from e
 
-    def exists(
-        self,
-        table_name: str,
-        column: str | None = None,
-        value: Any | None = None,
-    ) -> bool:
-        if column is None:
-            raise StorageError("exists requires either (table_name, column, value) or legacy (column, value)")
-        if value is None:
-            # Legacy buffered call shape: exists(column, value)
-            column_name = table_name
-            target_value = column
-            table = self._table_name
-        else:
-            table = table_name
-            column_name = column
-            target_value = value
-
-        if table != self._table_name:
-            raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
-
+    def exists(self, column: str, value: Any) -> bool:
+        """Check if a value exists in the buffer or database."""
         for row in self._pending_rows:
-            if row.get(column_name) == target_value:
+            if row.get(column) == value:
                 return True
 
         df = self.ensure_buffer()
         if df.empty:
             return False
-        return target_value in df[column_name].values
+        return value in df[column].values
 
-    def insert(self, table_name: str | Mapping[str, Any], data: Mapping[str, Any] | None = None) -> None:
-        """Insert a row into the buffer.
-
-        Supports two call signatures:
-          - insert(data) - legacy buffered style, uses the manager's bound table.
-          - insert(table_name, data) - explicit table name.
-
-        Args:
-            table_name: Table name (or data dict in legacy mode).
-            data: Row data dictionary (or None in legacy mode).
-
-        Raises:
-            StorageError: If the table name doesn't match the bound table.
-        """
-        if data is None:
-            # Legacy buffered call shape: insert(data)
-            table = self._table_name
-            payload = table_name
-            if not isinstance(payload, Mapping):
-                raise StorageError("insert requires mapping payload")
-        else:
-            table = str(table_name)
-            payload = data
-
-        if table != self._table_name:
-            raise StorageError(f"BufferedStorageManager is bound to table '{self._table_name}', got '{table}'")
-
-        self._pending_rows.append(dict(payload))
+    def insert(self, data: Mapping[str, Any]) -> None:
+        """Insert a row into the buffer."""
+        self._pending_rows.append(dict(data))
         self._dirty = True
+
+    def upsert_with_dedup(self, data: Mapping[str, Any], dedup_config: DedupConfig | None = None) -> None:
+        """Insert or update a single row using deduplication config."""
+        data_dict = dict(data)
+        if not dedup_config:
+            self.insert(data_dict)
+            return
+
+        df = self.ensure_buffer()
+        if df.empty:
+            self.insert(data_dict)
+            return
+
+        # Keep the index so we know which row to update in self._buffer
+        candidates = df.reset_index().to_dict("records")
+        if dedup_config.candidate_filter:
+            candidates = dedup_config.candidate_filter(candidates, data_dict)
+
+        existing_match = None
+        for cand in candidates:
+            if dedup_config.similarity_fn(cand, data_dict):
+                existing_match = cand
+                break
+
+        if existing_match:
+            idx = existing_match.pop("index")
+            # Check source collision if configured
+            if dedup_config.source_field:
+                new_source = data_dict.get(dedup_config.source_field) or []
+                if isinstance(new_source, str):
+                    new_source = json.loads(new_source)
+
+                existing_sources = existing_match.get(dedup_config.source_field) or []
+                if isinstance(existing_sources, str):
+                    existing_sources = json.loads(existing_sources)
+
+                # Simple source key check
+                new_keys = {s.get(dedup_config.source_key) for s in new_source if s.get(dedup_config.source_key)}
+                existing_keys = {s.get(dedup_config.source_key) for s in existing_sources if s.get(dedup_config.source_key)}
+                if new_keys and existing_keys and not new_keys.isdisjoint(existing_keys):
+                    return  # Skip duplicate source
+
+            # Apply merge strategy
+            strategy = dedup_config.merge_strategy
+            if strategy == "update_missing":
+                for k, v in data_dict.items():
+                    val = existing_match.get(k)
+                    if val is None or (isinstance(val, float) and pd.isna(val)):
+                        self._buffer.at[idx, k] = v
+            elif strategy == "prefer_new":
+                for k, v in data_dict.items():
+                    self._buffer.at[idx, k] = v
+            elif strategy == "prefer_existing":
+                pass
+            elif callable(strategy):
+                merged = strategy(existing_match, data_dict)
+                for k, v in merged.items():
+                    self._buffer.at[idx, k] = v
+
+            self._dirty = True
+        else:
+            self.insert(data_dict)
+
+    def merge_with_dedup(
+        self,
+        input_dir: str,
+        dedup_config: DedupConfig | None = None,
+        pre_merge_sql: str | list[str] | None = None,
+        post_merge_sql: str | list[str] | None = None,
+        row_transform: Callable[[dict[str, Any]], Any] | None = None,
+        read_batch_size: int = 1000,
+        flush_every_rows: int = 5000,
+    ) -> MergeReport:
+        """Merge chunks with complex deduplication logic."""
+        if pre_merge_sql:
+            with self.db_lock:
+                for sql in ([pre_merge_sql] if isinstance(pre_merge_sql, str) else pre_merge_sql):
+                    self.conn.execute(sql)
+                self.conn.commit()
+
+        # Invalidate buffer before starting merge to ensure we have fresh candidates
+        self._buffer = None
+        self._pending_rows.clear()
+        self._dirty = False
+
+        def _row_callback(row: sqlite3.Row) -> None:
+            data = dict(row)
+            if row_transform:
+                data = row_transform(data)
+                if data is None:
+                    return
+
+            self.upsert_with_dedup(data, dedup_config)
+
+        report = self.merge_row_by_row(
+            input_dir,
+            self._table_name,
+            _row_callback,
+            flush_callback=self.flush,
+            read_batch_size=read_batch_size,
+            flush_every_rows=flush_every_rows,
+        )
+
+        if post_merge_sql:
+            self.flush()
+            with self.db_lock:
+                for sql in ([post_merge_sql] if isinstance(post_merge_sql, str) else post_merge_sql):
+                    self.conn.execute(sql)
+                self.conn.commit()
+
+        return report
 
     def clear_database(self, table_name: str) -> None:
         """Clear SQL table and reset the buffer if it matches."""
