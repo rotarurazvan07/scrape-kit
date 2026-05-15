@@ -593,12 +593,16 @@ class BufferedStorageManager(BaseStorageManager):
             idx = existing_match.pop("index")
             # Check source collision if configured
             if dedup_config.source_field:
-                new_source = data_dict.get(dedup_config.source_field) or []
-                if isinstance(new_source, str):
+                new_source = data_dict.get(dedup_config.source_field)
+                if new_source is None or (isinstance(new_source, float) and pd.isna(new_source)):
+                    new_source = []
+                elif isinstance(new_source, str):
                     new_source = json.loads(new_source)
 
-                existing_sources = existing_match.get(dedup_config.source_field) or []
-                if isinstance(existing_sources, str):
+                existing_sources = existing_match.get(dedup_config.source_field)
+                if existing_sources is None or (isinstance(existing_sources, float) and pd.isna(existing_sources)):
+                    existing_sources = []
+                elif isinstance(existing_sources, str):
                     existing_sources = json.loads(existing_sources)
 
                 # Simple source key check
