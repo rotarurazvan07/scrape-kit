@@ -541,6 +541,9 @@ class BufferedStorageManager(BaseStorageManager):
                     # DELETE + append preserves custom schema/indexes/triggers
                     self.conn.execute(f"DELETE FROM {_qi(self._table_name)}")  # nosec B608
                     if not df.empty:
+                        # Drop auto-increment id column to avoid UNIQUE constraint violations
+                        if "id" in df.columns:
+                            df = df.drop(columns=["id"])
                         df.to_sql(self._table_name, self.conn, if_exists="append", index=False)
                 else:
                     # replace drops and recreates the table (standard pandas behavior)
