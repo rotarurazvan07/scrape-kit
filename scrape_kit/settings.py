@@ -80,17 +80,39 @@ class SettingsManager:
             The value if found, else default.
         """
         if not keys:
-            return self.settings
+            raise SettingsError("At least one key must be provided")
 
+        # Reload before fetch
+        self._load()
+
+        # Try exact path traversal first
         node = self.settings
         for key in keys:
             if not isinstance(node, dict):
-                return default
+                break
             node = node.get(key)
             if node is None:
-                return default
+                break
+        else:
+            # Full path matched
+            return node
 
-        return node
+        # Fallback: depth-first search for the last key
+        last_key = keys[-1]
+        result = self._dfs_search(self.settings, last_key)
+        return result if result is not None else default
+
+    def _dfs_search(self, node: Any, target_key: str) -> Any:
+        """Recursively search for a key in nested dicts."""
+        if not isinstance(node, dict):
+            return None
+        if target_key in node:
+            return node[target_key]
+        for value in node.values():
+            result = self._dfs_search(value, target_key)
+            if result is not None:
+                return result
+        return None
 
     def get_required(self, *keys: str) -> Any:
         """Fetch a configuration value or raise SettingsError if not found.

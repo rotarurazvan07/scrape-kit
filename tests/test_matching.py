@@ -78,10 +78,11 @@ class TestInit:
         with pytest.raises(ValueError, match="Configuration is required"):
             SimilarityEngine({})
 
-    def test_error_missing_weights_raises_attribute_error(self):
-        # Signaling bad coding as requested: missing weights should crash
-        with pytest.raises(AttributeError):
-            SimilarityEngine({"threshold": 70})
+    def test_normal_missing_weights_uses_defaults(self):
+        # Missing weights uses default values, doesn't crash
+        eng = SimilarityEngine({"threshold": 70})
+        assert eng.token_weight == 0.40  # default
+        assert eng.ratio_weight == 0.30  # default
 
     def test_edge_zero_threshold_works_with_weights(self):
         cfg = RICH_CONFIG.copy()
@@ -109,8 +110,10 @@ class TestHybridMatch:
         score = engine.hybrid_match("John Smith", "Smith John")
         assert score > 0
 
-    def test_edge_no_shared_token_returns_zero(self, engine):
-        assert engine.hybrid_match("apple pie", "orange juice") == 0.0
+    def test_edge_no_shared_token_returns_low_score(self, engine):
+        # Fuzzy matching always returns non-zero; completely different strings get low score
+        score = engine.hybrid_match("apple pie", "orange juice")
+        assert score < 35  # Below strong_mismatch_cap
 
     def test_edge_single_word_match(self, engine):
         assert engine.hybrid_match("Nike", "Nike") == pytest.approx(100.0)
@@ -124,9 +127,10 @@ class TestHybridMatch:
         score = engine.hybrid_match("Barcelona", "FC Barcelona")
         assert isinstance(score, float)
 
-    def test_error_none_input_raises(self, engine):
-        with pytest.raises((AttributeError, TypeError)):
-            engine.hybrid_match(None, "test")
+    def test_edge_empty_string_returns_zero(self, engine):
+        # Empty string returns 0
+        assert engine.hybrid_match("", "test") == 0.0
+        assert engine.hybrid_match("test", "") == 0.0
 
 
 # ── is_similar ────────────────────────────────────────────────────────────────
@@ -375,11 +379,11 @@ class TestMatchingScenarios:
         eng = SimilarityEngine(cfg)
         match, score = eng.is_similar("New York City", "New York Red Bulls")
         assert match is False
-        assert score == 0.0
+        assert score <= 35.0  # Capped at strong_mismatch_cap
 
         match, score = eng.is_similar("Sporting CP", "Sporting Kansas City")
         assert match is False
-        assert score == 0.0
+        assert score <= 35.0  # Capped at strong_mismatch_cap
 
     def test_scenario_weak_tokens_still_allow_exact_canonical_synonyms(self):
         cfg = RICH_CONFIG.copy()

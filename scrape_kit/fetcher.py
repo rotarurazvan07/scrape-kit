@@ -225,8 +225,12 @@ class WebFetcher:
 
     def is_blocked(self, page: Page) -> bool:
         """Check if the Page content indicates blocking."""
-        html = page.raw_html.lower()
-        return any(indicator.lower() in html for indicator in self.block_indicators)
+        html = page.raw_html
+        # Empty HTML is always considered blocked
+        if not html or not html.strip():
+            return True
+        html_lower = html.lower()
+        return any(indicator.lower() in html_lower for indicator in self.block_indicators)
 
     def browser(self, headless: bool = True, solve_cloudflare: bool = False, **kwargs: Any) -> InteractiveSession:
         """Create an InteractiveSession."""

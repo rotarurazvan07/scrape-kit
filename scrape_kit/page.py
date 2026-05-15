@@ -9,15 +9,16 @@ from .errors import ParserError
 
 
 class Page:
-    def __init__(self, soup: BeautifulSoup | Tag):
+    def __init__(self, soup: BeautifulSoup | Tag, raw_html: str | None = None):
         self._soup = soup
+        self._raw_html = raw_html
 
     @classmethod
     def from_html(cls, html: str) -> "Page":
         try:
             # Use lxml for speed, fallback to html.parser if needed
             soup = BeautifulSoup(html, "lxml")
-            return cls(soup)
+            return cls(soup, html)  # Store original HTML
         except Exception as e:
             raise ParserError(f"Failed to parse HTML: {e}") from e
 
@@ -106,6 +107,9 @@ class Page:
     @property
     def raw_html(self) -> str:
         """Get raw HTML string."""
+        # Return original HTML if available, otherwise serialize soup
+        if self._raw_html is not None:
+            return self._raw_html
         return str(self._soup)
 
     @property

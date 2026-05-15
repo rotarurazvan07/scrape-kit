@@ -285,6 +285,8 @@ class SimilarityEngine:
             + self.ratio_weight * ratio
             + self.partial_weight * partial_contribution
         )
+        # Cap at 100 - weights may sum to > 1.0 in some configs
+        base_score = min(base_score, 100.0)
 
         # --- Strong-token enforcement ----------------------------------------
         if strong1 and strong2:
