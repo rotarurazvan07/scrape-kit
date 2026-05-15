@@ -11,6 +11,7 @@ dependencies = [
     "rapidfuzz",
     "scrapling[fetchers]",
     "pandas",
+    "beautifulsoup4",
 ]
 [tool.setuptools.packages.find]
 # Discovers scrape_kit/ automatically.
