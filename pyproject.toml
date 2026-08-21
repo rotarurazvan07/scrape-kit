@@ -7,10 +7,10 @@ name = "scrape-kit"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "PyYAML",
-    "rapidfuzz",
-    "scrapling[fetchers]",
-    "pandas",
+    "PyYAML==6.0.3",
+    "rapidfuzz==3.14.5",
+    "scrapling[fetchers]==0.4.14",
+    "pandas==3.0.5",
 ]
 [tool.setuptools.packages.find]
 # Discovers scrape_kit/ automatically.
