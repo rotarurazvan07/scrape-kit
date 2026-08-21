@@ -154,4 +154,4 @@ tests/test_storage.py:901:89: E501 Line too long (94 > 88)
 tests/test_storage.py:919:89: E501 Line too long (96 > 88)
 tests/test_storage.py:981:89: E501 Line too long (99 > 88)
 tests/test_storage.py:992:89: E501 Line too long (99 > 88)
-Found 157 errors (1 fixed, 156 remaining).
+Found 156 errors.
