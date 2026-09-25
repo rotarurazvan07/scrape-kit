@@ -525,7 +525,10 @@ class TestInteractiveSessionFetch:
         assert hasattr(result, "html_content")
         assert result.html_content == "<html>loaded</html>"
         mock_page.goto.assert_called_once()
-        mock_page.wait_for_timeout.assert_called_once_with(2000)
+        # Post-rework flow (issue #3): the post-navigation settle wait runs as
+        # an injected MutationObserver script — wait_for_timeout is never used.
+        mock_page.wait_for_timeout.assert_not_called()
+        mock_page.evaluate.assert_called_once()
 
     def test_edge_fetch_without_enter_raises_runtime_error(self):
         mock_session = MagicMock()
@@ -590,11 +593,28 @@ class TestInteractiveSessionHelpers:
         session.wait_for_function("() => window.ready", timeout=10000)
         mock_page.wait_for_function.assert_called_once_with("() => window.ready", timeout=10000)
 
-    def test_normal_click_delegates(self):
+    def test_normal_click_embeds_idle_and_hard_cap_in_js(self):
         mock_session, mock_page = make_interactive_session()
         session = self._started(mock_session, mock_page)
-        session.click(".btn", timeout=3000)
-        mock_page.click.assert_called_once_with(".btn", timeout=3000)
+        # hard_cap ≠ 6×idle (the default) — proves the explicit override is honored.
+        session.click(".btn", idle_ms=2000, hard_cap_ms=15000)
+        # Post-rework contract (issue #3): click() injects a MutationObserver
+        # settle script through page.evaluate — page.click is never used.
+        mock_page.click.assert_not_called()
+        script = mock_page.evaluate.call_args[0][0]
+        assert "var idle_ms = 2000;" in script
+        assert "var hard_cap_ms = 15000;" in script
+        # The script must actually locate and dispatch a click on the target.
+        assert "document.querySelector('.btn')" in script
+        assert "dispatchEvent(new MouseEvent('click'" in script
+
+    def test_normal_click_hard_cap_defaults_to_six_times_idle(self):
+        mock_session, mock_page = make_interactive_session()
+        session = self._started(mock_session, mock_page)
+        session.click(".btn", idle_ms=5000)
+        script = mock_page.evaluate.call_args[0][0]
+        assert "var idle_ms = 5000;" in script
+        assert "var hard_cap_ms = 30000;" in script  # default = 6 × idle_ms
 
     def test_normal_wait_for_timeout_delegates(self):
         mock_session, mock_page = make_interactive_session()

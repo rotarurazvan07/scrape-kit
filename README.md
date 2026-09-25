@@ -7,7 +7,7 @@ A personal high-performance Python scraping framework. Handles HTTP fetching, st
 | Stage | Description | Status |
 |-------|-------------|--------|
 | **Auto-fix** | Removes unused imports, modernises syntax, adds type annotations, sorts imports, formats code, fixes lint/perf anti-patterns | ✅ Auto-commits |
-| **Tests** | Runs test suite across Python 3.10, 3.11, 3.12 with coverage reporting | 🔒 Gate |
+| **Tests** | Runs test suite across Python 3.11, 3.12 with coverage reporting | 🔒 Gate |
 | **Audit** | Security SAST (bandit), pattern security (semgrep), type checking (mypy), CVE scan (pip-audit), complexity (radon), dead code (vulture), docstring coverage (interrogate), secret detection (detect-secrets), workflow validation (actionlint) | ℹ️ Advisory |
 
 ---

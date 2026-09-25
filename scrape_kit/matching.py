@@ -56,6 +56,10 @@ class SimilarityEngine:
                               strong_mismatch_cap (default 35)  – score ceiling when strong
                                                                   tokens are present but disjoint
         threshold         : float – minimum score for ``is_similar`` to return True (default 65).
+
+        A weight set with negative entries, or whose sum deviates from 1.0 by more
+        than 0.25, raises ``ValueError`` at construction; upward drift is absorbed
+        by the 0-100 score clamp applied in ``hybrid_match``.
         """
         if not cfg:
             raise ValueError("Configuration is required for SimilarityEngine")
@@ -71,6 +75,21 @@ class SimilarityEngine:
         self.ratio_weight: float = w.get("ratio", 0.30)
         self.partial_weight: float = w.get("partial", 0.10)
         self.strong_mismatch_cap: float = w.get("strong_mismatch_cap", 35.0)
+
+        # Weight-sum sanity check (explicit-errors philosophy): weights that
+        # drift far from 1.0 silently rescale every score, so reject them at
+        # construction time instead of letting consumer thresholds shift.
+        weight_sum = self.token_weight + self.substr_weight + self.phonetic_weight + self.ratio_weight + self.partial_weight
+        # Negative weights can sum to ~1.0 while corrupting individual metric
+        # contributions (one metric punished, another inflated) — reject them
+        # alongside the sum check (explicit-errors philosophy).
+        if min(self.token_weight, self.substr_weight, self.phonetic_weight, self.ratio_weight, self.partial_weight) < 0:
+            raise ValueError("Scoring weights must be non-negative")
+        if abs(weight_sum - 1.0) > 0.25:
+            raise ValueError(
+                "Scoring weights must sum to approximately 1.0"
+                f" (got {weight_sum:.2f}); fix the 'weights' config or omit it to use the defaults"
+            )
 
         self.similarity_threshold: float = cfg.get("threshold", 65.0)
 
@@ -256,7 +275,12 @@ class SimilarityEngine:
 
         Phonetic overlap in the cap check means a typo like "sevlla" vs "sevilla"
         (same Soundex S140) still passes even though the tokens aren't identical.
+
+        Raises:
+            ValueError: If either input is not a string.
         """
+        if not isinstance(s1, str) or not isinstance(s2, str):
+            raise ValueError(f"hybrid_match expects two strings, got {type(s1).__name__} and {type(s2).__name__}")
         if not s1 or not s2:
             return 0.0
 
@@ -293,6 +317,11 @@ class SimilarityEngine:
             + self.ratio_weight * ratio
             + self.partial_weight * partial_contribution
         )
+
+        # Clamp to the documented 0-100 range: weight sets drifting slightly
+        # above 1.0 (e.g. the documented example config) must never produce
+        # scores above 100, and no metric combination can go below 0.
+        base_score = max(0.0, min(100.0, base_score))
 
         # --- Strong-token enforcement ----------------------------------------
         if strong1 and strong2:
@@ -346,7 +375,12 @@ class SimilarityEngine:
 
         Returns:
             Tuple of ``(bool, float)`` – True when score > threshold.
+
+        Raises:
+            ValueError: If either input is not a string.
         """
+        if not isinstance(s1, str) or not isinstance(s2, str):
+            raise ValueError(f"is_similar expects two strings, got {type(s1).__name__} and {type(s2).__name__}")
         # Canonical cache key: order-independent
         cache_key = (min(s1, s2), max(s1, s2))
         if cache_key in self._result_cache:

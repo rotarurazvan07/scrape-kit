@@ -12,7 +12,7 @@ concurrency:
 
 env:
   # Python configuration
-  PYTHON_VERSION: "3.10"
+  PYTHON_VERSION: "3.11"
   
   # Source directories (space-separated for tools like mypy, radon, etc.)
   SRC_DIR: "scrape_kit"
@@ -57,10 +57,10 @@ jobs:
           # Process all source and test directories
           autoflake --in-place --recursive             --remove-all-unused-imports --remove-unused-variables             --exclude .venv,__pycache__             $SRC_DIR $TEST_DIR
 
-      - name: pyupgrade — modernise syntax to Python 3.10+
+      - name: pyupgrade — modernise syntax to Python 3.11+
         run: |
           # Process all source and test directories
-          find $SRC_DIR $TEST_DIR -name "*.py" |             xargs pyupgrade --py310-plus || true
+          find $SRC_DIR $TEST_DIR -name "*.py" |             xargs pyupgrade --py311-plus || true
 
       - name: autotyping — infer trivial return type annotations
         run: |
@@ -75,7 +75,7 @@ jobs:
       - name: ruff format
         run: |
           # Process all source and test directories
-          ruff format --line-length 127 --target-version py310             $SRC_DIR $TEST_DIR
+          ruff format --line-length 127 --target-version py311             $SRC_DIR $TEST_DIR
 
       - name: ruff lint --fix
         run: |
@@ -113,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -317,7 +317,7 @@ jobs:
         run: |
           echo "── Type Checking ─────────────────────────────────────────────"
           # Run mypy on all source directories at once
-          mypy $SRC_DIR             --strict             --ignore-missing-imports             --python-version 3.10             --no-error-summary 2>&1 | tee mypy-output.txt || true
+          mypy $SRC_DIR             --strict             --ignore-missing-imports             --python-version 3.11             --no-error-summary 2>&1 | tee mypy-output.txt || true
           MYPY_ERRORS=$(grep -c "error:" mypy-output.txt 2>/dev/null || echo "0")
           MYPY_ERRORS=$(echo "$MYPY_ERRORS" | tr -d '[:space:]')
           echo "mypy_errors=${MYPY_ERRORS:-0}" >> "$GITHUB_OUTPUT"
@@ -485,7 +485,7 @@ jobs:
             fi
             echo ""
             echo "── TEST RESULTS ──────────────────────────────────────────"
-            for py in 3.10 3.11 3.12; do
+            for py in 3.11 3.12; do
               if [ -f "artifacts/test-summary-py${py}/test-summary-py${py}.md" ]; then
                 cat "artifacts/test-summary-py${py}/test-summary-py${py}.md"
               else
