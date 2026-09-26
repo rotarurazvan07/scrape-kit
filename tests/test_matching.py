@@ -13,33 +13,16 @@ import pytest
 
 from scrape_kit.matching import SimilarityEngine
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+from conftest import (
+    RICH_CONFIG,
+    THRESHOLD_DEFAULT,
+    THRESHOLD_EXACT,
+    THRESHOLD_HIGH,
+    THRESHOLD_LENIENT,
+    THRESHOLD_MODERATE,
+    make_matching_cfg,
+)
 
-
-RICH_CONFIG = {
-    "threshold": 65,
-    "acronyms": {
-        "fc": "football club",
-        "utd": "united",
-        "afc": "athletic football club",
-    },
-    "synonyms": {
-        "man city": "manchester city",
-        "barca": "fc barcelona",
-    },
-    "weights": {
-        "token": 0.5,
-        "substr": 0.1,
-        "phonetic": 0.1,
-        "ratio": 0.3,
-    },
-}
-
-
-@pytest.fixture
-def engine():
-    """Default engine — pre-loaded with rich config."""
-    return SimilarityEngine(RICH_CONFIG)
 
 
 @pytest.fixture
@@ -54,7 +37,7 @@ def rich_engine():
 class TestInit:
     def test_normal_full_config_applied(self):
         cfg = {
-            "threshold": 80,
+            "threshold": THRESHOLD_HIGH,
             "acronyms": {"nba": "national basketball association"},
             "synonyms": {"la": "los angeles"},
             "weights": {"token": 0.6, "substr": 0.1, "phonetic": 0.1, "ratio": 0.2},
@@ -91,7 +74,7 @@ class TestInit:
     def test_error_weight_sum_deviation_raises_value_error(self):
         # Issue #1: weight sets drifting far from 1.0 silently rescale every
         # score — reject them at construction (explicit-errors philosophy).
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["weights"] = {"token": 0.9, "substr": 0.3, "phonetic": 0.1, "ratio": 0.3}
         with pytest.raises(ValueError, match="weights must sum to approximately 1.0"):
             SimilarityEngine(cfg)
@@ -99,7 +82,7 @@ class TestInit:
     def test_error_negative_weight_raises_value_error(self):
         # Review finding: negative weights can sum to exactly 1.0 while
         # corrupting individual metric contributions — must still be rejected.
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["weights"] = {"token": -0.5, "substr": 1.5, "phonetic": 0.0, "ratio": 0.0, "partial": 0.0}
         with pytest.raises(ValueError, match="weights must be non-negative"):
             SimilarityEngine(cfg)
@@ -112,7 +95,7 @@ class TestInit:
         assert score == pytest.approx(100.0)
 
     def test_edge_zero_threshold_works_with_weights(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["threshold"] = 0
         eng = SimilarityEngine(cfg)
         match, _ = eng.is_similar("apple", "orange")
@@ -193,8 +176,8 @@ class TestIsSimilar:
         assert score == pytest.approx(100.0)
 
     def test_edge_diacritics_stripped_before_comparison(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["threshold"] = 70
+        cfg = make_matching_cfg()
+        cfg["threshold"] = THRESHOLD_MODERATE
         eng = SimilarityEngine(cfg)
         match, _ = eng.is_similar("Müller", "Muller")
         assert match is True
@@ -244,14 +227,14 @@ class TestNormalize:
         assert engine._normalize("hello world") == "hello world"
 
     def test_edge_synonym_exact_match_replaced(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["synonyms"] = {"man utd": "manchester united"}
         cfg["acronyms"] = {}  # Clear to avoid interference
         eng = SimilarityEngine(cfg)
         assert eng._normalize("Man Utd") == "manchester united"
 
     def test_edge_synonym_partial_match_not_replaced(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["synonyms"] = {"man utd": "manchester united"}
         cfg["acronyms"] = {}  # Clear to avoid interference
         eng = SimilarityEngine(cfg)
@@ -260,25 +243,25 @@ class TestNormalize:
         assert result == "man utd fc"
 
     def test_normal_acronym_token_replaced(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["acronyms"] = {"fc": "football club"}
         eng = SimilarityEngine(cfg)
         assert "football club" in eng._normalize("Liverpool FC")
 
     def test_edge_acronym_does_not_replace_inside_word(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["acronyms"] = {"al ": "", "real ": ""}
         eng = SimilarityEngine(cfg)
         assert eng._normalize("Real Betis") == "betis"
 
     def test_normal_acronym_prefix_with_separator_replaced(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["acronyms"] = {"al ": "", "al-": ""}
         eng = SimilarityEngine(cfg)
         assert eng._normalize("Al-Ahli") == "ahli"
 
     def test_normal_exact_synonym_is_protected_from_acronyms(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["synonyms"] = {"inter": "inter milan"}
         cfg["acronyms"] = {"inter ": ""}
         eng = SimilarityEngine(cfg)
@@ -341,10 +324,10 @@ class TestCaching:
         assert key_fwd in engine._result_cache
 
     def test_normal_separate_instances_have_independent_caches(self):
-        cfg_a = RICH_CONFIG.copy()
+        cfg_a = make_matching_cfg()
         cfg_a["threshold"] = 90
-        cfg_b = RICH_CONFIG.copy()
-        cfg_b["threshold"] = 40
+        cfg_b = make_matching_cfg()
+        cfg_b["threshold"] = THRESHOLD_LENIENT
         eng_a = SimilarityEngine(cfg_a)
         eng_b = SimilarityEngine(cfg_b)
         eng_a.is_similar("X Y", "Y X")
@@ -364,10 +347,10 @@ class TestCaching:
 class TestMatchingScenarios:
     def test_scenario_diacritic_plus_synonym_chain(self):
         """Diacritic stripping and synonym replacement must compose correctly."""
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg.update(
             {
-                "threshold": 70,
+                "threshold": THRESHOLD_MODERATE,
                 "synonyms": {"fc barcelona": "barcelona"},
             }
         )
@@ -380,10 +363,10 @@ class TestMatchingScenarios:
 
     def test_scenario_acronym_expands_before_similarity(self):
         """Acronym expansion during normalization bridges abbreviated vs full name."""
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg.update(
             {
-                "threshold": 65,
+                "threshold": THRESHOLD_DEFAULT,
                 "acronyms": {"fc": "football club", "utd": "united"},
             }
         )
@@ -395,10 +378,10 @@ class TestMatchingScenarios:
 
     def test_scenario_short_prefix_rule_does_not_break_real_betis(self):
         """Short prefix rules must not corrupt longer words before matching."""
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg.update(
             {
-                "threshold": 65,
+                "threshold": THRESHOLD_DEFAULT,
                 "acronyms": {"al ": "", "real ": ""},
             }
         )
@@ -409,10 +392,10 @@ class TestMatchingScenarios:
 
     def test_scenario_weak_tokens_do_not_establish_match_alone(self):
         """Ambiguous shared words should not merge clearly different clubs."""
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg.update(
             {
-                "threshold": 65,
+                "threshold": THRESHOLD_DEFAULT,
                 "weak_tokens": ["new", "york", "sporting", "inter"],
             }
         )
@@ -426,10 +409,10 @@ class TestMatchingScenarios:
         assert score == pytest.approx(35.0)
 
     def test_scenario_weak_tokens_still_allow_exact_canonical_synonyms(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg.update(
             {
-                "threshold": 65,
+                "threshold": THRESHOLD_DEFAULT,
                 "synonyms": {"inter": "inter milan"},
                 "weak_tokens": ["inter"],
             }
@@ -441,17 +424,17 @@ class TestMatchingScenarios:
 
     def test_scenario_token_weight_vs_ratio_weight_on_reordered_names(self):
         """Token set ratio handles order-independence; character ratio does not."""
-        cfg_token = RICH_CONFIG.copy()
+        cfg_token = make_matching_cfg()
         cfg_token.update(
             {
-                "threshold": 80,
+                "threshold": THRESHOLD_HIGH,
                 "weights": {"token": 1.0, "substr": 0.0, "phonetic": 0.0, "ratio": 0.0},
             }
         )
-        cfg_ratio = RICH_CONFIG.copy()
+        cfg_ratio = make_matching_cfg()
         cfg_ratio.update(
             {
-                "threshold": 80,
+                "threshold": THRESHOLD_HIGH,
                 "weights": {"token": 0.0, "substr": 0.0, "phonetic": 0.0, "ratio": 1.0},
             }
         )
@@ -464,7 +447,7 @@ class TestMatchingScenarios:
 
     def test_scenario_phonetic_weight_boosts_homophones(self):
         """High phonetic weight helps match names that sound alike but are spelled differently."""
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg.update(
             {
                 "threshold": 50,
@@ -479,10 +462,10 @@ class TestMatchingScenarios:
 
     def test_scenario_threshold_sensitivity(self):
         """Same pair — strict vs lenient threshold flips the boolean result."""
-        cfg_strict = RICH_CONFIG.copy()
-        cfg_strict["threshold"] = 95
-        cfg_lenient = RICH_CONFIG.copy()
-        cfg_lenient["threshold"] = 40
+        cfg_strict = make_matching_cfg()
+        cfg_strict["threshold"] = THRESHOLD_EXACT
+        cfg_lenient = make_matching_cfg()
+        cfg_lenient["threshold"] = THRESHOLD_LENIENT
 
         strict = SimilarityEngine(cfg_strict)
         lenient = SimilarityEngine(cfg_lenient)

@@ -158,48 +158,48 @@ class TestGetLogger:
 class TestTimeProfiler:
     def test_normal_decorator_measures_execution_time(self):
         @time_profiler()
-        def test_function():
+        def sample_function():
             time.sleep(0.1)
             return "result"
 
-        result = test_function()
+        result = sample_function()
         assert result == "result"
 
     def test_normal_decorator_without_parens(self):
         @time_profiler
-        def test_function():
+        def sample_function():
             time.sleep(0.1)
             return "result"
 
-        result = test_function()
+        result = sample_function()
         assert result == "result"
 
     def test_normal_custom_logging_level(self):
         @time_profiler(level=logging.WARNING)
-        def test_function():
+        def sample_function():
             time.sleep(0.1)
             return "result"
 
-        result = test_function()
+        result = sample_function()
         assert result == "result"
 
     def test_normal_function_with_arguments(self):
         @time_profiler()
-        def test_function(arg1, arg2, kwarg1=None):
+        def sample_function(arg1, arg2, kwarg1=None):
             time.sleep(0.05)
             return f"{arg1}_{arg2}_{kwarg1}"
 
-        result = test_function("hello", "world", kwarg1="test")
+        result = sample_function("hello", "world", kwarg1="test")
         assert result == "hello_world_test"
 
     def test_normal_exception_function_still_times_and_raises(self):
         @time_profiler()
-        def test_function():
+        def sample_function():
             time.sleep(0.1)
             raise ValueError("test error")
 
         with pytest.raises(ValueError, match="test error"):
-            test_function()
+            sample_function()
 
     def test_normal_logger_with_no_handlers_gets_configured(self):
         # Create a unique module name for testing
@@ -210,9 +210,9 @@ class TestTimeProfiler:
         with patch("logging.getLogger", return_value=test_logger):
 
             @time_profiler()
-            def test_function():
+            def sample_function():
                 time.sleep(0.05)
                 return "result"
 
-            result = test_function()
+            result = sample_function()
             assert result == "result"

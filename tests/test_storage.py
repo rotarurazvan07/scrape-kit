@@ -13,7 +13,6 @@ Each method has: normal case(s), edge case(s), error case.
 Plus 5 complex integration scenarios at the bottom.
 """
 
-import contextlib
 import os
 import sqlite3
 import threading
@@ -26,75 +25,7 @@ import pytest
 from scrape_kit.errors import StorageError
 from scrape_kit.storage import BaseStorageManager, BufferedStorageManager
 
-# ── Shared test schema ────────────────────────────────────────────────────────
-
-
-class MockDB(BaseStorageManager):
-    """Concrete subclass with a simple two-table schema for testing."""
-
-    def _create_tables(self):
-        with self.db_lock:
-            self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS items (
-                    id    INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name  TEXT    NOT NULL,
-                    value TEXT
-                )
-            """)
-            self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS tags (
-                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                    item_id INTEGER,
-                    tag     TEXT
-                )
-            """)
-            self.conn.commit()
-
-
-# ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def db(tmp_path):
-    manager = MockDB(str(tmp_path / "test.db"))
-    yield manager
-    with contextlib.suppress(Exception):
-        manager.flush_and_close()
-
-
-@pytest.fixture
-def populated_db(tmp_path):
-    manager = MockDB(str(tmp_path / "populated.db"))
-    manager.conn.executemany(
-        "INSERT INTO items (name, value) VALUES (?, ?)",
-        [("alpha", "1"), ("beta", "2"), ("gamma", "3")],
-    )
-    manager.conn.commit()
-    yield manager
-    with contextlib.suppress(Exception):
-        manager.flush_and_close()
-
-
-@pytest.fixture
-def buffered_db(tmp_path):
-    conn = sqlite3.connect(str(tmp_path / "buffer.db"))
-    conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
-    conn.executemany("INSERT INTO items VALUES (?, ?, ?)", [(1, "alpha", "a"), (2, "beta", "b")])
-    conn.commit()
-    conn.close()
-    manager = BufferedStorageManager(str(tmp_path / "buffer.db"), "items")
-    yield manager
-    with contextlib.suppress(Exception):
-        manager.close()
-
-
-def make_chunk(path, rows, table="items"):
-    """Helper: create a standalone .db chunk with the items schema."""
-    conn = sqlite3.connect(str(path))
-    conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)")
-    conn.executemany(f"INSERT INTO {table} (name, value) VALUES (?, ?)", rows)
-    conn.commit()
-    conn.close()
+from conftest import MockDB, create_items_schema, make_chunk
 
 
 # ── fetch_rows ────────────────────────────────────────────────────────────────
@@ -490,7 +421,7 @@ class TestBufferedExists:
 
     def test_edge_empty_buffer_returns_false(self, tmp_path):
         conn = sqlite3.connect(str(tmp_path / "empty.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
         manager = BufferedStorageManager(str(tmp_path / "empty.db"), "items")
@@ -630,7 +561,7 @@ class TestStorageScenarios:
     def test_scenario_buffered_insert_exists_flush_verify(self, tmp_path):
         """50 inserts via buffer → in-memory exists checks → flush → disk verification."""
         conn = sqlite3.connect(str(tmp_path / "buf.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
         manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
@@ -764,7 +695,7 @@ class TestMergeDatabaseEdgeCases:
 
         # Create a valid chunk file
         chunk_db = sqlite3.connect(str(tmp_path / "chunk_001.db"))
-        chunk_db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, value TEXT)")
+        create_items_schema(chunk_db)
         chunk_db.execute("INSERT INTO items (name, value) VALUES ('chunk_item', 'value')")
         chunk_db.commit()
         chunk_db.close()
@@ -783,7 +714,7 @@ class TestMergeDatabaseEdgeCases:
 
         # Create a valid chunk file
         chunk_db = sqlite3.connect(str(tmp_path / "chunk_001.db"))
-        chunk_db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, value TEXT)")
+        create_items_schema(chunk_db)
         chunk_db.execute("INSERT INTO items (name, value) VALUES ('chunk_item', 'value')")
         chunk_db.commit()
         chunk_db.close()
@@ -811,7 +742,7 @@ class TestMergeRowByRowEdgeCases:
         """Test lines 286-288 - flush callback invoked"""
         # Create chunk database
         chunk_db = sqlite3.connect(str(tmp_path / "chunk_001.db"))
-        chunk_db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, value TEXT)")
+        create_items_schema(chunk_db)
         for i in range(5):
             chunk_db.execute("INSERT INTO items (name, value) VALUES (?, ?)", (f"item_{i}", str(i)))
         chunk_db.commit()
@@ -880,7 +811,7 @@ class TestReopenEdgeCases:
         # Create some chunk files
         for i in range(3):
             chunk_db = sqlite3.connect(str(tmp_path / f"chunk_{i:03d}.db"))
-            chunk_db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+            create_items_schema(chunk_db)
             chunk_db.commit()
             chunk_db.close()
 
@@ -921,7 +852,7 @@ class TestBufferedStorageEdgeCases:
     def test_edge_flush_replace_mode(self, tmp_path):
         """Test line 405 - flush with replace mode (no existing data)"""
         conn = sqlite3.connect(str(tmp_path / "buf.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
 
@@ -939,7 +870,7 @@ class TestBufferedStorageEdgeCases:
     def test_error_flush_fails_raises(self, tmp_path):
         """Test lines 408-409 - flush fails raises StorageError"""
         conn = sqlite3.connect(str(tmp_path / "buf.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
 
@@ -962,7 +893,7 @@ class TestBufferedStorageEdgeCases:
     def test_error_exists_without_column_raises(self, tmp_path):
         """Test line 418 - exists without column raises StorageError"""
         conn = sqlite3.connect(str(tmp_path / "buf.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
 
@@ -973,7 +904,7 @@ class TestBufferedStorageEdgeCases:
     def test_error_exists_wrong_table_raises(self, tmp_path):
         """Test line 430 - exists with wrong table raises StorageError"""
         conn = sqlite3.connect(str(tmp_path / "buf.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
 
@@ -984,7 +915,7 @@ class TestBufferedStorageEdgeCases:
     def test_error_insert_wrong_table_raises(self, tmp_path):
         """Test line 453 - insert with wrong table raises StorageError"""
         conn = sqlite3.connect(str(tmp_path / "buf.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
 
@@ -995,7 +926,7 @@ class TestBufferedStorageEdgeCases:
     def test_error_insert_non_mapping_raises(self, tmp_path):
         """Test lines 447-450 - insert with non-mapping raises StorageError"""
         conn = sqlite3.connect(str(tmp_path / "buf.db"))
-        conn.execute("CREATE TABLE items (id INTEGER, name TEXT, value TEXT)")
+        create_items_schema(conn)
         conn.commit()
         conn.close()
 

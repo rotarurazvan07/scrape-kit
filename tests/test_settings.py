@@ -18,17 +18,8 @@ import yaml
 from scrape_kit.errors import SettingsError
 from scrape_kit.settings import SettingsManager
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+from conftest import make_cfg
 
-
-def make_cfg(tmp_path, structure: dict) -> Path:
-    """Recursively write {relative_path: yaml_content_str} into tmp_path/config."""
-    cfg = tmp_path / "config"
-    for rel, content in structure.items():
-        target = cfg / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-    return cfg
 
 
 # ── __init__ ──────────────────────────────────────────────────────────────────

@@ -35,36 +35,21 @@ from scrape_kit.fetcher import fetch as module_fetch
 from scrape_kit.fetcher import is_blocked as module_is_blocked
 from scrape_kit.fetcher import scrape as module_scrape
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+from conftest import (
+    CLICK_HARD_CAP_DEFAULT_MS,
+    CLICK_HARD_CAP_MS,
+    CLICK_IDLE_ALT_MS,
+    CLICK_IDLE_MS,
+    ESCALATE_TIMEOUT_MS,
+    SESSION_FETCH_TIMEOUT_MS,
+    WAIT_FUNCTION_MS,
+    WAIT_SELECTOR_MS,
+    WAIT_TIMEOUT_MS,
+    make_fetcher_config,
+    make_interactive_session,
+    make_page,
+)
 
-
-def make_page(html: str = "<html>OK</html>", status: int = 200) -> MagicMock:
-    page = MagicMock()
-    page.html_content = html
-    page.status = status
-    page.status_code = status
-    return page
-
-
-def make_interactive_session(html: str = "<html>page</html>", eval_return=None):
-    mock_session = MagicMock()
-    mock_page = MagicMock()
-    mock_session.context.new_page.return_value = mock_page
-    mock_page.content.return_value = html
-    mock_page.evaluate.return_value = eval_return
-    return mock_session, mock_page
-
-
-# ── Fixture: reset shared instance between tests ──────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def reset_shared():
-    """Ensure each test starts with a clean shared instance state."""
-    old = fetcher_module._shared
-    fetcher_module._shared = None
-    yield
-    fetcher_module._shared = old
 
 
 # ── ScrapeMode ────────────────────────────────────────────────────────────────
@@ -113,11 +98,8 @@ class TestWebFetcherInit:
 class TestConfigure:
     def test_normal_loads_indicators_from_yaml(self, tmp_path):
         """configure() reads retry/block lists from a YAML file via SettingsManager."""
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators:\n  - just a moment\n  - checking your browser\nblock_indicators:\n  - access denied\n",
-            encoding="utf-8",
+        cfg_dir = make_fetcher_config(
+            tmp_path, retry=["just a moment", "checking your browser"], block=["access denied"]
         )
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.retry_indicators == ["just a moment", "checking your browser"]
@@ -125,12 +107,7 @@ class TestConfigure:
 
     def test_normal_sets_shared_instance_by_default(self, tmp_path):
         """configure() stores result as module-level shared instance when set_shared=True."""
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators:\n  - test\nblock_indicators: []\n",
-            encoding="utf-8",
-        )
+        cfg_dir = make_fetcher_config(tmp_path, retry=["test"])
         fetcher_module._shared = None
         instance = WebFetcher.configure(str(cfg_dir), set_shared=True)
         assert fetcher_module._shared is instance
@@ -140,33 +117,20 @@ class TestConfigure:
         existing = WebFetcher(retry_indicators=["existing"])
         fetcher_module._shared = existing
 
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators:\n  - new\nblock_indicators: []\n",
-            encoding="utf-8",
-        )
+        cfg_dir = make_fetcher_config(tmp_path, retry=["new"])
         WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert fetcher_module._shared is existing
 
     def test_normal_custom_config_key(self, tmp_path):
         """configure() uses a custom key to look up a differently named YAML block."""
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "my_scraper.yaml").write_text(
-            "retry_indicators:\n  - custom\nblock_indicators:\n  - nope\n",
-            encoding="utf-8",
-        )
+        cfg_dir = make_fetcher_config(tmp_path, retry=["custom"], block=["nope"], name="my_scraper.yaml")
         instance = WebFetcher.configure(str(cfg_dir), config_key="my_scraper", set_shared=False)
         assert instance.retry_indicators == ["custom"]
         assert instance.block_indicators == ["nope"]
 
     def test_edge_missing_yaml_falls_back_to_defaults(self, tmp_path):
         """If config key not found, configure() uses class-level _DEFAULT_RETRY/_DEFAULT_BLOCK."""
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        # Write a YAML but with a different key — our key won't be found
-        (cfg_dir / "other.yaml").write_text("other:\n  x: 1\n", encoding="utf-8")
+        cfg_dir = make_fetcher_config(tmp_path, name="other.yaml")  # different stem, key not found
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
         assert instance.block_indicators == WebFetcher._DEFAULT_BLOCK
@@ -198,12 +162,7 @@ class TestConfigureDefaults:
 
 class TestPackageConfigure:
     def test_normal_sk_configure_sets_shared(self, tmp_path):
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators:\n  - pkg\nblock_indicators: []\n",
-            encoding="utf-8",
-        )
+        cfg_dir = make_fetcher_config(tmp_path, retry=["pkg"])
         fetcher_module._shared = None
         instance = sk.configure(str(cfg_dir))
         assert fetcher_module._shared is instance
@@ -262,12 +221,7 @@ class TestModuleProxies:
     @patch("scrape_kit.fetcher.Fetcher")
     def test_normal_configure_then_proxy_uses_configured_indicators(self, MockFetcher, tmp_path):
         """Full flow: configure from YAML → module proxy picks up the indicators."""
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators:\n  - proxy_test\nblock_indicators:\n  - totally_blocked\n",
-            encoding="utf-8",
-        )
+        cfg_dir = make_fetcher_config(tmp_path, retry=["proxy_test"], block=["totally_blocked"])
         WebFetcher.configure(str(cfg_dir))
         # is_blocked now uses the configured indicators
         assert module_is_blocked("page is totally_blocked") is True
@@ -391,12 +345,7 @@ class TestFetch:
     @patch("scrape_kit.fetcher.Fetcher")
     def test_normal_configured_instance_uses_yaml_indicators(self, MockFetcher, tmp_path):
         """configure() → instance respects loaded indicators on fetch()."""
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators:\n  - block_me\nblock_indicators: []\n",
-            encoding="utf-8",
-        )
+        cfg_dir = make_fetcher_config(tmp_path, retry=["block_me"])
         fetcher = WebFetcher.configure(str(cfg_dir), set_shared=False)
         # First call blocked, second clean
         MockFetcher.get.side_effect = [
@@ -584,26 +533,26 @@ class TestInteractiveSessionHelpers:
     def test_normal_wait_for_selector_delegates(self):
         mock_session, mock_page = make_interactive_session()
         session = self._started(mock_session, mock_page)
-        session.wait_for_selector("#submit", timeout=5000)
-        mock_page.wait_for_selector.assert_called_once_with("#submit", timeout=5000)
+        session.wait_for_selector("#submit", timeout=WAIT_SELECTOR_MS)
+        mock_page.wait_for_selector.assert_called_once_with("#submit", timeout=WAIT_SELECTOR_MS)
 
     def test_normal_wait_for_function_delegates(self):
         mock_session, mock_page = make_interactive_session()
         session = self._started(mock_session, mock_page)
-        session.wait_for_function("() => window.ready", timeout=10000)
-        mock_page.wait_for_function.assert_called_once_with("() => window.ready", timeout=10000)
+        session.wait_for_function("() => window.ready", timeout=WAIT_FUNCTION_MS)
+        mock_page.wait_for_function.assert_called_once_with("() => window.ready", timeout=WAIT_FUNCTION_MS)
 
     def test_normal_click_embeds_idle_and_hard_cap_in_js(self):
         mock_session, mock_page = make_interactive_session()
         session = self._started(mock_session, mock_page)
         # hard_cap ≠ 6×idle (the default) — proves the explicit override is honored.
-        session.click(".btn", idle_ms=2000, hard_cap_ms=15000)
+        session.click(".btn", idle_ms=CLICK_IDLE_MS, hard_cap_ms=CLICK_HARD_CAP_MS)
         # Post-rework contract (issue #3): click() injects a MutationObserver
         # settle script through page.evaluate — page.click is never used.
         mock_page.click.assert_not_called()
         script = mock_page.evaluate.call_args[0][0]
-        assert "var idle_ms = 2000;" in script
-        assert "var hard_cap_ms = 15000;" in script
+        assert f"var idle_ms = {CLICK_IDLE_MS};" in script
+        assert f"var hard_cap_ms = {CLICK_HARD_CAP_MS};" in script
         # The script must actually locate and dispatch a click on the target.
         assert "document.querySelector('.btn')" in script
         assert "dispatchEvent(new MouseEvent('click'" in script
@@ -611,16 +560,16 @@ class TestInteractiveSessionHelpers:
     def test_normal_click_hard_cap_defaults_to_six_times_idle(self):
         mock_session, mock_page = make_interactive_session()
         session = self._started(mock_session, mock_page)
-        session.click(".btn", idle_ms=5000)
+        session.click(".btn", idle_ms=CLICK_IDLE_ALT_MS)
         script = mock_page.evaluate.call_args[0][0]
-        assert "var idle_ms = 5000;" in script
-        assert "var hard_cap_ms = 30000;" in script  # default = 6 × idle_ms
+        assert f"var idle_ms = {CLICK_IDLE_ALT_MS};" in script
+        assert f"var hard_cap_ms = {CLICK_HARD_CAP_DEFAULT_MS};" in script  # default = 6 × idle_ms
 
     def test_normal_wait_for_timeout_delegates(self):
         mock_session, mock_page = make_interactive_session()
         session = self._started(mock_session, mock_page)
-        session.wait_for_timeout(2000)
-        mock_page.wait_for_timeout.assert_called_with(2000)
+        session.wait_for_timeout(WAIT_TIMEOUT_MS)
+        mock_page.wait_for_timeout.assert_called_with(WAIT_TIMEOUT_MS)
 
     def test_edge_getattr_delegates_to_underlying_session(self):
         mock_session = MagicMock()
@@ -689,35 +638,26 @@ class TestFetcherScenarios:
             eval_return="Scraped",
         )
         with InteractiveSession(mock_session) as session:
-            resp = session.fetch("http://test.com", timeout=30000, wait_until="load")
+            resp = session.fetch("http://test.com", timeout=SESSION_FETCH_TIMEOUT_MS, wait_until="load")
             title = session.execute_script("return document.title")
 
         assert resp.html_content == "<html><title>Scraped</title></html>"
         assert title == "Scraped"
-        mock_page.goto.assert_called_once_with("http://test.com", wait_until="load", timeout=30000)
+        mock_page.goto.assert_called_once_with("http://test.com", wait_until="load", timeout=SESSION_FETCH_TIMEOUT_MS)
         mock_page.close.assert_called_once()
         mock_session.close.assert_called_once()
 
     def test_scenario_configure_yaml_then_module_proxy_full_flow(self, tmp_path):
         """configure() from YAML → module proxies use the right indicators end-to-end."""
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir()
-        (cfg_dir / "scraper_config.yaml").write_text(
-            "retry_indicators: []\nblock_indicators:\n  - e2e_blocked\n",
-            encoding="utf-8",
-        )
+        cfg_dir = make_fetcher_config(tmp_path, block=["e2e_blocked"])
         WebFetcher.configure(str(cfg_dir))
         assert module_is_blocked("page contains e2e_blocked text") is True
         assert module_is_blocked("normal page") is False
 
     def test_scenario_multiple_configure_calls_last_one_wins(self, tmp_path):
         """Calling configure() twice replaces the shared instance."""
-        cfg_a = tmp_path / "cfg_a"
-        cfg_b = tmp_path / "cfg_b"
-        cfg_a.mkdir()
-        cfg_b.mkdir()
-        (cfg_a / "scraper_config.yaml").write_text("retry_indicators: [first]\nblock_indicators: []\n")
-        (cfg_b / "scraper_config.yaml").write_text("retry_indicators: [second]\nblock_indicators: []\n")
+        cfg_a = make_fetcher_config(tmp_path, retry=["first"], dirname="cfg_a")
+        cfg_b = make_fetcher_config(tmp_path, retry=["second"], dirname="cfg_b")
         WebFetcher.configure(str(cfg_a))
         first = fetcher_module._shared
         WebFetcher.configure(str(cfg_b))
@@ -746,7 +686,7 @@ class TestEscalateToBrowser:
             result = fetcher._escalate_to_browser("http://test.com", "blocked")
 
         assert result == "<html>Escalated content</html>"
-        mock_browser_session.fetch.assert_called_once_with("http://test.com", timeout=120000)
+        mock_browser_session.fetch.assert_called_once_with("http://test.com", timeout=ESCALATE_TIMEOUT_MS)
 
     def test_edge_escalate_to_browser_no_html_content(self):
         """Test line 342 - browser returns no content"""
