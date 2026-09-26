@@ -323,7 +323,9 @@ class InteractiveSession:
                         var observer = null;
 
                         var hardCap = setTimeout(() => {{ observer && observer.disconnect(); resolve(true); }}, hard_cap_ms);
-                        var idleTimer = setTimeout(() => {{ observer && observer.disconnect(); clearTimeout(hardCap); resolve(true); }}, idle_ms);
+                        var idleTimer = setTimeout(() => {{
+                            observer && observer.disconnect(); clearTimeout(hardCap); resolve(true);
+                        }}, idle_ms);
 
                         observer = new MutationObserver(() => {{
                             var newHeight = document.documentElement.scrollHeight;
@@ -332,11 +334,15 @@ class InteractiveSession:
                                 prevHeight = newHeight;
                                 prevHTML = newHTML;
                                 clearTimeout(idleTimer);
-                                idleTimer = setTimeout(() => {{ observer && observer.disconnect(); clearTimeout(hardCap); resolve(true); }}, idle_ms);
+                                idleTimer = setTimeout(() => {{
+                                    observer && observer.disconnect(); clearTimeout(hardCap); resolve(true);
+                                }}, idle_ms);
                             }}
                         }});
 
-                        observer.observe(document.body, {{ childList: true, subtree: true, attributes: true, characterData: true }});
+                        observer.observe(document.body, {{
+                            childList: true, subtree: true, attributes: true, characterData: true
+                        }});
 
                     }} catch(e) {{ resolve(false); }}
                 }});
