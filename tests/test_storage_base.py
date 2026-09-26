@@ -163,6 +163,8 @@ class TestCreateIndex:
     def test_edge_create_same_index_twice_is_idempotent(self, db):
         db.create_index("items", ["name"])
         db.create_index("items", ["name"])
+        rows = db.fetch_rows("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_items_name'")
+        assert len(rows) == 1  # IF NOT EXISTS — exactly one index after double create
 
     def test_error_invalid_table_raises_storage_error(self, db):
         with pytest.raises(StorageError):
@@ -170,6 +172,8 @@ class TestCreateIndex:
 
     def test_edge_invalid_column_creates_index_silently(self, db):
         db.create_index("items", ["no_such_column"])
+        rows = db.fetch_rows("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_items_no_such_column'")
+        assert len(rows) == 1  # SQLite does not validate columns at index creation
 
 
 # ── exists ────────────────────────────────────────────────────────────────────
@@ -252,6 +256,7 @@ class TestClearDatabase:
 
     def test_edge_clearing_already_empty_table_is_noop(self, db):
         db.clear_database("items")  # no rows to delete — should not raise
+        assert db.fetch_rows("SELECT * FROM items") == []
 
     def test_error_nonexistent_table_raises_storage_error(self, db):
         with pytest.raises(StorageError):

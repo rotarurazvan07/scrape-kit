@@ -2,7 +2,6 @@
 
 import os
 import sqlite3
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,16 +26,16 @@ class TestReopenIfChanged:
 
     def test_edge_modified_mtime_triggers_reopen(self, db):
         original_mtime = db._file_mtime
-        time.sleep(0.05)
-        os.utime(db.db_path, None)
+        st = os.stat(db.db_path)
+        os.utime(db.db_path, times=(st.st_atime + 5, st.st_mtime + 5))
         db.reopen_if_changed()
         assert db._file_mtime > original_mtime
 
     def test_edge_data_readable_after_reopen(self, db):
         db.insert("items", {"name": "before_reopen", "value": "x"})
         db.conn.commit()
-        time.sleep(0.05)
-        os.utime(db.db_path, None)
+        st = os.stat(db.db_path)
+        os.utime(db.db_path, times=(st.st_atime + 5, st.st_mtime + 5))
         db.reopen_if_changed()
         rows = db.fetch_rows("SELECT * FROM items WHERE name = ?", ("before_reopen",))
         assert len(rows) == 1
@@ -47,6 +46,7 @@ class TestReopenIfChanged:
         manager.flush_and_close()  # release Windows file lock before removing
         os.remove(path)
         manager.reopen_if_changed()  # should not raise
+        assert manager.conn is not None  # connection survives a missing backing file
 
 
 # ── flush_and_close ───────────────────────────────────────────────────────────
@@ -142,15 +142,16 @@ class TestReopenEdgeCases:
         db = MockDB(str(tmp_path / "test.db"))
         db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", [("test", "value")])
 
-        # Modify the file externally
-        time.sleep(0.1)
-        (tmp_path / "test.db").touch()
+        # Modify the file externally — explicit future mtime, no sleeps
+        st = os.stat(tmp_path / "test.db")
+        os.utime(tmp_path / "test.db", times=(st.st_atime + 5, st.st_mtime + 5))
 
         # Should not raise, just log warning and reopen
         db.reopen_if_changed()
 
         # Connection should still be usable after reopen
         assert db.conn is not None
+        db.flush_and_close()
 
     def test_edge_get_chunk_files_with_skip(self, tmp_path):
         """Test line 336 - get_chunk_files with skip_file"""

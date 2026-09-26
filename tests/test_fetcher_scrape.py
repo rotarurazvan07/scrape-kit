@@ -100,6 +100,7 @@ class TestScrapeStealth:
         callback = MagicMock()
         # Should not raise any error
         fetcher.scrape([], callback, mode="stealth")
+        assert callback.call_count == 0  # empty input — no work, no callback
 
     def test_error_scrape_unsupported_mode(self):
         """Test line 391 - unsupported scrape mode"""

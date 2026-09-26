@@ -64,14 +64,18 @@ class TestStorageScenarios:
         params = [(f"concurrent_{i}", str(i)) for i in range(200)]
         errors = []
 
+        barrier = threading.Barrier(7)
+
         def writer():
             try:
+                barrier.wait(timeout=10)  # writer + 6 readers start together
                 db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", params)
             except Exception as e:
                 errors.append(("writer", e))
 
         def reader():
             try:
+                barrier.wait(timeout=10)
                 db.fetch_rows("SELECT * FROM items")
             except Exception as e:
                 errors.append(("reader", e))
@@ -80,7 +84,8 @@ class TestStorageScenarios:
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=10)
+            assert not t.is_alive(), "worker thread hung — possible deadlock under contention"
         assert errors == [], f"Thread errors: {errors}"
 
     def test_scenario_clear_and_reingest_fresh_data(self, populated_db):

@@ -2,7 +2,6 @@
 
 import os
 import sqlite3
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -134,8 +133,8 @@ class TestBufferedReopenIfChanged:
     def test_normal_mtime_change_clears_buffer(self, buffered_db):
         _ = buffered_db.ensure_buffer()
         assert buffered_db._buffer is not None
-        time.sleep(0.05)
-        os.utime(buffered_db.db_path, None)
+        st = os.stat(buffered_db.db_path)
+        os.utime(buffered_db.db_path, times=(st.st_atime + 5, st.st_mtime + 5))
         buffered_db.reopen_if_changed()
         assert buffered_db._buffer is None
 

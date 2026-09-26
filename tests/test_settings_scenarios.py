@@ -87,8 +87,11 @@ class TestSettingsScenarios:
         results = []
         errors = []
 
+        barrier = threading.Barrier(10)
+
         def write_config(i):
             try:
+                barrier.wait(timeout=10)  # all writers start together — real contention
                 manager.write(f"worker_{i}", {"id": i, "label": f"w{i}"})
                 results.append(True)
             except Exception as e:
@@ -98,7 +101,8 @@ class TestSettingsScenarios:
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=10)
+            assert not t.is_alive(), "writer thread hung — possible deadlock under contention"
 
         assert errors == [], f"Thread errors: {errors}"
         assert all(results)

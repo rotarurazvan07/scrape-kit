@@ -78,11 +78,17 @@ class TestIsBlocked:
         fetcher = WebFetcher(block_indicators=["Access Denied"])
         assert fetcher.is_blocked("<html>Access Denied</html>") is True
 
-    def test_normal_any_indicator_triggers_block(self):
+    @pytest.mark.parametrize(
+        ("html", "expected"),
+        [
+            ("page: Cloudflare Ray ID: 123", True),
+            ("Error: Rate Limited", True),
+            ("Just a normal page", False),
+        ],
+    )
+    def test_normal_any_indicator_triggers_block(self, html, expected):
         fetcher = WebFetcher(block_indicators=["rate limited", "cloudflare", "forbidden"])
-        assert fetcher.is_blocked("page: Cloudflare Ray ID: 123") is True
-        assert fetcher.is_blocked("Error: Rate Limited") is True
-        assert fetcher.is_blocked("Just a normal page") is False
+        assert fetcher.is_blocked(html) is expected
 
     def test_edge_empty_html_always_blocked(self):
         fetcher = WebFetcher(block_indicators=["anything"])

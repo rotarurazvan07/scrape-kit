@@ -175,7 +175,7 @@ class TestIsSimilar:
         match, score = engine.is_similar("", "")
         # No shared tokens → score 0.0 → not > threshold
         assert match is False
-        assert score == 0.0
+        assert score == pytest.approx(0.0)
 
     def test_edge_result_is_symmetric(self, engine):
         m1, s1 = engine.is_similar("Alpha Beta", "Beta Alpha")

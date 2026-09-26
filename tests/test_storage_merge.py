@@ -37,7 +37,9 @@ class TestMergeDatabases:
     def test_edge_empty_directory_does_nothing(self, db, tmp_path):
         empty = tmp_path / "empty_chunks"
         empty.mkdir()
-        db.merge_databases(str(empty), "items")  # no-op, must not raise
+        report = db.merge_databases(str(empty), "items")  # no-op, must not raise
+        assert report.processed_chunks == 0
+        assert report.skipped_chunks == 0
 
     def test_edge_master_db_skipped_in_merge(self, db, tmp_path):
         """The master DB itself must not be attached as a chunk."""
@@ -102,11 +104,11 @@ class TestMergeDatabaseEdgeCases:
     """Test lines 193-194, 232-240, 246-253 - merge database edge cases"""
 
     def test_error_create_staging_table_fails(self, tmp_path):
-        """Test lines 193-194 - staging table creation fails"""
-        # Note: Can't properly mock sqlite3.Connection as its attributes are read-only
-        # This test verifies the method exists and has proper error handling structure
+        """Staging creation on a missing source table raises StorageError."""
         db = MockDB(str(tmp_path / "test.db"))
-        assert hasattr(db, "create_staging_table")
+        with pytest.raises(StorageError, match="Staging table creation failed"):
+            db.create_staging_table("no_such_source", "staging_items")
+        db.flush_and_close()
 
     def test_edge_merge_with_corrupt_chunk(self, tmp_path):
         """Test lines 232-240 - merge with corrupt chunk file"""
@@ -222,3 +224,4 @@ class TestMergeRowByRowEdgeCases:
         report = main_db.merge_row_by_row(str(tmp_path), "items", row_callback)
         assert report.skipped_chunks >= 1
         assert report.processed_rows == 0
+        main_db.flush_and_close()

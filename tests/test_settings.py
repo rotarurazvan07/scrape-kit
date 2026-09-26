@@ -212,12 +212,13 @@ class TestDelete:
         manager.delete("service")
         assert manager.get("url") is None
 
-    def test_edge_delete_nonexistent_file_still_returns_true(self, tmp_path):
+    def test_edge_delete_nonexistent_file_is_noop(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
-        # Should be a no-op, not an error
-        manager.delete("ghost_file")
+        # delete() on a missing file is a documented no-op
+        assert manager.delete("ghost_file") is None
+        assert not (cfg / "ghost_file.yaml").exists()
 
     def test_edge_delete_then_write_same_name(self, tmp_path):
         cfg = tmp_path / "config"
@@ -228,9 +229,10 @@ class TestDelete:
         manager.write("svc", {"url": "new"})
         assert manager.get("url") == "new"
 
-    def test_error_delete_from_nonexistent_directory_is_noop(self, tmp_path):
+    def test_edge_delete_from_nonexistent_directory_is_noop(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
-        # Missing file is a no-op
-        manager.delete("anything", subpath="nonexistent_dir")
+        # Missing subpath is a no-op — nothing created, nothing raised
+        assert manager.delete("anything", subpath="nonexistent_dir") is None
+        assert not (cfg / "nonexistent_dir").exists()

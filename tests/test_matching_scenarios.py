@@ -143,19 +143,17 @@ class TestMatchingScenarios:
         assert match is True
         assert score > 50
 
-    def test_scenario_threshold_sensitivity(self):
-        """Same pair — strict vs lenient threshold flips the boolean result."""
-        cfg_strict = make_matching_cfg()
-        cfg_strict["threshold"] = THRESHOLD_EXACT
-        cfg_lenient = make_matching_cfg()
-        cfg_lenient["threshold"] = THRESHOLD_LENIENT
-
-        strict = SimilarityEngine(cfg_strict)
-        lenient = SimilarityEngine(cfg_lenient)
-        # Moderately similar pair
-        _, score = lenient.is_similar("Liverpool FC", "Liverpool")
-        m_strict, _ = strict.is_similar("Liverpool FC", "Liverpool")
-        m_lenient, _ = lenient.is_similar("Liverpool FC", "Liverpool")
-        if score < 95:
-            assert m_strict is False
-        assert m_lenient is True
+    @pytest.mark.parametrize(
+        ("threshold", "expected"),
+        [
+            (THRESHOLD_EXACT, False),  # 95 > 86.88 — moderately similar pair rejected
+            (THRESHOLD_DEFAULT, True),
+            (THRESHOLD_LENIENT, True),
+        ],
+    )
+    def test_scenario_threshold_sensitivity(self, threshold, expected):
+        """Same pair scores 86.88 — threshold alone flips the boolean result."""
+        cfg = make_matching_cfg()
+        cfg["threshold"] = threshold
+        match, _ = SimilarityEngine(cfg).is_similar("Liverpool FC", "Liverpool")
+        assert match is expected
