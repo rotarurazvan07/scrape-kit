@@ -4,10 +4,9 @@ import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
+from conftest import MockDB, create_items_schema, make_chunk
 
 from scrape_kit.errors import StorageError
-
-from conftest import MockDB, create_items_schema, make_chunk
 
 pytestmark = pytest.mark.p0
 

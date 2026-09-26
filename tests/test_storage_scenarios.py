@@ -1,14 +1,12 @@
 """Cross-manager integration scenarios (issue #10 split)."""
 
-import pytest
-
 import sqlite3
 import threading
 
+import pytest
+from conftest import create_items_schema, make_chunk
 
 from scrape_kit.storage import BufferedStorageManager
-
-from conftest import create_items_schema, make_chunk
 
 pytestmark = pytest.mark.p1
 

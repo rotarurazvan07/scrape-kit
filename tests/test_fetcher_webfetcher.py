@@ -3,18 +3,17 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import (
+    ESCALATE_TIMEOUT_MS,
+    make_fetcher_config,
+    make_page,
+)
 
 from scrape_kit.errors import FetcherError
 from scrape_kit.fetcher import (
     InteractiveSession,
     ScrapeMode,
     WebFetcher,
-)
-
-from conftest import (
-    ESCALATE_TIMEOUT_MS,
-    make_fetcher_config,
-    make_page,
 )
 
 pytestmark = pytest.mark.p0

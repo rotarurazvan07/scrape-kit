@@ -1,9 +1,12 @@
 """WebFetcher.configure family + module proxies."""
 
-import pytest
-
 from unittest.mock import MagicMock, patch
 
+import pytest
+from conftest import (
+    make_fetcher_config,
+    make_page,
+)
 
 import scrape_kit as sk
 import scrape_kit.fetcher as fetcher_module
@@ -17,11 +20,6 @@ from scrape_kit.fetcher import browser as module_browser
 from scrape_kit.fetcher import fetch as module_fetch
 from scrape_kit.fetcher import is_blocked as module_is_blocked
 from scrape_kit.fetcher import scrape as module_scrape
-
-from conftest import (
-    make_fetcher_config,
-    make_page,
-)
 
 pytestmark = pytest.mark.p0
 

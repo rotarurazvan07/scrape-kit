@@ -1,9 +1,14 @@
 """Fetcher integration scenarios (4th-tier test_scenario_)."""
 
-import pytest
-
 from unittest.mock import patch
 
+import pytest
+from conftest import (
+    SESSION_FETCH_TIMEOUT_MS,
+    make_fetcher_config,
+    make_interactive_session,
+    make_page,
+)
 
 import scrape_kit.fetcher as fetcher_module
 from scrape_kit.fetcher import (
@@ -12,13 +17,6 @@ from scrape_kit.fetcher import (
     WebFetcher,
 )
 from scrape_kit.fetcher import is_blocked as module_is_blocked
-
-from conftest import (
-    SESSION_FETCH_TIMEOUT_MS,
-    make_fetcher_config,
-    make_interactive_session,
-    make_page,
-)
 
 pytestmark = pytest.mark.p1
 

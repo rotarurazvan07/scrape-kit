@@ -6,11 +6,10 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
+from conftest import MockDB, create_items_schema
 
 from scrape_kit.errors import StorageError
 from scrape_kit.storage import BaseStorageManager
-
-from conftest import MockDB, create_items_schema
 
 pytestmark = pytest.mark.p0
 

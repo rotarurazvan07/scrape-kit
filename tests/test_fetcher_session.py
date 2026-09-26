@@ -3,12 +3,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-
-from scrape_kit.errors import FetcherError
-from scrape_kit.fetcher import (
-    InteractiveSession,
-)
-
 from conftest import (
     CLICK_HARD_CAP_DEFAULT_MS,
     CLICK_HARD_CAP_MS,
@@ -18,6 +12,11 @@ from conftest import (
     WAIT_SELECTOR_MS,
     WAIT_TIMEOUT_MS,
     make_interactive_session,
+)
+
+from scrape_kit.errors import FetcherError
+from scrape_kit.fetcher import (
+    InteractiveSession,
 )
 
 pytestmark = pytest.mark.p0

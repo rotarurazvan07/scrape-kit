@@ -5,11 +5,10 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from conftest import make_cfg
 
 from scrape_kit.errors import SettingsError
 from scrape_kit.settings import SettingsManager
-
-from conftest import make_cfg
 
 pytestmark = pytest.mark.p0
 

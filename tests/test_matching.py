@@ -1,15 +1,14 @@
 """SimilarityEngine core: init/hybrid_match/is_similar."""
 
 import pytest
-
-from scrape_kit.matching import SimilarityEngine
-
 from conftest import (
     RICH_CONFIG,
     THRESHOLD_HIGH,
     THRESHOLD_MODERATE,
     make_matching_cfg,
 )
+
+from scrape_kit.matching import SimilarityEngine
 
 pytestmark = pytest.mark.p0
 

@@ -1,14 +1,13 @@
 """SimilarityEngine helpers: normalize/soundex/caching."""
 
 import pytest
-
-from scrape_kit.matching import SimilarityEngine
-
 from conftest import (
     RICH_CONFIG,
     THRESHOLD_LENIENT,
     make_matching_cfg,
 )
+
+from scrape_kit.matching import SimilarityEngine
 
 pytestmark = pytest.mark.p0
 
