@@ -12,6 +12,14 @@ dependencies = [
     "scrapling[fetchers]==0.4.14",
     "pandas==3.0.5",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.4.2,<9",
+    "pytest-cov>=7.0.0,<8",
+    "pytest-xdist>=3.8.0,<4",
+    "pytest-timeout>=2.3.1,<3",
+]
 [tool.setuptools.packages.find]
 # Discovers scrape_kit/ automatically.
 # When you add sub-packages (e.g. scrape_kit/fetchers/) they are picked

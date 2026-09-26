@@ -1,20 +1,5 @@
 """BaseStorageManager chunk merging (issue #10 split)."""
 
-"""
-Comprehensive tests for storage.py — BaseStorageManager & BufferedStorageManager.
-
-Public API covered (Base):
-  __init__, fetch_rows, fetch_dataframe, fetch_objects, execute_batch,
-  create_index, exists, insert, merge_databases, merge_row_by_row,
-  reopen_if_changed, flush_and_close, clear_database
-
-Public API covered (Buffered):
-  __init__, flush, exists, insert, clear_database, reopen_if_changed, close
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 import sqlite3
 from unittest.mock import MagicMock
 
@@ -24,10 +9,15 @@ from scrape_kit.errors import StorageError
 
 from conftest import MockDB, create_items_schema, make_chunk
 
+pytestmark = pytest.mark.p0
+
+
 # ── merge_databases ───────────────────────────────────────────────────────────
 
 
 class TestMergeDatabases:
+    """merge_databases lands chunks in a staging table."""
+
     def test_normal_single_chunk_lands_in_staging(self, db, tmp_path):
         chunk_dir = tmp_path / "chunks"
         chunk_dir.mkdir()
@@ -65,6 +55,8 @@ class TestMergeDatabases:
 
 
 class TestMergeRowByRow:
+    """merge_row_by_row streams rows through callbacks with flush batching."""
+
     def test_normal_callback_called_for_every_row(self, db, tmp_path):
         chunk_dir = tmp_path / "chunks"
         chunk_dir.mkdir()
@@ -105,7 +97,6 @@ class TestMergeRowByRow:
         collected = []
         db.merge_row_by_row(str(chunk_dir), "items", row_callback=lambda r: collected.append(r["name"]))
         assert "valid" in collected
-
 
 
 class TestMergeDatabaseEdgeCases:
@@ -232,6 +223,3 @@ class TestMergeRowByRowEdgeCases:
         report = main_db.merge_row_by_row(str(tmp_path), "items", row_callback)
         assert report.skipped_chunks >= 1
         assert report.processed_rows == 0
-
-
-

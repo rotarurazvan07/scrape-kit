@@ -1,22 +1,5 @@
 """BaseStorageManager connection lifecycle (issue #10 split)."""
 
-"""BaseStorageManager core CRUD + lifecycle (issue #10 split)."""
-
-"""
-Comprehensive tests for storage.py — BaseStorageManager & BufferedStorageManager.
-
-Public API covered (Base):
-  __init__, fetch_rows, fetch_dataframe, fetch_objects, execute_batch,
-  create_index, exists, insert, merge_databases, merge_row_by_row,
-  reopen_if_changed, flush_and_close, clear_database
-
-Public API covered (Buffered):
-  __init__, flush, exists, insert, clear_database, reopen_if_changed, close
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 import os
 import sqlite3
 import time
@@ -29,11 +12,15 @@ from scrape_kit.storage import BaseStorageManager
 
 from conftest import MockDB, create_items_schema
 
+pytestmark = pytest.mark.p0
+
 
 # ── reopen_if_changed ─────────────────────────────────────────────────────────
 
 
 class TestReopenIfChanged:
+    """reopen_if_changed swaps connections on mtime change."""
+
     def test_normal_unchanged_file_keeps_same_connection(self, db):
         original_id = id(db.conn)
         db.reopen_if_changed()
@@ -67,6 +54,8 @@ class TestReopenIfChanged:
 
 
 class TestFlushAndClose:
+    """flush_and_close drains WAL and closes the connection."""
+
     def test_normal_connection_unusable_after_close(self, tmp_path):
         manager = MockDB(str(tmp_path / "close_test.db"))
         manager.flush_and_close()
@@ -96,7 +85,6 @@ class TestFlushAndClose:
         assert not os.path.exists(wal_path) or os.path.getsize(wal_path) == 0
 
 
-
 # ── Additional tests for uncovered lines ───────────────────────────────────────
 
 
@@ -112,6 +100,8 @@ class TestSerializationEdgeCases:
         """Test line 57-58 - object with __dict__"""
 
         class TestObj:
+            """Row-to-object serialization edge behavior."""
+
             def __init__(self):
                 self.name = "test"
                 self.value = 42
@@ -141,7 +131,6 @@ class TestSerializationEdgeCases:
         """Test lines 68-70 - invalid JSON logs warning and returns None"""
         result = db.deserialize_json("not valid json")
         assert result is None
-
 
 
 class TestReopenEdgeCases:
@@ -202,7 +191,3 @@ class TestFlushAndCloseEdgeCases:
                 db.flush_and_close()
         finally:
             db.conn = original_conn
-
-
-
-

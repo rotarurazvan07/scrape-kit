@@ -1,24 +1,5 @@
 """InteractiveSession."""
 
-"""
-Comprehensive tests for fetcher.py — WebFetcher, InteractiveSession, ScrapeMode,
-configure(), configure_defaults(), and module-level proxy functions.
-
-Public API covered:
-  WebFetcher:         __init__, fetch, is_blocked, browser, scrape,
-                      configure(), configure_defaults()
-  InteractiveSession: __enter__/__exit__, fetch, execute_script,
-                      wait_for_selector, wait_for_function, click,
-                      wait_for_timeout, __getattr__
-  ScrapeMode:         FAST, STEALTH constants
-  Module proxies:     fetch, is_blocked, browser, scrape
-  Package helpers:    configure, configure_defaults
-
-All scrapling I/O is mocked — no network calls are made.
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,10 +20,15 @@ from conftest import (
     make_interactive_session,
 )
 
+pytestmark = pytest.mark.p0
+
+
 # ── InteractiveSession ────────────────────────────────────────────────────────
 
 
 class TestInteractiveSessionContextManager:
+    """InteractiveSession enter/exit lifecycle incl. page-close error path."""
+
     def test_normal_enter_starts_session_and_creates_page(self):
         mock_session, mock_page = make_interactive_session()
         with InteractiveSession(mock_session) as session:
@@ -64,6 +50,8 @@ class TestInteractiveSessionContextManager:
 
 
 class TestInteractiveSessionFetch:
+    """InteractiveSession.fetch returns page content and forwards timeout args."""
+
     def test_normal_fetch_returns_namespace_with_html(self):
         mock_session, mock_page = make_interactive_session("<html>loaded</html>")
         session = InteractiveSession(mock_session)
@@ -92,6 +80,8 @@ class TestInteractiveSessionFetch:
 
 
 class TestInteractiveSessionExecuteScript:
+    """InteractiveSession.execute_script evaluation and error propagation."""
+
     def test_normal_plain_script_evaluates_directly(self):
         mock_session, mock_page = make_interactive_session(eval_return="test-title")
         session = InteractiveSession(mock_session)
@@ -123,6 +113,8 @@ class TestInteractiveSessionExecuteScript:
 
 
 class TestInteractiveSessionHelpers:
+    """InteractiveSession delegation helpers raise before __enter__ and pass through after."""
+
     def _started(self, mock_session, mock_page):
         session = InteractiveSession(mock_session)
         session.__enter__()
@@ -185,6 +177,3 @@ class TestInteractiveSessionHelpers:
         ]:
             with pytest.raises(RuntimeError):
                 getattr(session, method)(*args)
-
-
-

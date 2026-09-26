@@ -1,16 +1,5 @@
 """SimilarityEngine helpers: normalize/soundex/caching."""
 
-"""
-Comprehensive tests for matching.py — SimilarityEngine.
-
-Public API covered:
-  __init__, hybrid_match, is_similar
-  (plus internal helpers _normalize, _soundex, _share_token covered via integration)
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 import pytest
 
 from scrape_kit.matching import SimilarityEngine
@@ -21,6 +10,7 @@ from conftest import (
     make_matching_cfg,
 )
 
+pytestmark = pytest.mark.p0
 
 
 @pytest.fixture
@@ -29,11 +19,12 @@ def rich_engine():
     return SimilarityEngine(RICH_CONFIG)
 
 
-
 # ── _normalize ────────────────────────────────────────────────────────────────
 
 
 class TestNormalize:
+    """_normalize lowercases, strips diacritics, applies synonyms and acronyms."""
+
     def test_normal_lowercases_and_strips_punctuation(self, engine):
         result = engine._normalize("Hello, World!")
         assert result == result.lower()
@@ -104,6 +95,8 @@ class TestNormalize:
 
 
 class TestSoundex:
+    """_soundex produces standard codes and caches per word."""
+
     def test_normal_standard_soundex_codes(self, engine):
         assert engine._soundex("Smith") == "S530"
         assert engine._soundex("Smyth") == "S530"  # phonetically equivalent
@@ -132,6 +125,8 @@ class TestSoundex:
 
 
 class TestCaching:
+    """Result and normalization caches are symmetric, isolated and bounded."""
+
     def test_normal_result_cached_after_first_is_similar(self, engine):
         engine.is_similar("Arsenal", "Arsenal FC")
         key = tuple(sorted(["Arsenal", "Arsenal FC"]))
@@ -164,6 +159,3 @@ class TestCaching:
         for i in range(200):
             engine.is_similar(f"Team {i}", f"Squad {i}")
         assert len(engine._result_cache) == 200
-
-
-

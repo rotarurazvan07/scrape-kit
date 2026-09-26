@@ -1,24 +1,5 @@
 """WebFetcher core: mode/init/is_blocked/fetch/browser/escalate."""
 
-"""
-Comprehensive tests for fetcher.py — WebFetcher, InteractiveSession, ScrapeMode,
-configure(), configure_defaults(), and module-level proxy functions.
-
-Public API covered:
-  WebFetcher:         __init__, fetch, is_blocked, browser, scrape,
-                      configure(), configure_defaults()
-  InteractiveSession: __enter__/__exit__, fetch, execute_script,
-                      wait_for_selector, wait_for_function, click,
-                      wait_for_timeout, __getattr__
-  ScrapeMode:         FAST, STEALTH constants
-  Module proxies:     fetch, is_blocked, browser, scrape
-  Package helpers:    configure, configure_defaults
-
-All scrapling I/O is mocked — no network calls are made.
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,10 +17,15 @@ from conftest import (
     make_page,
 )
 
+pytestmark = pytest.mark.p0
+
+
 # ── ScrapeMode ────────────────────────────────────────────────────────────────
 
 
 class TestScrapeMode:
+    """ScrapeMode exposes the FAST/STEALTH string constants."""
+
     def test_normal_fast_constant(self):
         assert ScrapeMode.FAST == "fast"
 
@@ -51,11 +37,12 @@ class TestScrapeMode:
         assert isinstance(ScrapeMode.STEALTH, str)
 
 
-
 # ── WebFetcher.__init__ ───────────────────────────────────────────────────────
 
 
 class TestWebFetcherInit:
+    """WebFetcher.__init__ stores and normalizes indicator lists."""
+
     def test_normal_custom_indicators_stored(self):
         fetcher = WebFetcher(retry_indicators=["retry_me"], block_indicators=["blocked"])
         assert fetcher.retry_indicators == ["retry_me"]
@@ -77,15 +64,17 @@ class TestWebFetcherInit:
         assert len(fetcher.block_indicators) == 2
 
 
-
 # ── WebFetcher.is_blocked ─────────────────────────────────────────────────────
 
 
 class TestIsBlocked:
+    """is_blocked matches block indicators case-insensitively."""
+
     def test_normal_html_without_indicator_returns_false(self):
         fetcher = WebFetcher(block_indicators=["Access Denied"])
         assert fetcher.is_blocked("<html>Welcome!</html>") is False
 
+    @pytest.mark.smoke
     def test_normal_html_with_indicator_returns_true(self):
         fetcher = WebFetcher(block_indicators=["Access Denied"])
         assert fetcher.is_blocked("<html>Access Denied</html>") is True
@@ -118,12 +107,14 @@ class TestIsBlocked:
         assert fetcher.is_blocked(None) is True
 
 
-
 # ── WebFetcher.fetch ──────────────────────────────────────────────────────────
 
 
 class TestFetch:
+    """WebFetcher.fetch retry, block-escalation and error paths."""
+
     @patch("scrape_kit.fetcher.Fetcher")
+    @pytest.mark.smoke
     def test_normal_successful_first_attempt(self, MockFetcher):
         MockFetcher.get.return_value = make_page("<html>Hello</html>")
         fetcher = WebFetcher()
@@ -207,11 +198,12 @@ class TestFetch:
         assert "OK" in result
 
 
-
 # ── WebFetcher.browser ────────────────────────────────────────────────────────
 
 
 class TestBrowser:
+    """WebFetcher.browser returns the right session type per stealth flag."""
+
     @patch("scrape_kit.fetcher.DynamicSession")
     def test_normal_returns_dynamic_session_by_default(self, MockDynamic):
         fetcher = WebFetcher()
@@ -241,7 +233,6 @@ class TestBrowser:
         fetcher.browser(custom_flag=True)
         call_kwargs = MockDynamic.call_args[1]
         assert call_kwargs.get("custom_flag") is True
-
 
 
 # ── Additional tests for uncovered lines ───────────────────────────────────────
@@ -295,6 +286,3 @@ class TestEscalateToBrowser:
             pytest.raises(FetcherError, match="Escalation failed"),
         ):
             fetcher._escalate_to_browser("http://test.com", "blocked")
-
-
-

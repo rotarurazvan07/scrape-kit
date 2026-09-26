@@ -1,19 +1,6 @@
 """Cross-manager integration scenarios (issue #10 split)."""
 
-"""
-Comprehensive tests for storage.py — BaseStorageManager & BufferedStorageManager.
-
-Public API covered (Base):
-  __init__, fetch_rows, fetch_dataframe, fetch_objects, execute_batch,
-  create_index, exists, insert, merge_databases, merge_row_by_row,
-  reopen_if_changed, flush_and_close, clear_database
-
-Public API covered (Buffered):
-  __init__, flush, exists, insert, clear_database, reopen_if_changed, close
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
+import pytest
 
 import sqlite3
 import threading
@@ -23,10 +10,15 @@ from scrape_kit.storage import BufferedStorageManager
 
 from conftest import create_items_schema, make_chunk
 
+pytestmark = pytest.mark.p1
+
+
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
 
 
 class TestStorageScenarios:
+    """Storage journeys (4th-tier test_scenario_ integration)."""
+
     def test_scenario_batch_insert_index_and_exists(self, db):
         """Insert 1 000 rows via execute_batch, index the name column,
         then verify random lookups via exists() are correct."""
@@ -104,6 +96,3 @@ class TestStorageScenarios:
         assert [r["name"] for r in rows] == ["x", "y", "z"]
         # Old names must be gone
         assert not populated_db.exists("items", "name", "alpha")
-
-
-

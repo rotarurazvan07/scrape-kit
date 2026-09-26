@@ -1,16 +1,5 @@
 """SimilarityEngine core: init/hybrid_match/is_similar."""
 
-"""
-Comprehensive tests for matching.py — SimilarityEngine.
-
-Public API covered:
-  __init__, hybrid_match, is_similar
-  (plus internal helpers _normalize, _soundex, _share_token covered via integration)
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 import pytest
 
 from scrape_kit.matching import SimilarityEngine
@@ -22,19 +11,15 @@ from conftest import (
     make_matching_cfg,
 )
 
-
-
-@pytest.fixture
-def rich_engine():
-    """Engine pre-loaded with rich config (alias for 'engine' now)."""
-    return SimilarityEngine(RICH_CONFIG)
-
+pytestmark = pytest.mark.p0
 
 
 # ── __init__ ──────────────────────────────────────────────────────────────────
 
 
 class TestInit:
+    """SettingsManager loads YAML trees into nested settings dict."""
+
     def test_normal_full_config_applied(self):
         cfg = {
             "threshold": THRESHOLD_HIGH,
@@ -108,6 +93,8 @@ class TestInit:
 
 
 class TestHybridMatch:
+    """hybrid_match returns clamped 0-100 scores with contract error paths."""
+
     def test_normal_identical_strings_score_100(self, engine):
         assert engine.hybrid_match("Real Madrid", "Real Madrid") == pytest.approx(100.0)
 
@@ -154,6 +141,9 @@ class TestHybridMatch:
 
 
 class TestIsSimilar:
+    """is_similar thresholds the hybrid score and returns (bool, float)."""
+
+    @pytest.mark.smoke
     def test_normal_clearly_similar_returns_true(self, engine):
         match, score = engine.is_similar("Tottenham Hotspur", "Tottenham")
         assert match is True
@@ -203,6 +193,3 @@ class TestIsSimilar:
     def test_error_non_string_raises_value_error(self, engine):
         with pytest.raises(ValueError, match="is_similar expects two strings"):
             engine.is_similar("test", 123)
-
-
-

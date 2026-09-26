@@ -1,15 +1,5 @@
 """SettingsManager core: init/get/write/delete."""
 
-"""
-Comprehensive tests for settings.py — SettingsManager.
-
-Public API covered:
-  __init__, get, write, delete
-
-Each method has: normal case, edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,13 +11,15 @@ from scrape_kit.settings import SettingsManager
 
 from conftest import make_cfg
 
-
+pytestmark = pytest.mark.p0
 
 
 # ── __init__ ──────────────────────────────────────────────────────────────────
 
 
 class TestInit:
+    """SettingsManager loads YAML trees into nested settings dict."""
+
     def test_normal_loads_single_yaml(self, tmp_path):
         cfg = make_cfg(tmp_path, {"app.yaml": "name: myapp\nversion: 2"})
         manager = SettingsManager(str(cfg))
@@ -81,6 +73,9 @@ class TestInit:
 
 
 class TestGet:
+    """get() resolves key paths with depth-first fallback on the last key."""
+
+    @pytest.mark.smoke
     def test_normal_full_path_lookup(self, tmp_path):
         cfg = make_cfg(tmp_path, {"db.yaml": "host: localhost\nport: 5432"})
         manager = SettingsManager(str(cfg))
@@ -138,6 +133,8 @@ class TestGet:
 
 
 class TestWrite:
+    """write() persists atomically and creates parent dirs."""
+
     def test_normal_creates_yaml_file_with_correct_content(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
@@ -196,6 +193,8 @@ class TestWrite:
 
 
 class TestDelete:
+    """delete() removes YAML files and tolerates missing paths."""
+
     def test_normal_deletes_existing_file(self, tmp_path):
         cfg = tmp_path / "config"
         cfg.mkdir()
@@ -236,6 +235,3 @@ class TestDelete:
         manager = SettingsManager(str(cfg))
         # Missing file is a no-op
         manager.delete("anything", subpath="nonexistent_dir")
-
-
-

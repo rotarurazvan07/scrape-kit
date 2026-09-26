@@ -1,15 +1,5 @@
 """Settings integration scenarios + edge cases (issue #10 split)."""
 
-"""
-Comprehensive tests for settings.py — SettingsManager.
-
-Public API covered:
-  __init__, get, write, delete
-
-Each method has: normal case, edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 import threading
 from pathlib import Path
 from unittest.mock import patch
@@ -22,13 +12,15 @@ from scrape_kit.settings import SettingsManager
 
 from conftest import make_cfg
 
-
+pytestmark = pytest.mark.p1
 
 
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
 
 
 class TestSettingsScenarios:
+    """Settings journeys (4th-tier test_scenario_ integration)."""
+
     def test_scenario_deep_nested_multi_file_all_keys_accessible(self, tmp_path):
         """Many yaml files across deep directories — every leaf key reachable by fallback."""
         cfg = make_cfg(
@@ -119,64 +111,75 @@ class TestSettingsScenarios:
 
     # ── Additional edge cases for uncovered lines ─────────────────────────────────
 
-    class TestInitEdgeCases:
-        def test_edge_directory_does_not_exist(self, tmp_path):
-            """Test line 29 - directory doesn't exist"""
-            nonexistent = tmp_path / "nonexistent"
-            manager = SettingsManager(str(nonexistent))
-            assert manager.settings == {}
 
-        def test_edge_single_file_as_directory(self, tmp_path):
-            """Test lines 32-33 - single file treated as directory"""
-            single_file = tmp_path / "single.yaml"
-            single_file.write_text("key: value")
-            manager = SettingsManager(str(single_file))
-            # When a single file is used, the structure is different
-            # The file becomes the root with its stem as the key
-            assert "single" in str(manager.settings) or manager.settings
+class TestInitEdgeCases:
+    """SettingsManager init on missing dir and single-file inputs."""
 
-    class TestGetEdgeCases:
-        def test_error_no_keys_provided(self, tmp_path):
-            """Test line 62 - no keys provided"""
-            cfg = make_cfg(tmp_path, {"test.yaml": "key: value"})
-            manager = SettingsManager(str(cfg))
-            with pytest.raises(SettingsError, match="At least one key must be provided"):
-                manager.get()
+    def test_edge_directory_does_not_exist(self, tmp_path):
+        """Test line 29 - directory doesn't exist"""
+        nonexistent = tmp_path / "nonexistent"
+        manager = SettingsManager(str(nonexistent))
+        assert manager.settings == {}
 
-        def test_edge_get_with_non_dict_intermediate(self, tmp_path):
-            """Test edge case where intermediate node is not a dict"""
-            cfg = make_cfg(tmp_path, {"test.yaml": "value: not_dict"})
-            manager = SettingsManager(str(cfg))
-            # This should break out of the loop and return None
-            assert manager.get("test", "nonexistent", "key") is None
+    def test_edge_single_file_as_directory(self, tmp_path):
+        """Test lines 32-33 - single file treated as directory"""
+        single_file = tmp_path / "single.yaml"
+        single_file.write_text("key: value")
+        manager = SettingsManager(str(single_file))
+        # When a single file is used, the structure is different
+        # The file becomes the root with its stem as the key
+        assert "single" in str(manager.settings) or manager.settings
 
-    class TestWriteEdgeCases:
-        def test_error_write_fails_os_error(self, tmp_path):
-            """Test lines 103-105 - write fails with OSError"""
-            cfg = tmp_path / "config"
-            cfg.mkdir()
-            manager = SettingsManager(str(cfg))
 
-            # Mock os.replace to raise OSError
-            with (
-                patch("os.replace", side_effect=OSError("Permission denied")),
-                pytest.raises(SettingsError, match="write failed"),
-            ):
-                manager.write("test", {"key": "value"})
+class TestGetEdgeCases:
+    """get() with no keys and non-dict intermediates."""
 
-    class TestDeleteEdgeCases:
-        def test_error_delete_fails_os_error(self, tmp_path):
-            """Test lines 113-115 - delete fails with OSError"""
-            cfg = tmp_path / "config"
-            cfg.mkdir()
-            target = cfg / "to_delete.yaml"
-            target.write_text("x: 1")
-            manager = SettingsManager(str(cfg))
+    def test_error_no_keys_provided(self, tmp_path):
+        """Test line 62 - no keys provided"""
+        cfg = make_cfg(tmp_path, {"test.yaml": "key: value"})
+        manager = SettingsManager(str(cfg))
+        with pytest.raises(SettingsError, match="At least one key must be provided"):
+            manager.get()
 
-            # Mock unlink to raise OSError
-            with (
-                patch.object(Path, "unlink", side_effect=OSError("Permission denied")),
-                pytest.raises(SettingsError, match="delete failed"),
-            ):
-                manager.delete("to_delete")
+    def test_edge_get_with_non_dict_intermediate(self, tmp_path):
+        """Test edge case where intermediate node is not a dict"""
+        cfg = make_cfg(tmp_path, {"test.yaml": "value: not_dict"})
+        manager = SettingsManager(str(cfg))
+        # This should break out of the loop and return None
+        assert manager.get("test", "nonexistent", "key") is None
 
+
+class TestWriteEdgeCases:
+    """write() OSError surfaces as SettingsError."""
+
+    def test_error_write_fails_os_error(self, tmp_path):
+        """Test lines 103-105 - write fails with OSError"""
+        cfg = tmp_path / "config"
+        cfg.mkdir()
+        manager = SettingsManager(str(cfg))
+
+        # Mock os.replace to raise OSError
+        with (
+            patch("os.replace", side_effect=OSError("Permission denied")),
+            pytest.raises(SettingsError, match="write failed"),
+        ):
+            manager.write("test", {"key": "value"})
+
+
+class TestDeleteEdgeCases:
+    """delete() OSError surfaces as SettingsError."""
+
+    def test_error_delete_fails_os_error(self, tmp_path):
+        """Test lines 113-115 - delete fails with OSError"""
+        cfg = tmp_path / "config"
+        cfg.mkdir()
+        target = cfg / "to_delete.yaml"
+        target.write_text("x: 1")
+        manager = SettingsManager(str(cfg))
+
+        # Mock unlink to raise OSError
+        with (
+            patch.object(Path, "unlink", side_effect=OSError("Permission denied")),
+            pytest.raises(SettingsError, match="delete failed"),
+        ):
+            manager.delete("to_delete")

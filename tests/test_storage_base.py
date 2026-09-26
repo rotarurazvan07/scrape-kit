@@ -1,34 +1,19 @@
 """BaseStorageManager queries + CRUD (issue #10 split)."""
 
-"""BaseStorageManager core CRUD + lifecycle (issue #10 split)."""
-
-"""
-Comprehensive tests for storage.py — BaseStorageManager & BufferedStorageManager.
-
-Public API covered (Base):
-  __init__, fetch_rows, fetch_dataframe, fetch_objects, execute_batch,
-  create_index, exists, insert, merge_databases, merge_row_by_row,
-  reopen_if_changed, flush_and_close, clear_database
-
-Public API covered (Buffered):
-  __init__, flush, exists, insert, clear_database, reopen_if_changed, close
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
-
 import pandas as pd
 import pytest
 
 from scrape_kit.errors import StorageError
 
+pytestmark = pytest.mark.p0
 
 
 # ── fetch_rows ────────────────────────────────────────────────────────────────
 
 
 class TestFetchRows:
+    """fetch_rows returns column-addressable dict rows."""
+
     def test_normal_returns_matching_rows(self, populated_db):
         rows = populated_db.fetch_rows("SELECT * FROM items WHERE name = ?", ("alpha",))
         assert len(rows) == 1
@@ -64,6 +49,8 @@ class TestFetchRows:
 
 
 class TestFetchDataframe:
+    """fetch_dataframe materializes query results as a DataFrame."""
+
     def test_normal_returns_dataframe_with_correct_shape(self, populated_db):
         df = populated_db.fetch_dataframe("SELECT * FROM items")
         assert isinstance(df, pd.DataFrame)
@@ -93,6 +80,8 @@ class TestFetchDataframe:
 
 
 class TestFetchObjs:
+    """fetch_objects maps rows through an optional mapper."""
+
     def test_normal_with_mapper_transforms_rows(self, populated_db):
         result = populated_db.fetch_objects(
             "SELECT * FROM items ORDER BY name",
@@ -125,6 +114,8 @@ class TestFetchObjs:
 
 
 class TestExecuteBatch:
+    """execute_batch commits all rows or rolls back entirely."""
+
     def test_normal_inserts_all_rows_in_one_transaction(self, db):
         params = [("item1", "v1"), ("item2", "v2"), ("item3", "v3")]
         db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", params)
@@ -157,6 +148,8 @@ class TestExecuteBatch:
 
 
 class TestCreateIndex:
+    """create_index builds single/unique composite indexes idempotently."""
+
     def test_normal_creates_single_column_index(self, db):
         db.create_index("items", ["name"])
         cursor = db.conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_items_name'")
@@ -183,6 +176,9 @@ class TestCreateIndex:
 
 
 class TestBaseExists:
+    """exists checks value presence across types and missing columns."""
+
+    @pytest.mark.smoke
     def test_normal_returns_true_when_value_present(self, populated_db):
         assert populated_db.exists("items", "name", "alpha") is True
 
@@ -210,6 +206,9 @@ class TestBaseExists:
 
 
 class TestBaseInsert:
+    """insert persists rows incl. NULL handling and constraint errors."""
+
+    @pytest.mark.smoke
     def test_normal_inserts_row_and_is_retrievable(self, db):
         db.insert("items", {"name": "myitem", "value": "myval"})
         rows = db.fetch_rows("SELECT * FROM items WHERE name = ?", ("myitem",))
@@ -240,6 +239,8 @@ class TestBaseInsert:
 
 
 class TestClearDatabase:
+    """clear_database drops all rows but keeps schema."""
+
     def test_normal_removes_all_rows(self, populated_db):
         populated_db.clear_database("items")
         assert populated_db.fetch_rows("SELECT * FROM items") == []
@@ -255,7 +256,3 @@ class TestClearDatabase:
     def test_error_nonexistent_table_raises_storage_error(self, db):
         with pytest.raises(StorageError):
             db.clear_database("nonexistent_table")
-
-
-
-

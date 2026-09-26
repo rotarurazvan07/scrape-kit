@@ -145,10 +145,7 @@ def make_cfg(tmp_path, structure: dict) -> Path:
 
 def create_items_schema(conn, table: str = ITEMS_TABLE) -> None:
     """Create the canonical items table (issue #14 — one DDL, not four variants)."""
-    conn.execute(
-        f"CREATE TABLE IF NOT EXISTS {table} "
-        "(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)"
-    )
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)")
 
 
 class MockDB(BaseStorageManager):

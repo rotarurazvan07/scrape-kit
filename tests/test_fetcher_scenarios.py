@@ -1,23 +1,6 @@
 """Fetcher integration scenarios (4th-tier test_scenario_)."""
 
-"""
-Comprehensive tests for fetcher.py — WebFetcher, InteractiveSession, ScrapeMode,
-configure(), configure_defaults(), and module-level proxy functions.
-
-Public API covered:
-  WebFetcher:         __init__, fetch, is_blocked, browser, scrape,
-                      configure(), configure_defaults()
-  InteractiveSession: __enter__/__exit__, fetch, execute_script,
-                      wait_for_selector, wait_for_function, click,
-                      wait_for_timeout, __getattr__
-  ScrapeMode:         FAST, STEALTH constants
-  Module proxies:     fetch, is_blocked, browser, scrape
-  Package helpers:    configure, configure_defaults
-
-All scrapling I/O is mocked — no network calls are made.
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
+import pytest
 
 from unittest.mock import patch
 
@@ -37,10 +20,15 @@ from conftest import (
     make_page,
 )
 
+pytestmark = pytest.mark.p1
+
+
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
 
 
 class TestFetcherScenarios:
+    """End-to-end fetcher journeys (4th-tier test_scenario_ integration)."""
+
     @patch("scrape_kit.fetcher.Fetcher")
     def test_scenario_two_failures_then_success_on_third(self, MockFetcher):
         MockFetcher.get.side_effect = [
@@ -112,6 +100,3 @@ class TestFetcherScenarios:
         second = fetcher_module._shared
         assert first is not second
         assert second.retry_indicators == ["second"]
-
-
-

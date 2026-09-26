@@ -1,23 +1,6 @@
 """WebFetcher.configure family + module proxies."""
 
-"""
-Comprehensive tests for fetcher.py — WebFetcher, InteractiveSession, ScrapeMode,
-configure(), configure_defaults(), and module-level proxy functions.
-
-Public API covered:
-  WebFetcher:         __init__, fetch, is_blocked, browser, scrape,
-                      configure(), configure_defaults()
-  InteractiveSession: __enter__/__exit__, fetch, execute_script,
-                      wait_for_selector, wait_for_function, click,
-                      wait_for_timeout, __getattr__
-  ScrapeMode:         FAST, STEALTH constants
-  Module proxies:     fetch, is_blocked, browser, scrape
-  Package helpers:    configure, configure_defaults
-
-All scrapling I/O is mocked — no network calls are made.
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
+import pytest
 
 from unittest.mock import MagicMock, patch
 
@@ -40,15 +23,18 @@ from conftest import (
     make_page,
 )
 
+pytestmark = pytest.mark.p0
+
+
 # ── WebFetcher.configure() ────────────────────────────────────────────────────
 
 
 class TestConfigure:
+    """configure() loads retry/block indicators from YAML via SettingsManager."""
+
     def test_normal_loads_indicators_from_yaml(self, tmp_path):
         """configure() reads retry/block lists from a YAML file via SettingsManager."""
-        cfg_dir = make_fetcher_config(
-            tmp_path, retry=["just a moment", "checking your browser"], block=["access denied"]
-        )
+        cfg_dir = make_fetcher_config(tmp_path, retry=["just a moment", "checking your browser"], block=["access denied"])
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.retry_indicators == ["just a moment", "checking your browser"]
         assert instance.block_indicators == ["access denied"]
@@ -85,6 +71,8 @@ class TestConfigure:
 
 
 class TestConfigureDefaults:
+    """configure_defaults() builds an instance from class-level defaults."""
+
     def test_normal_uses_class_defaults(self):
         instance = WebFetcher.configure_defaults(set_shared=False)
         assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
@@ -109,6 +97,8 @@ class TestConfigureDefaults:
 
 
 class TestPackageConfigure:
+    """Package-level configure/configure_defaults set the module shared instance."""
+
     def test_normal_sk_configure_sets_shared(self, tmp_path):
         cfg_dir = make_fetcher_config(tmp_path, retry=["pkg"])
         fetcher_module._shared = None
@@ -127,6 +117,8 @@ class TestPackageConfigure:
 
 
 class TestModuleProxies:
+    """Module-level fetch/is_blocked/browser/scrape delegate to the shared instance."""
+
     def test_normal_get_shared_creates_zero_config_instance_if_not_set(self):
         """_get_shared() auto-creates an empty WebFetcher when none is configured."""
         fetcher_module._shared = None
@@ -174,6 +166,3 @@ class TestModuleProxies:
         # is_blocked now uses the configured indicators
         assert module_is_blocked("page is totally_blocked") is True
         assert module_is_blocked("clean page") is False
-
-
-

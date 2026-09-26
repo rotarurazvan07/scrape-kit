@@ -1,16 +1,5 @@
 """Matching integration scenarios (4th-tier test_scenario_)."""
 
-"""
-Comprehensive tests for matching.py — SimilarityEngine.
-
-Public API covered:
-  __init__, hybrid_match, is_similar
-  (plus internal helpers _normalize, _soundex, _share_token covered via integration)
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 import pytest
 
 from scrape_kit.matching import SimilarityEngine
@@ -25,6 +14,7 @@ from conftest import (
     make_matching_cfg,
 )
 
+pytestmark = pytest.mark.p1
 
 
 @pytest.fixture
@@ -33,11 +23,12 @@ def rich_engine():
     return SimilarityEngine(RICH_CONFIG)
 
 
-
 # ── Complex Scenarios ─────────────────────────────────────────────────────────
 
 
 class TestMatchingScenarios:
+    """Matching journeys (4th-tier test_scenario_ integration)."""
+
     def test_scenario_diacritic_plus_synonym_chain(self):
         """Diacritic stripping and synonym replacement must compose correctly."""
         cfg = make_matching_cfg()
@@ -169,4 +160,3 @@ class TestMatchingScenarios:
         if score < 95:
             assert m_strict is False
         assert m_lenient is True
-

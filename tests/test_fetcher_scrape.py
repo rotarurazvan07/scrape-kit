@@ -1,24 +1,5 @@
 """Batch scrape modes: scrape/_fetch_one_fast/_scrape_stealth."""
 
-"""
-Comprehensive tests for fetcher.py — WebFetcher, InteractiveSession, ScrapeMode,
-configure(), configure_defaults(), and module-level proxy functions.
-
-Public API covered:
-  WebFetcher:         __init__, fetch, is_blocked, browser, scrape,
-                      configure(), configure_defaults()
-  InteractiveSession: __enter__/__exit__, fetch, execute_script,
-                      wait_for_selector, wait_for_function, click,
-                      wait_for_timeout, __getattr__
-  ScrapeMode:         FAST, STEALTH constants
-  Module proxies:     fetch, is_blocked, browser, scrape
-  Package helpers:    configure, configure_defaults
-
-All scrapling I/O is mocked — no network calls are made.
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,11 +10,15 @@ from scrape_kit.fetcher import (
     WebFetcher,
 )
 
+pytestmark = pytest.mark.p0
+
 
 # ── WebFetcher.scrape ─────────────────────────────────────────────────────────
 
 
 class TestScrape:
+    """Batch scrape dispatch: FAST/STEALTH modes and invalid-mode rejection."""
+
     def test_edge_empty_urls_returns_without_calling_anything(self):
         fetcher = WebFetcher()
         called = []
@@ -80,7 +65,6 @@ class TestScrape:
             fetcher.scrape(["http://a.com"], callback=MagicMock(), mode="invalid")
 
 
-
 class TestFetchOneFast:
     """Test lines 415-416, 419-421 - _fetch_one_fast method"""
 
@@ -124,4 +108,3 @@ class TestScrapeStealth:
 
         with pytest.raises(ValueError, match="Unsupported scrape mode"):
             fetcher.scrape(["http://test.com"], callback, mode="invalid_mode")
-

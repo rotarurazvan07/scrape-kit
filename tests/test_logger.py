@@ -1,12 +1,3 @@
-"""
-Comprehensive tests for logger.py — logging functionality.
-
-Public API covered:
-  ScrapeKitFormatter, get_logger, time_profiler
-
-Each method has: normal case, edge case(s), error case.
-"""
-
 import logging
 import os
 import sys
@@ -17,8 +8,12 @@ import pytest
 
 from scrape_kit.logger import ScrapeKitFormatter, get_logger, time_profiler
 
+pytestmark = pytest.mark.p0
+
 
 class TestScrapeKitFormatter:
+    """ScrapeKitFormatter renders level, name and message for every log level."""
+
     def test_normal_formats_debug_message(self):
         formatter = ScrapeKitFormatter()
         record = logging.LogRecord(
@@ -101,6 +96,9 @@ class TestScrapeKitFormatter:
 
 
 class TestGetLogger:
+    """get_logger configures level, handlers, propagation and stream targets."""
+
+    @pytest.mark.smoke
     def test_normal_creates_logger_with_default_debug_level(self):
         logger = get_logger("test_logger")
         assert isinstance(logger, logging.Logger)
@@ -156,6 +154,8 @@ class TestGetLogger:
 
 
 class TestTimeProfiler:
+    """time_profiler decorates with and without parens, times and re-raises."""
+
     def test_normal_decorator_measures_execution_time(self):
         @time_profiler()
         def sample_function():

@@ -1,20 +1,5 @@
 """BufferedStorageManager (issue #10 split)."""
 
-"""
-Comprehensive tests for storage.py — BaseStorageManager & BufferedStorageManager.
-
-Public API covered (Base):
-  __init__, fetch_rows, fetch_dataframe, fetch_objects, execute_batch,
-  create_index, exists, insert, merge_databases, merge_row_by_row,
-  reopen_if_changed, flush_and_close, clear_database
-
-Public API covered (Buffered):
-  __init__, flush, exists, insert, clear_database, reopen_if_changed, close
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
-
 import os
 import sqlite3
 import time
@@ -27,10 +12,15 @@ from scrape_kit.storage import BufferedStorageManager
 
 from conftest import create_items_schema
 
+pytestmark = pytest.mark.p0
+
+
 # ── BufferedStorageManager — exists ──────────────────────────────────────────
 
 
 class TestBufferedExists:
+    """BufferedStorageManager.exists resolves through the pandas buffer."""
+
     def test_normal_found_in_buffer(self, buffered_db):
         assert buffered_db.exists("name", "alpha") is True
 
@@ -55,6 +45,8 @@ class TestBufferedExists:
 
 
 class TestBufferedInsert:
+    """BufferedStorageManager.insert appends to the in-memory buffer."""
+
     def test_normal_insert_grows_buffer(self, buffered_db):
         before = len(buffered_db.ensure_buffer())
         buffered_db.insert({"id": 3, "name": "gamma", "value": "g"})
@@ -82,6 +74,8 @@ class TestBufferedInsert:
 
 
 class TestBufferedFlush:
+    """flush persists dirty buffers and clears the dirty flag."""
+
     def test_normal_dirty_buffer_written_to_db(self, buffered_db):
         buffered_db.insert({"id": 99, "name": "write_me", "value": "v"})
         buffered_db.flush()
@@ -113,6 +107,8 @@ class TestBufferedFlush:
 
 
 class TestBufferedClearDatabase:
+    """clear_database resets SQL and the bound-table buffer."""
+
     def test_normal_clears_sql_and_resets_buffer(self, buffered_db):
         buffered_db.clear_database("items")
         assert buffered_db._buffer is None
@@ -134,6 +130,8 @@ class TestBufferedClearDatabase:
 
 
 class TestBufferedReopenIfChanged:
+    """mtime changes invalidate the buffer on reopen."""
+
     def test_normal_mtime_change_clears_buffer(self, buffered_db):
         _ = buffered_db.ensure_buffer()
         assert buffered_db._buffer is not None
@@ -147,7 +145,6 @@ class TestBufferedReopenIfChanged:
         before = id(buffered_db._buffer)
         buffered_db.reopen_if_changed()
         assert id(buffered_db._buffer) == before
-
 
 
 class TestBufferedStorageEdgeCases:
@@ -237,4 +234,3 @@ class TestBufferedStorageEdgeCases:
         manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
         with pytest.raises(StorageError, match="insert requires mapping payload"):
             manager.insert("not_a_mapping")
-
