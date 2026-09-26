@@ -1,0 +1,172 @@
+"""Matching integration scenarios (4th-tier test_scenario_)."""
+
+"""
+Comprehensive tests for matching.py — SimilarityEngine.
+
+Public API covered:
+  __init__, hybrid_match, is_similar
+  (plus internal helpers _normalize, _soundex, _share_token covered via integration)
+
+Each method has: normal case(s), edge case(s), error case.
+Plus 5 complex integration scenarios at the bottom.
+"""
+
+import pytest
+
+from scrape_kit.matching import SimilarityEngine
+
+from conftest import (
+    RICH_CONFIG,
+    THRESHOLD_DEFAULT,
+    THRESHOLD_EXACT,
+    THRESHOLD_HIGH,
+    THRESHOLD_LENIENT,
+    THRESHOLD_MODERATE,
+    make_matching_cfg,
+)
+
+
+
+@pytest.fixture
+def rich_engine():
+    """Engine pre-loaded with rich config (alias for 'engine' now)."""
+    return SimilarityEngine(RICH_CONFIG)
+
+
+
+# ── Complex Scenarios ─────────────────────────────────────────────────────────
+
+
+class TestMatchingScenarios:
+    def test_scenario_diacritic_plus_synonym_chain(self):
+        """Diacritic stripping and synonym replacement must compose correctly."""
+        cfg = make_matching_cfg()
+        cfg.update(
+            {
+                "threshold": THRESHOLD_MODERATE,
+                "synonyms": {"fc barcelona": "barcelona"},
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        # "FC Barçelona" → strip diacritic → "FC Barcelona" → lowercase → "fc barcelona"
+        # → synonym match → "barcelona"
+        # "Barcelona" → normalize → "barcelona"
+        match, _ = eng.is_similar("FC Barçelona", "Barcelona")
+        assert match is True
+
+    def test_scenario_acronym_expands_before_similarity(self):
+        """Acronym expansion during normalization bridges abbreviated vs full name."""
+        cfg = make_matching_cfg()
+        cfg.update(
+            {
+                "threshold": THRESHOLD_DEFAULT,
+                "acronyms": {"fc": "football club", "utd": "united"},
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        match, _ = eng.is_similar("Manchester FC", "Manchester Football Club")
+        assert match is True
+        match2, _ = eng.is_similar("Man Utd", "Man United")
+        assert match2 is True
+
+    def test_scenario_short_prefix_rule_does_not_break_real_betis(self):
+        """Short prefix rules must not corrupt longer words before matching."""
+        cfg = make_matching_cfg()
+        cfg.update(
+            {
+                "threshold": THRESHOLD_DEFAULT,
+                "acronyms": {"al ": "", "real ": ""},
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        match, score = eng.is_similar("Real Betis", "Betis")
+        assert match is True
+        assert score > 65
+
+    def test_scenario_weak_tokens_do_not_establish_match_alone(self):
+        """Ambiguous shared words should not merge clearly different clubs."""
+        cfg = make_matching_cfg()
+        cfg.update(
+            {
+                "threshold": THRESHOLD_DEFAULT,
+                "weak_tokens": ["new", "york", "sporting", "inter"],
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        match, score = eng.is_similar("New York City", "New York Red Bulls")
+        assert match is False
+        assert score == pytest.approx(35.0)  # strong_mismatch_cap residual (issue #2)
+
+        match, score = eng.is_similar("Sporting CP", "Sporting Kansas City")
+        assert match is False
+        assert score == pytest.approx(35.0)
+
+    def test_scenario_weak_tokens_still_allow_exact_canonical_synonyms(self):
+        cfg = make_matching_cfg()
+        cfg.update(
+            {
+                "threshold": THRESHOLD_DEFAULT,
+                "synonyms": {"inter": "inter milan"},
+                "weak_tokens": ["inter"],
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        match, score = eng.is_similar("Inter", "Inter Milan")
+        assert match is True
+        assert score == pytest.approx(100.0)
+
+    def test_scenario_token_weight_vs_ratio_weight_on_reordered_names(self):
+        """Token set ratio handles order-independence; character ratio does not."""
+        cfg_token = make_matching_cfg()
+        cfg_token.update(
+            {
+                "threshold": THRESHOLD_HIGH,
+                "weights": {"token": 1.0, "substr": 0.0, "phonetic": 0.0, "ratio": 0.0},
+            }
+        )
+        cfg_ratio = make_matching_cfg()
+        cfg_ratio.update(
+            {
+                "threshold": THRESHOLD_HIGH,
+                "weights": {"token": 0.0, "substr": 0.0, "phonetic": 0.0, "ratio": 1.0},
+            }
+        )
+        token_eng = SimilarityEngine(cfg_token)
+        ratio_eng = SimilarityEngine(cfg_ratio)
+        m_token, _ = token_eng.is_similar("Moby Dick", "Dick Moby")
+        m_ratio, _ = ratio_eng.is_similar("Moby Dick", "Dick Moby")
+        assert m_token is True
+        assert m_ratio is False  # character-level order mismatch lowers ratio
+
+    def test_scenario_phonetic_weight_boosts_homophones(self):
+        """High phonetic weight helps match names that sound alike but are spelled differently."""
+        cfg = make_matching_cfg()
+        cfg.update(
+            {
+                "threshold": 50,
+                "weights": {"token": 0.2, "substr": 0.0, "phonetic": 0.8, "ratio": 0.0},
+            }
+        )
+        eng = SimilarityEngine(cfg)
+        # "Smith" and "Smyth" share soundex S530
+        match, score = eng.is_similar("John Smith", "John Smyth")
+        assert match is True
+        assert score > 50
+
+    def test_scenario_threshold_sensitivity(self):
+        """Same pair — strict vs lenient threshold flips the boolean result."""
+        cfg_strict = make_matching_cfg()
+        cfg_strict["threshold"] = THRESHOLD_EXACT
+        cfg_lenient = make_matching_cfg()
+        cfg_lenient["threshold"] = THRESHOLD_LENIENT
+
+        strict = SimilarityEngine(cfg_strict)
+        lenient = SimilarityEngine(cfg_lenient)
+        # Moderately similar pair
+        _, score = lenient.is_similar("Liverpool FC", "Liverpool")
+        m_strict, _ = strict.is_similar("Liverpool FC", "Liverpool")
+        m_lenient, _ = lenient.is_similar("Liverpool FC", "Liverpool")
+        if score < 95:
+            assert m_strict is False
+        assert m_lenient is True
+
