@@ -306,7 +306,7 @@ jobs:
         run: |
           autoflake --in-place --recursive --remove-all-unused-imports --remove-unused-variables \
             --exclude .venv,__pycache__ "$SRC_DIR" "$TEST_DIR"
-          find "$SRC_DIR" "$TEST_DIR" -name "*.py" | xargs -r pyupgrade --py311-plus || true
+          find "$SRC_DIR" "$TEST_DIR" -name "*.py" -print0 | xargs -0 -r pyupgrade --py311-plus || true
           isort --profile black --line-length 127 "$SRC_DIR" "$TEST_DIR"
           ruff format --line-length 127 --target-version py311 "$SRC_DIR" "$TEST_DIR"
           ruff check --select E,F,B,C,SIM,PERF --ignore UP --fix --unsafe-fixes \
