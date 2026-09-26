@@ -47,8 +47,7 @@ jobs:
         run: ruff format --line-length 127 --target-version py311 --check "$SRC_DIR" "$TEST_DIR"
 
       - name: ruff lint — check
-        run: ruff check --line-length 127 --select E,F,B,C,SIM,PERF --ignore UP \
-          --output-format=concise "$SRC_DIR" "$TEST_DIR"
+        run: ruff check --line-length 127 --select E,F,B,C,SIM,PERF --ignore UP --output-format=concise "$SRC_DIR" "$TEST_DIR"
 
       - name: actionlint — workflow syntax + expression checks
         run: |
