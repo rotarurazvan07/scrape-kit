@@ -374,7 +374,7 @@ jobs:
             echo "- test (matrix 3.11–3.14): ${{ needs.test.result }}"
             echo "- burn-in (advisory): ${{ needs.burn-in.result }}"
             echo "- audit (advisory): ${{ needs.audit.result }}"
-            echo "- mypy errors: ${{ needs.audit.outputs.mypy_errors }} (baseline 12 @ mypy 1.18.2)"
+            echo "- mypy errors: ${{ needs.audit.outputs.mypy_errors }} (baseline 6 @ mypy 1.18.2)"
             echo "- pip-audit vulns: ${{ needs.audit.outputs.pip_audit_vulns }}"
             echo "- coverage floor: $COVERAGE_FAIL_UNDER%"
             echo "- scrapling pin: $SCRAPLING_VERSION (must match pyproject.toml)"
