@@ -49,7 +49,7 @@ runs:
         path: |
           ~/.cache/scrapling
           ~/.cache/camoufox
-        key: scrapling-${{ inputs.scrapling-version }}-${{ runner.os }}-${{ hashFiles("pyproject.toml") }}
+        key: scrapling-${{ inputs.scrapling-version }}-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
         restore-keys: |
           scrapling-${{ inputs.scrapling-version }}-${{ runner.os }}-
 
