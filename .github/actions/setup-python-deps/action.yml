@@ -1,0 +1,58 @@
+---
+name: "Setup Python + deps"
+description: "Shared: python + pip cache, pinned project/test deps + tools, scrapling fetchers"
+
+inputs:
+  python-version:
+    description: "Python version for this job"
+    required: true
+  install-tools:
+    description: "Extra pinned tools to pip install (space-separated, caller-controlled)"
+    required: false
+    default: ""
+  cache-scrapling:
+    description: "Cache scrapling browser binaries"
+    required: false
+    default: "true"
+  scrapling-version:
+    description: "Pinned scrapling version — cache key part; must stay in sync with pyproject.toml"
+    required: false
+    default: "0.4.14"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Python with pip cache
+      uses: actions/setup-python@v5
+      with:
+        python-version: "${{ inputs.python-version }}"
+        cache: pip
+        cache-dependency-path: pyproject.toml
+
+    - name: Install project, test deps, and tools
+      shell: bash
+      env:
+        # Security: input passed through env: to prevent script injection
+        TOOLS: "${{ inputs.install-tools }}"
+      run: |
+        pip install -e .
+        pip install pytest==8.4.2 pytest-cov==7.0.0 pytest-xdist==3.8.0 pytest-timeout==2.3.1
+        if [ -n "$TOOLS" ]; then
+          # shellcheck disable=SC2086 # TOOLS is a caller-controlled pinned list
+          pip install $TOOLS
+        fi
+
+    - name: Cache scrapling browser binaries
+      if: inputs.cache-scrapling == 'true'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/scrapling
+          ~/.cache/camoufox
+        key: scrapling-${{ inputs.scrapling-version }}-${{ runner.os }}-${{ hashFiles("pyproject.toml") }}
+        restore-keys: |
+          scrapling-${{ inputs.scrapling-version }}-${{ runner.os }}-
+
+    - name: Install scrapling fetchers
+      shell: bash
+      run: scrapling install

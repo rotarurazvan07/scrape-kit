@@ -10,6 +10,26 @@ from .logger import get_logger
 logger = get_logger(__name__)
 
 
+def _depth_first_search(data: dict[str, Any], target: str) -> Any | None:
+    """Search a nested mapping depth-first for a target key.
+
+    Args:
+        data: Nested mapping to search.
+        target: Key to look for at any nesting depth.
+
+    Returns:
+        The value for the target key if found, None otherwise.
+    """
+    if target in data:
+        return data[target]
+    for value in data.values():
+        if isinstance(value, dict):
+            result = _depth_first_search(value, target)
+            if result is not None:
+                return result
+    return None
+
+
 class SettingsManager:
     """Recursively loads all YAML files in a directory and provides atomic writes."""
 
@@ -98,17 +118,7 @@ class SettingsManager:
                 return node
 
         # Fallback to a global depth-first search for the last key
-        def _search(d: dict[str, Any], target: str) -> Any | None:
-            if target in d:
-                return d[target]
-            for v in d.values():
-                if isinstance(v, dict):
-                    result = _search(v, target)
-                    if result is not None:
-                        return result
-            return None
-
-        return _search(self.settings, keys[-1])
+        return _depth_first_search(self.settings, keys[-1])
 
     def _resolve_target(self, name: str, subpath: str | Path | None = None) -> Path:
         """Resolve the full path for a settings file.

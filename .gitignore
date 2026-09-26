@@ -208,3 +208,9 @@ __marimo__/
 
 # Desloppify local state
 .desloppify/
+
+# CI/local run outputs (workflow + gate-form local runs)
+test-results.xml
+coverage.json
+ruff-fix-output.txt
+scorecard.png
