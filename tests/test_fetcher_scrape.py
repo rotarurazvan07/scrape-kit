@@ -1,6 +1,6 @@
 """Batch scrape modes: scrape/_fetch_one_fast/_scrape_stealth."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -109,3 +109,93 @@ class TestScrapeStealth:
 
         with pytest.raises(ValueError, match="Unsupported scrape mode"):
             fetcher.scrape(["http://test.com"], callback, mode="invalid_mode")
+
+
+class TestScrapeStealthPipeline:
+    """Stealth batch pipeline: async queue workers, per-URL fetch, retry escalation, callback delivery (#7)."""
+
+    @staticmethod
+    def _page(status=200, html="<html>stealthed</html>"):
+        page = MagicMock()
+        page.status = status
+        page.html_content = html
+        return page
+
+    @staticmethod
+    def _stealth_cm(fetch_impl):
+        """AsyncStealthySession context-manager mock whose inner .fetch uses fetch_impl."""
+        cm = AsyncMock()
+        inner = cm.__aenter__.return_value
+        inner.fetch = AsyncMock(side_effect=fetch_impl)
+        return cm
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    def test_normal_stealth_batch_delivers_callbacks(self, MockSession, mock_sleep):
+        pages = {"http://a.com": self._page(html="<html>AAA</html>"), "http://b.com": self._page(html="<html>BBB</html>")}
+
+        async def fetch_impl(url, **kwargs):
+            return pages[url]
+
+        MockSession.return_value = self._stealth_cm(fetch_impl)
+        fetcher = WebFetcher()
+        got = []
+        fetcher._scrape_stealth(list(pages), lambda u, h: got.append((u, h)), max_concurrency=2)
+        assert sorted(u for u, _ in got) == ["http://a.com", "http://b.com"]  # every URL delivered
+        assert dict(got)["http://a.com"] == "<html>AAA</html>"
+        # session entered exactly once, with capped concurrency and cloudflare solving
+        MockSession.assert_called_once_with(max_pages=2, headless=True, solve_cloudflare=True)
+        mock_sleep.assert_not_awaited()  # happy path: no retry backoff
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    def test_normal_stealth_retries_429_then_succeeds(self, MockSession, mock_sleep):
+        ok = self._page()
+        cm = self._stealth_cm([self._page(status=429), self._page(status=429), ok])
+        MockSession.return_value = cm
+        fetcher = WebFetcher()
+        got = []
+        fetcher._scrape_stealth(["http://a.com"], lambda u, h: got.append(u), max_concurrency=1)
+        assert got == ["http://a.com"]  # delivered after backoff
+        delays = [c.args[0] for c in mock_sleep.await_args_list]
+        assert delays == [30, 60]  # 30 * attempt anti-ban backoff
+        cm.__aenter__.return_value.fetch.assert_called_with(
+            "http://a.com", disable_resources=False, network_idle=True, timeout=90000
+        )
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    def test_error_stealth_persistently_blocked_raises(self, MockSession, mock_sleep):
+        MockSession.return_value = self._stealth_cm([self._page(status=503)] * 4)
+        fetcher = WebFetcher()
+        with pytest.raises(FetcherError, match="Stealth scrape had 1 failures"):
+            fetcher._scrape_stealth(["http://a.com"], lambda u, h: None, max_concurrency=1)
+        # three backoffs (attempts 1-3), attempt 4 raises the per-URL failure
+        assert len(mock_sleep.await_args_list) == 3
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    def test_error_stealth_fetch_exception_exhausts_retries(self, MockSession, mock_sleep):
+        async def fetch_impl(url, **kwargs):
+            raise RuntimeError("page crashed")
+
+        MockSession.return_value = self._stealth_cm(fetch_impl)
+        fetcher = WebFetcher()
+        with pytest.raises(FetcherError, match="Stealth scrape had 1 failures"):
+            fetcher._scrape_stealth(["http://a.com"], lambda u, h: None, max_concurrency=1)
+        assert len(mock_sleep.await_args_list) == 3  # 15 * attempt backoffs for attempts 1-3
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    def test_error_stealth_partial_failure_summarises_and_keeps_good_result(self, MockSession, mock_sleep):
+        async def fetch_impl(url, **kwargs):
+            if "bad" in url:
+                raise RuntimeError("boom")
+            return self._page()
+
+        MockSession.return_value = self._stealth_cm(fetch_impl)
+        fetcher = WebFetcher()
+        got = []
+        with pytest.raises(FetcherError, match="Stealth scrape had 1 failures. Sample: http://bad.com"):
+            fetcher._scrape_stealth(["http://good.com", "http://bad.com"], lambda u, h: got.append(u), max_concurrency=2)
+        assert got == ["http://good.com"]  # the healthy URL still delivered before the summary raise

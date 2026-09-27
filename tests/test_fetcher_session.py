@@ -1,5 +1,6 @@
 """InteractiveSession."""
 
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -176,3 +177,46 @@ class TestInteractiveSessionHelpers:
         ]:
             with pytest.raises(RuntimeError):
                 getattr(session, method)(*args)
+
+
+class TestScrollToBottom:
+    """scroll_to_bottom embeds its scroll-loop JS and guards on session start (#7)."""
+
+    def test_normal_embeds_scroll_loop_js(self):
+        mock_session, mock_page = make_interactive_session()
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        session.scroll_to_bottom(infinite=True, idle_ms=CLICK_IDLE_ALT_MS)
+        script = mock_page.evaluate.call_args[0][0]
+        assert "var infinite = true;" in script
+        assert f"var idle_ms = {CLICK_IDLE_ALT_MS};" in script
+        assert "MutationObserver" in script  # the settle-detection primitive
+
+    def test_normal_cycle_delay_defaults_to_idle_over_five(self):
+        mock_session, mock_page = make_interactive_session()
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        session.scroll_to_bottom(idle_ms=CLICK_IDLE_ALT_MS)  # no explicit cycle delay
+        script = mock_page.evaluate.call_args[0][0]
+        assert f"var cycle_delay_ms = {CLICK_IDLE_ALT_MS // 5};" in script  # default = idle_ms // 5
+
+    def test_normal_explicit_cycle_delay_overrides_default(self):
+        mock_session, mock_page = make_interactive_session()
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        session.scroll_to_bottom(idle_ms=CLICK_IDLE_ALT_MS, cycle_delay_ms=250)
+        script = mock_page.evaluate.call_args[0][0]
+        assert "var cycle_delay_ms = 250;" in script
+
+    def test_normal_finite_mode_disables_recycle(self):
+        mock_session, mock_page = make_interactive_session()
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        session.scroll_to_bottom(infinite=False)
+        script = mock_page.evaluate.call_args[0][0]
+        assert "var infinite = false;" in script
+
+    def test_error_before_enter_raises_runtime(self):
+        session = InteractiveSession(MagicMock())
+        with pytest.raises(RuntimeError, match=re.escape("Call fetch() first")):
+            session.scroll_to_bottom()

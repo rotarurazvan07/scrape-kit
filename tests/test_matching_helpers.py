@@ -158,3 +158,15 @@ class TestCaching:
         for i in range(200):
             engine.is_similar(f"Team {i}", f"Squad {i}")
         assert len(engine._result_cache) == 200
+
+
+class TestAcronymPositions:
+    """Acronym keys fire at prefix, suffix and interior positions (#8)."""
+
+    def test_normal_suffix_position_replaced(self):
+        eng = SimilarityEngine(make_matching_cfg(acronyms={" ltd": "limited"}))
+        assert eng._normalize("Foo LTD") == "foo limited"
+
+    def test_normal_interior_position_replaced(self):
+        eng = SimilarityEngine(make_matching_cfg(acronyms={" of ": ""}))
+        assert eng._normalize("Ministry of Defence") == "ministry defence"

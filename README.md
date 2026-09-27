@@ -119,6 +119,14 @@ with fetcher.browser(headless=True) as session:
     html = session.page.content()
 ```
 
+#### Infinite scroll
+
+```python
+with fetcher.browser(headless=True) as session:
+    session.fetch("https://feed.example.com")
+    session.scroll_to_bottom(infinite=True, idle_ms=10000)
+    html = session.page.content()  # all lazily-loaded content present
+
 #### Cloudflare bypass session
 
 ```python

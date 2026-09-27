@@ -192,3 +192,42 @@ class TestIsSimilar:
     def test_error_non_string_raises_value_error(self, engine):
         with pytest.raises(ValueError, match="is_similar expects two strings"):
             engine.is_similar("test", 123)
+
+
+class TestBoundaryMatrix:
+    """Designed boundary partitions: empty, whitespace, single-token, unicode, typo-phonetic (#8)."""
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [("", ""), ("   ", "   "), ("", "word"), ("word", ""), ("  ", "word"), ("word", "   ")],
+    )
+    def test_edge_empty_and_whitespace_score_zero(self, engine, left, right):
+        match, score = engine.is_similar(left, right)
+        assert match is False
+        assert score == pytest.approx(0.0)
+
+    def test_edge_single_token_identical_scores_100(self, engine):
+        assert engine.is_similar("Nike", "Nike") == (True, pytest.approx(100.0))
+
+    def test_edge_single_token_disjoint_scores_residual(self, engine):
+        match, score = engine.is_similar("Alpha", "Omega")
+        assert match is False
+        assert score == pytest.approx(19.07, abs=0.01)  # single-token residual under the 35 cap
+
+    def test_edge_multi_token_disjoint_hits_cap(self, engine):
+        _, score = engine.is_similar("Alpha Beta", "Omega Delta")
+        assert score == pytest.approx(35.0)  # strong_mismatch_cap residual (documented 28.57→35 family)
+
+    def test_normal_unicode_diacritics_match_exactly(self, engine):
+        assert engine.is_similar("Café", "Cafe") == (True, pytest.approx(100.0))
+
+    def test_normal_typo_phonetic_bridge(self, engine):
+        match, score = engine.is_similar("Smith", "Smyth")
+        assert match is True
+        assert score > 50  # soundex bridges the homophone typo
+
+    def test_edge_internal_whitespace_does_not_merge_tokens(self, engine):
+        # "sp  ace" keeps two strong tokens — disjoint with "space" → capped residual
+        match, score = engine.is_similar("  sp  ace  ", "space")
+        assert match is False
+        assert score == pytest.approx(35.0)
