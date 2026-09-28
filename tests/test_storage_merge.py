@@ -101,7 +101,7 @@ class TestMergeRowByRow:
 
 
 class TestMergeDatabaseEdgeCases:
-    """Test lines 193-194, 232-240, 246-253 - merge database edge cases"""
+    """merge_databases failure and corrupt-chunk edges."""
 
     def test_error_create_staging_table_fails(self, tmp_path):
         """Staging creation on a missing source table raises StorageError."""
@@ -111,7 +111,7 @@ class TestMergeDatabaseEdgeCases:
         db.flush_and_close()
 
     def test_edge_merge_with_corrupt_chunk(self, tmp_path):
-        """Test lines 232-240 - merge with corrupt chunk file"""
+        """merge_databases skips corrupt chunk files."""
         # Create main database
         main_db = MockDB(str(tmp_path / "main.db"))
         main_db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", [("test", "value")])
@@ -126,8 +126,8 @@ class TestMergeDatabaseEdgeCases:
         report = db.merge_databases(str(tmp_path), "items")
         assert report.skipped_chunks >= 1
 
-    def test_edge_merge_with_detach_error(self, tmp_path):
-        """Test lines 236-240 - detach error after merge failure"""
+    def test_edge_merge_processes_valid_chunk(self, tmp_path):
+        """merge_databases processes a valid chunk file end to end."""
         # Create main database
         main_db = MockDB(str(tmp_path / "main.db"))
         main_db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", [("test", "value")])
@@ -146,7 +146,7 @@ class TestMergeDatabaseEdgeCases:
         assert report.processed_chunks >= 1
 
     def test_error_merge_fails_raises_storage_error(self, tmp_path):
-        """Test lines 252-253 - merge fails with sqlite3.Error"""
+        """merge_databases wraps sqlite3 failures in StorageError."""
         # Create main database
         main_db = MockDB(str(tmp_path / "main.db"))
         main_db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", [("test", "value")])
@@ -173,13 +173,14 @@ class TestMergeDatabaseEdgeCases:
                 db.merge_databases(str(tmp_path), "items")
         finally:
             db.conn = original_conn
+            db.flush_and_close()
 
 
 class TestMergeRowByRowEdgeCases:
-    """Test lines 287-288, 293-297 - merge row by row edge cases"""
+    """merge_row_by_row callback/flush behaviour and corrupt-chunk handling."""
 
     def test_normal_merge_row_by_row_with_flush_callback(self, tmp_path):
-        """Test lines 286-288 - flush callback invoked"""
+        """merge_row_by_row streams rows through the callback and invokes flushes."""
         # Create chunk database
         chunk_db = sqlite3.connect(str(tmp_path / "chunk_001.db"))
         create_items_schema(chunk_db)
@@ -208,7 +209,7 @@ class TestMergeRowByRowEdgeCases:
         assert flush_count[0] >= 1  # At least one flush
 
     def test_edge_merge_row_by_row_skips_corrupt_chunk(self, tmp_path):
-        """Test lines 293-297 - corrupt chunk skipped"""
+        """merge_row_by_row skips corrupt chunk files."""
         # Create a corrupt chunk file
         corrupt_file = tmp_path / "chunk_001.db"
         corrupt_file.write_text("corrupt data")

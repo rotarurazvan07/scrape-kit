@@ -1,7 +1,7 @@
 """InteractiveSession."""
 
 import re
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from conftest import (
@@ -15,6 +15,7 @@ from conftest import (
     make_interactive_session,
 )
 
+from scrape_kit import fetcher as fetcher_module
 from scrape_kit.errors import FetcherError
 from scrape_kit.fetcher import (
     InteractiveSession,
@@ -77,6 +78,24 @@ class TestInteractiveSessionFetch:
         session.__enter__()
         session.fetch("http://example.com", timeout=5000, wait_until="networkidle")
         mock_page.goto.assert_called_once_with("http://example.com", wait_until="networkidle", timeout=5000)
+
+    def test_error_settle_never_idle_gives_up_bounded(self):
+        """A page that never settles ends in a bounded give-up after max_wait, not a hang."""
+        mock_session, mock_page = make_interactive_session("<html>partial</html>")
+        mock_page.evaluate.side_effect = Exception("never settles")
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        with (
+            patch.object(fetcher_module, "logger") as mock_log,
+            patch("time.time", side_effect=[0, 10, 20, 30]),
+            patch("time.sleep") as mock_sleep,
+        ):
+            result = session.fetch("http://example.com")
+        assert result.html_content == "<html>partial</html>"
+        assert mock_page.evaluate.call_count == 3  # two retries, then the give-up attempt
+        assert mock_sleep.call_count == 2
+        assert mock_log.warning.call_count == 1
+        assert "giving up" in str(mock_log.warning.call_args)
 
 
 class TestInteractiveSessionExecuteScript:

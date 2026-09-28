@@ -5,7 +5,7 @@ import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
-from conftest import create_items_schema
+from conftest import BUFFERED_DB_NAME, ITEMS_TABLE, create_items_schema
 
 from scrape_kit.errors import StorageError
 from scrape_kit.storage import BufferedStorageManager
@@ -30,7 +30,7 @@ class TestBufferedExists:
         create_items_schema(conn)
         conn.commit()
         conn.close()
-        manager = BufferedStorageManager(str(tmp_path / "empty.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / "empty.db"), ITEMS_TABLE)
         assert manager.exists("name", "anything") is False
         manager.close()
 
@@ -108,7 +108,7 @@ class TestBufferedClearDatabase:
     """clear_database resets SQL and the bound-table buffer."""
 
     def test_normal_clears_sql_and_resets_buffer(self, buffered_db):
-        buffered_db.clear_database("items")
+        buffered_db.clear_database(ITEMS_TABLE)
         assert buffered_db._buffer is None
         assert buffered_db._dirty is False
         rows = buffered_db.fetch_rows("SELECT * FROM items")
@@ -146,16 +146,16 @@ class TestBufferedReopenIfChanged:
 
 
 class TestBufferedStorageEdgeCases:
-    """Test lines 405, 408-409, 418, 425-427, 430, 447-450, 453 - buffered storage edge cases"""
+    """flush/exists/insert failure and validation edges on the buffered manager."""
 
     def test_edge_flush_replace_mode(self, tmp_path):
-        """Test line 405 - flush with replace mode (no existing data)"""
-        conn = sqlite3.connect(str(tmp_path / "buf.db"))
+        """flush() on an empty table persists buffered rows via replace mode."""
+        conn = sqlite3.connect(str(tmp_path / BUFFERED_DB_NAME))
         create_items_schema(conn)
         conn.commit()
         conn.close()
 
-        manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
         manager.insert({"id": 1, "name": "item_1", "value": "val_1"})
 
         # Flush with no existing data - should use replace mode
@@ -167,13 +167,13 @@ class TestBufferedStorageEdgeCases:
         manager.close()
 
     def test_error_flush_fails_raises(self, tmp_path):
-        """Test lines 408-409 - flush fails raises StorageError"""
-        conn = sqlite3.connect(str(tmp_path / "buf.db"))
+        """flush() wraps commit failures in StorageError."""
+        conn = sqlite3.connect(str(tmp_path / BUFFERED_DB_NAME))
         create_items_schema(conn)
         conn.commit()
         conn.close()
 
-        manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
         manager.insert({"id": 1, "name": "item_1", "value": "val_1"})
 
         # Create a mock connection that raises error on commit
@@ -188,47 +188,52 @@ class TestBufferedStorageEdgeCases:
                 manager.flush()
         finally:
             manager.conn = original_conn
+            manager.close()
 
     def test_error_exists_without_column_raises(self, tmp_path):
-        """Test line 418 - exists without column raises StorageError"""
-        conn = sqlite3.connect(str(tmp_path / "buf.db"))
+        """exists() without a column argument raises StorageError."""
+        conn = sqlite3.connect(str(tmp_path / BUFFERED_DB_NAME))
         create_items_schema(conn)
         conn.commit()
         conn.close()
 
-        manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
         with pytest.raises(StorageError, match="exists requires either"):
-            manager.exists("items")
+            manager.exists(ITEMS_TABLE)
+        manager.close()
 
     def test_error_exists_wrong_table_raises(self, tmp_path):
-        """Test line 430 - exists with wrong table raises StorageError"""
-        conn = sqlite3.connect(str(tmp_path / "buf.db"))
+        """exists() rejects a table other than the bound table."""
+        conn = sqlite3.connect(str(tmp_path / BUFFERED_DB_NAME))
         create_items_schema(conn)
         conn.commit()
         conn.close()
 
-        manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
         with pytest.raises(StorageError, match="BufferedStorageManager is bound to table 'items'"):
             manager.exists("wrong_table", "name", "value")
+        manager.close()
 
     def test_error_insert_wrong_table_raises(self, tmp_path):
-        """Test line 453 - insert with wrong table raises StorageError"""
-        conn = sqlite3.connect(str(tmp_path / "buf.db"))
+        """insert() rejects a table other than the bound table."""
+        conn = sqlite3.connect(str(tmp_path / BUFFERED_DB_NAME))
         create_items_schema(conn)
         conn.commit()
         conn.close()
 
-        manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
         with pytest.raises(StorageError, match="BufferedStorageManager is bound to table 'items'"):
             manager.insert("wrong_table", {"id": 1, "name": "test"})
+        manager.close()
 
     def test_error_insert_non_mapping_raises(self, tmp_path):
-        """Test lines 447-450 - insert with non-mapping raises StorageError"""
-        conn = sqlite3.connect(str(tmp_path / "buf.db"))
+        """insert() requires a mapping payload."""
+        conn = sqlite3.connect(str(tmp_path / BUFFERED_DB_NAME))
         create_items_schema(conn)
         conn.commit()
         conn.close()
 
-        manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
         with pytest.raises(StorageError, match="insert requires mapping payload"):
             manager.insert("not_a_mapping")
+        manager.close()

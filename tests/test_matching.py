@@ -231,3 +231,34 @@ class TestBoundaryMatrix:
         match, score = engine.is_similar("  sp  ace  ", "space")
         assert match is False
         assert score == pytest.approx(35.0)
+
+
+class TestStrongTokenContainmentArms:
+    """Asymmetric containment: one discriminative side vs an all-weak side caps at 35.
+
+    Both containment arms are reachable only as misses - a containment hit is
+    impossible (any token shared verbatim would make the weak side strong too),
+    so every arm entry asserts the documented strong_mismatch_cap.
+    """
+
+    def test_edge_strong_left_all_weak_right_miss_caps(self):
+        # ACR-2 (arm s1->s2): 'city' is strong, 'new york' is all weak, city is absent.
+        eng = SimilarityEngine(make_matching_cfg(weak_tokens=["new", "york"]))
+        match, score = eng.is_similar("new york city", "new york")
+        assert match is False
+        assert score == pytest.approx(35.0)
+
+    def test_edge_strong_right_all_weak_left_miss_caps(self):
+        # ACR-2 (arm s2->s1): fresh engine - the order-independent result cache
+        # would short-circuit the reverse pair on an engine that already saw it.
+        eng = SimilarityEngine(make_matching_cfg(weak_tokens=["new", "york"]))
+        match, score = eng.is_similar("new york", "new york city")
+        assert match is False
+        assert score == pytest.approx(35.0)
+
+    def test_edge_single_weak_token_strong_left_miss_caps(self):
+        # ACR-2: minimal weak list - 'corp' strong vs all-weak 'acme'.
+        eng = SimilarityEngine(make_matching_cfg(weak_tokens=["acme"]))
+        match, score = eng.is_similar("acme corp", "acme")
+        assert match is False
+        assert score == pytest.approx(35.0)

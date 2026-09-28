@@ -4,7 +4,7 @@ import sqlite3
 import threading
 
 import pytest
-from conftest import create_items_schema, make_chunk
+from conftest import BUFFERED_DB_NAME, ITEMS_TABLE, create_items_schema, make_chunk
 
 from scrape_kit.storage import BufferedStorageManager
 
@@ -22,12 +22,12 @@ class TestStorageScenarios:
         then verify random lookups via exists() are correct."""
         params = [(f"item_{i}", str(i)) for i in range(1000)]
         db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", params)
-        db.create_index("items", ["name"])
+        db.create_index(ITEMS_TABLE, ["name"])
 
-        assert db.exists("items", "name", "item_0") is True
-        assert db.exists("items", "name", "item_999") is True
-        assert db.exists("items", "name", "item_9999") is False
-        assert db.exists("items", "name", "item_500") is True
+        assert db.exists(ITEMS_TABLE, "name", "item_0") is True
+        assert db.exists(ITEMS_TABLE, "name", "item_999") is True
+        assert db.exists(ITEMS_TABLE, "name", "item_9999") is False
+        assert db.exists(ITEMS_TABLE, "name", "item_500") is True
 
     def test_scenario_multi_chunk_merge_then_dataframe_query(self, db, tmp_path):
         """Merge 4 chunks, then run a DataFrame aggregation on the staging table."""
@@ -35,18 +35,18 @@ class TestStorageScenarios:
         chunk_dir.mkdir()
         for i in range(4):
             make_chunk(chunk_dir / f"c{i}.db", [(f"node_{i}_{j}", str(j)) for j in range(5)])
-        db.merge_databases(str(chunk_dir), "items")
+        db.merge_databases(str(chunk_dir), ITEMS_TABLE)
         df = db.fetch_dataframe("SELECT * FROM staging_items")
         assert len(df) == 20
         assert len(df["name"].unique()) == 20
 
     def test_scenario_buffered_insert_exists_flush_verify(self, tmp_path):
         """50 inserts via buffer → in-memory exists checks → flush → disk verification."""
-        conn = sqlite3.connect(str(tmp_path / "buf.db"))
+        conn = sqlite3.connect(str(tmp_path / BUFFERED_DB_NAME))
         create_items_schema(conn)
         conn.commit()
         conn.close()
-        manager = BufferedStorageManager(str(tmp_path / "buf.db"), "items")
+        manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
 
         for i in range(50):
             manager.insert({"id": i, "name": f"item_{i}", "value": str(i)})
@@ -90,7 +90,7 @@ class TestStorageScenarios:
 
     def test_scenario_clear_and_reingest_fresh_data(self, populated_db):
         """Clear all rows, re-insert a completely different dataset, verify clean slate."""
-        populated_db.clear_database("items")
+        populated_db.clear_database(ITEMS_TABLE)
         assert populated_db.fetch_rows("SELECT * FROM items") == []
 
         new_data = [("x", "10"), ("y", "20"), ("z", "30")]
@@ -98,4 +98,4 @@ class TestStorageScenarios:
         rows = populated_db.fetch_rows("SELECT name FROM items ORDER BY name")
         assert [r["name"] for r in rows] == ["x", "y", "z"]
         # Old names must be gone
-        assert not populated_db.exists("items", "name", "alpha")
+        assert not populated_db.exists(ITEMS_TABLE, "name", "alpha")

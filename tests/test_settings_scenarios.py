@@ -112,20 +112,20 @@ class TestSettingsScenarios:
             data = yaml.safe_load((cfg / f"worker_{i}.yaml").read_text(encoding="utf-8"))
             assert data["id"] == i
 
-    # ── Additional edge cases for uncovered lines ─────────────────────────────────
+    # ── Additional edge cases ─────────────────────────────────
 
 
 class TestInitEdgeCases:
     """SettingsManager init on missing dir and single-file inputs."""
 
     def test_edge_directory_does_not_exist(self, tmp_path):
-        """Test line 29 - directory doesn't exist"""
+        """Init on a nonexistent directory yields empty settings."""
         nonexistent = tmp_path / "nonexistent"
         manager = SettingsManager(str(nonexistent))
         assert manager.settings == {}
 
     def test_edge_single_file_as_directory(self, tmp_path):
-        """Test lines 32-33 - single file treated as directory"""
+        """Init on a single file path yields a stem-keyed settings tree."""
         single_file = tmp_path / "single.yaml"
         single_file.write_text("key: value")
         manager = SettingsManager(str(single_file))
@@ -138,14 +138,14 @@ class TestGetEdgeCases:
     """get() with no keys and non-dict intermediates."""
 
     def test_error_no_keys_provided(self, tmp_path):
-        """Test line 62 - no keys provided"""
+        """get() with no keys raises SettingsError."""
         cfg = make_cfg(tmp_path, {"test.yaml": "key: value"})
         manager = SettingsManager(str(cfg))
         with pytest.raises(SettingsError, match="At least one key must be provided"):
             manager.get()
 
     def test_edge_get_with_non_dict_intermediate(self, tmp_path):
-        """Test edge case where intermediate node is not a dict"""
+        """get() returns None when an intermediate node is not a dict."""
         cfg = make_cfg(tmp_path, {"test.yaml": "value: not_dict"})
         manager = SettingsManager(str(cfg))
         # This should break out of the loop and return None
@@ -156,7 +156,7 @@ class TestWriteEdgeCases:
     """write() OSError surfaces as SettingsError."""
 
     def test_error_write_fails_os_error(self, tmp_path):
-        """Test lines 103-105 - write fails with OSError"""
+        """write() wraps os.replace failures in SettingsError."""
         cfg = tmp_path / "config"
         cfg.mkdir()
         manager = SettingsManager(str(cfg))
@@ -173,7 +173,7 @@ class TestDeleteEdgeCases:
     """delete() OSError surfaces as SettingsError."""
 
     def test_error_delete_fails_os_error(self, tmp_path):
-        """Test lines 113-115 - delete fails with OSError"""
+        """delete() wraps unlink failures in SettingsError."""
         cfg = tmp_path / "config"
         cfg.mkdir()
         target = cfg / "to_delete.yaml"

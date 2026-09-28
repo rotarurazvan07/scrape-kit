@@ -84,19 +84,19 @@ class TestFlushAndClose:
         assert not os.path.exists(wal_path) or os.path.getsize(wal_path) == 0
 
 
-# ── Additional tests for uncovered lines ───────────────────────────────────────
+# ── Serialization and shutdown edge cases ───────────────────────────────────────
 
 
 class TestSerializationEdgeCases:
-    """Test lines 54-61, 64-70 - serialize/deserialize edge cases"""
+    """serialize_json/deserialize_json edge behaviour: None, objects, NaN, invalid JSON."""
 
     def test_edge_serialize_none_returns_none(self, db):
-        """Test line 54-55 - None returns None"""
+        """serialize_json returns None for None input."""
         result = db.serialize_json(None)
         assert result is None
 
     def test_edge_serialize_object_with_dict(self, db):
-        """Test line 57-58 - object with __dict__"""
+        """serialize_json serialises plain objects via their __dict__."""
 
         class TestObj:
             """Row-to-object serialization edge behavior."""
@@ -110,7 +110,7 @@ class TestSerializationEdgeCases:
         assert result == '{"name": "test", "value": 42}'
 
     def test_error_serialize_unserializable_raises(self, db):
-        """Test lines 60-61 - unserializable object raises StorageError"""
+        """serialize_json raises StorageError for unserialisable objects."""
 
         class Unserializable:
             def __init__(self):
@@ -121,22 +121,22 @@ class TestSerializationEdgeCases:
             db.serialize_json(obj)
 
     def test_edge_deserialize_nan_returns_none(self, db):
-        """Test line 64 - NaN (float != float) returns None"""
+        """serialize_json maps NaN payloads to None."""
         nan_value = float("nan")
         result = db.deserialize_json(nan_value)
         assert result is None
 
     def test_edge_deserialize_invalid_json_returns_none(self, db):
-        """Test lines 68-70 - invalid JSON logs warning and returns None"""
+        """deserialize_json returns None for invalid JSON input."""
         result = db.deserialize_json("not valid json")
         assert result is None
 
 
 class TestReopenEdgeCases:
-    """Test lines 322-323, 336 - reopen edge cases"""
+    """reopen_if_changed and chunk-file discovery edge cases."""
 
     def test_edge_reopen_cleanup_error_ignored(self, tmp_path):
-        """Test lines 322-323 - cleanup error on reopen is logged but doesn't raise"""
+        """reopen_if_changed keeps a usable connection after external file changes."""
         # Note: Can't mock sqlite3.Connection.close as it's read-only
         # This test verifies normal reopen behavior works
         db = MockDB(str(tmp_path / "test.db"))
@@ -154,7 +154,7 @@ class TestReopenEdgeCases:
         db.flush_and_close()
 
     def test_edge_get_chunk_files_with_skip(self, tmp_path):
-        """Test line 336 - get_chunk_files with skip_file"""
+        """get_chunk_files excludes the explicitly skipped file."""
         # Create some chunk files
         for i in range(3):
             chunk_db = sqlite3.connect(str(tmp_path / f"chunk_{i:03d}.db"))
@@ -171,10 +171,10 @@ class TestReopenEdgeCases:
 
 
 class TestFlushAndCloseEdgeCases:
-    """Test lines 344-345 - flush and close edge cases"""
+    """flush_and_close failure behaviour."""
 
     def test_error_flush_and_close_fails_raises(self, tmp_path):
-        """Test lines 344-345 - flush and close fails with sqlite3.Error"""
+        """flush_and_close wraps commit failures in StorageError."""
         db = MockDB(str(tmp_path / "test.db"))
         db.execute_batch("INSERT INTO items (name, value) VALUES (?, ?)", [("test", "value")])
 
@@ -191,3 +191,4 @@ class TestFlushAndCloseEdgeCases:
                 db.flush_and_close()
         finally:
             db.conn = original_conn
+            db.flush_and_close()

@@ -41,6 +41,7 @@ THRESHOLD_EXACT = 95
 THRESHOLD_HIGH = 80
 
 ITEMS_TABLE = "items"
+BUFFERED_DB_NAME = "buf.db"
 
 
 def pytest_configure(config):
@@ -48,8 +49,6 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "smoke: core public-flow journeys — the <1 min pre-commit subset")
     config.addinivalue_line("markers", "p0: highest-priority fast paths (core contract)")
     config.addinivalue_line("markers", "p1: integration scenarios and concurrency behaviour")
-    config.addinivalue_line("markers", "p2: edge-case and error-path completeness")
-    config.addinivalue_line("markers", "p3: polish and rare-path coverage")
 
 
 # ── Fetcher factories ──────────────────────────────────────────────────────────
@@ -124,7 +123,7 @@ def make_matching_cfg(**overrides) -> dict:
 @pytest.fixture
 def engine():
     """Default SimilarityEngine pre-loaded with the rich config."""
-    return SimilarityEngine(RICH_CONFIG)
+    return SimilarityEngine(copy.deepcopy(RICH_CONFIG))
 
 
 # ── Settings factory ───────────────────────────────────────────────────────────

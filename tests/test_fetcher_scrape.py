@@ -66,10 +66,10 @@ class TestScrape:
 
 
 class TestFetchOneFast:
-    """Test lines 415-416, 419-421 - _fetch_one_fast method"""
+    """_fetch_one_fast retry exhaustion and blocked-content failure."""
 
     def test_error_fetch_one_fast_all_attempts_fail(self):
-        """Test lines 415-416, 419-421 - all attempts fail with exception"""
+        """_fetch_one_fast wraps exhausted fetch exceptions in FetcherError."""
         fetcher = WebFetcher(block_indicators=[])
 
         # Make fetch always raise an exception
@@ -80,7 +80,7 @@ class TestFetchOneFast:
             fetcher._fetch_one_fast("http://test.com", MagicMock())
 
     def test_error_fetch_one_fast_blocked_all_attempts(self):
-        """Test lines 423-425 - all attempts blocked"""
+        """_fetch_one_fast raises FetcherError when every attempt stays blocked."""
         fetcher = WebFetcher(block_indicators=["blocked"])
 
         # Make fetch always return blocked content
@@ -92,10 +92,10 @@ class TestFetchOneFast:
 
 
 class TestScrapeStealth:
-    """Test lines 428, 431-460, 463-479 - stealth scraping methods"""
+    """Scrape dispatch: empty input short-circuits, unknown modes raise."""
 
     def test_normal_scrape_stealth_empty_urls(self):
-        """Test line 382-383 - empty urls returns immediately"""
+        """scrape() with no URLs performs no work and never calls the callback."""
         fetcher = WebFetcher()
         callback = MagicMock()
         # Should not raise any error
@@ -103,7 +103,7 @@ class TestScrapeStealth:
         assert callback.call_count == 0  # empty input — no work, no callback
 
     def test_error_scrape_unsupported_mode(self):
-        """Test line 391 - unsupported scrape mode"""
+        """scrape() rejects an unsupported mode with ValueError."""
         fetcher = WebFetcher()
         callback = MagicMock()
 

@@ -240,11 +240,11 @@ class TestBrowser:
         assert call_kwargs.get("custom_flag") is True
 
 
-# ── Additional tests for uncovered lines ───────────────────────────────────────
+# ── Browser escalation ───────────────────────────────────────
 
 
 class TestEscalateToBrowser:
-    """Test lines 332-342 - _escalate_to_browser method"""
+    """_escalate_to_browser success, empty-content and failure paths."""
 
     def test_normal_escalate_to_browser_success(self):
         """Test successful browser escalation"""
@@ -263,7 +263,7 @@ class TestEscalateToBrowser:
         mock_browser_session.fetch.assert_called_once_with("http://test.com", timeout=ESCALATE_TIMEOUT_MS)
 
     def test_edge_escalate_to_browser_no_html_content(self):
-        """Test line 342 - browser returns no content"""
+        """_escalate_to_browser raises FetcherError when escalation returns no content."""
         fetcher = WebFetcher()
         mock_browser_session = MagicMock()
         mock_response = MagicMock()
@@ -279,7 +279,7 @@ class TestEscalateToBrowser:
             fetcher._escalate_to_browser("http://test.com", "blocked")
 
     def test_error_escalate_to_browser_failure(self):
-        """Test lines 339-341 - browser escalation fails"""
+        """_escalate_to_browser wraps browser failures in FetcherError."""
         fetcher = WebFetcher()
         mock_browser_session = MagicMock()
         mock_browser_session.fetch.side_effect = Exception("Browser error")

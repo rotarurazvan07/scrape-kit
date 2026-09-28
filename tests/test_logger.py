@@ -19,6 +19,8 @@ def restore_logger_state():
     target.setLevel(level)
     for h in list(target.handlers):
         target.removeHandler(h)
+        if h not in handlers:
+            h.close()
     for h in handlers:
         target.addHandler(h)
     target.propagate = propagate

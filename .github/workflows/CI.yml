@@ -16,7 +16,7 @@ concurrency:
 env:
   SRC_DIR: scrape_kit
   TEST_DIR: tests
-  COVERAGE_FAIL_UNDER: "85" # raised from 80 per design G1; current coverage 90.97%
+  COVERAGE_FAIL_UNDER: "90" # raised 85->90 with TRC remediation (ACR-2/ACR-7); measured 95.81% pre-additions
   PYTHON_LINT: "3.12"
   PYTHON_AUDIT: "3.11" # floor: catches floor-only breakage
   PYTHON_BURNIN: "3.12"
