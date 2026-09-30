@@ -1,3 +1,6 @@
+"""Exception hierarchy for scrape-kit: catch ScrapeKitError to handle any domain failure."""
+
+
 class ScrapeKitError(Exception):
     """Base exception for the scrape-kit framework."""
 

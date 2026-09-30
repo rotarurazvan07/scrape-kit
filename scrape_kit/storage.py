@@ -1,5 +1,8 @@
+"""SQLite storage layer: BaseStorageManager orchestration, pandas-buffered variant, and table merging."""
+
 import glob
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -40,6 +43,7 @@ class BaseStorageManager:
     """Core Generic Storage Orchestrator using SQLite."""
 
     def __init__(self, db_path: str) -> None:
+        """Open the SQLite database, create tables, and record the file mtime for reload detection."""
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -83,7 +87,7 @@ class BaseStorageManager:
         Returns:
             The parsed Python object, or None if input is None/empty/invalid.
         """
-        if json_str is None or json_str == "" or (isinstance(json_str, float) and json_str != json_str):
+        if json_str is None or json_str == "" or (isinstance(json_str, float) and math.isnan(json_str)):
             return None
         try:
             return json.loads(json_str)
@@ -492,6 +496,7 @@ class BufferedStorageManager(BaseStorageManager):
     """Storage manager with an in-memory pandas buffer for high-speed lookups."""
 
     def __init__(self, db_path: str, table_name: str, preserve_schema: bool = True) -> None:
+        """Bind to one table with a lazily-built pandas buffer and a pending-row queue."""
         self._table_name = table_name
         self._buffer: pd.DataFrame | None = None
         self._dirty: bool = False
@@ -549,6 +554,7 @@ class BufferedStorageManager(BaseStorageManager):
         column: str | None = None,
         value: Any | None = None,
     ) -> bool:
+        """Check if column/value exists in the bound table (pending rows then buffer)."""
         if column is None:
             raise StorageError("exists requires either (table_name, column, value) or legacy (column, value)")
         if value is None:
