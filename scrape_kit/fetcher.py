@@ -1,3 +1,5 @@
+"""Anti-detection web fetching around scrapling: shared-instance helpers, InteractiveSession, WebFetcher."""
+
 import asyncio
 import time
 from collections.abc import Callable
@@ -259,7 +261,8 @@ class InteractiveSession:
             raise RuntimeError("Call fetch() first")
         self.page.wait_for_timeout(ms, **kwargs)
 
-    def scroll_to_bottom(self, infinite: bool = True, idle_ms=10000, cycle_delay_ms=None) -> None:
+    def scroll_to_bottom(self, infinite: bool = True, idle_ms: int = 10000, cycle_delay_ms: int | None = None) -> None:
+        """Scroll to the page bottom, optionally looping until content stops growing."""
         cycle_delay_ms = cycle_delay_ms if cycle_delay_ms is not None else idle_ms // 5
         self.execute_script(f"""
             (function() {{
@@ -288,7 +291,15 @@ class InteractiveSession:
             }})()
         """)
 
-    def click(self, selector, text=None, visible_only: bool = False, idle_ms=5000, hard_cap_ms=None):
+    def click(
+        self,
+        selector: str,
+        text: str | None = None,
+        visible_only: bool = False,
+        idle_ms: int = 5000,
+        hard_cap_ms: int | None = None,
+    ) -> Any:
+        """Click an element matching the selector (optionally by text) and wait for DOM changes to settle."""
         hard_cap_ms = hard_cap_ms if hard_cap_ms is not None else idle_ms * 6
         return self.execute_script(
             f"""
@@ -351,6 +362,7 @@ class InteractiveSession:
         )
 
     def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to the wrapped scrapling session."""
         return getattr(self.session, name)
 
 
@@ -679,10 +691,11 @@ class WebFetcher:
         low_mem_flags = {"--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"}
         kwargs["args"] = list(set(kwargs.get("args", [])) | low_mem_flags)
 
+        session: DynamicSession | StealthySession
         if solve_cloudflare:
             session = StealthySession(headless=headless, solve_cloudflare=True, **kwargs)
         else:
-            session: DynamicSession | StealthySession = DynamicSession(headless=headless, **kwargs)
+            session = DynamicSession(headless=headless, **kwargs)
 
         return InteractiveSession(session)
 
@@ -690,7 +703,7 @@ class WebFetcher:
         self,
         urls: list[str],
         callback: Callable[[str, str], None],
-        mode: Literal["fast", "stealth"] = ScrapeMode.FAST,
+        mode: Literal["fast", "stealth"] = "fast",
         max_concurrency: int = 1,
     ) -> None:
         """Scrape multiple URLs using the specified mode.
@@ -799,6 +812,7 @@ class WebFetcher:
         async with AsyncStealthySession(max_pages=concurrency, headless=True, solve_cloudflare=True) as session:
 
             async def _worker() -> None:
+                """Consume the URL queue until empty, fetching each URL through the shared stealth session."""
                 while True:
                     try:
                         url = queue.get_nowait()
