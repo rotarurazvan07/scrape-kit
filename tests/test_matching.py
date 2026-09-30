@@ -71,6 +71,14 @@ class TestInit:
         with pytest.raises(ValueError, match="weights must be non-negative"):
             SimilarityEngine(cfg)
 
+    def test_error_unknown_weight_key_raises_value_error(self):
+        # Clean-baseline contract: typo'd weight keys must not vanish silently —
+        # raise ValueError naming the valid keys; missing keys keep defaults.
+        cfg = make_matching_cfg()
+        cfg["weights"] = {"tokn": 0.4, "substr": 0.1, "phonetic": 0.1, "ratio": 0.3}
+        with pytest.raises(ValueError, match="Unknown weight key.*valid keys"):
+            SimilarityEngine(cfg)
+
     def test_edge_partial_weights_documented_sum_still_accepted(self, engine):
         # RICH_CONFIG sums to 1.1 (explicit weights 1.0 + default partial 0.1);
         # documented configs must stay constructible — the clamp absorbs drift.
