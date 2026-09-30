@@ -129,9 +129,9 @@ jobs:
             echo "| Coverage floor | $COVERAGE_FAIL_UNDER% — ${{ steps.tests.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── 3. BURN-IN (advisory) ──────────────────────────────────────────────
+  # ── 3. BURN-IN (binding) ──────────────────────────────────────────────
   burn-in:
-    name: Burn-in (advisory flakiness loop)
+    name: Burn-in (binding flakiness loop)
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -152,7 +152,7 @@ jobs:
             echo "── Burn-in run $i/$RUNS ──"
             if ! pytest --timeout=60 -n auto -q "$TEST_DIR"; then
               echo "$i" > burn-in-failed-at.txt
-              echo "Suite run $i/$RUNS failed — flakiness signal, open a P1 review item"
+              echo "Suite run $i/$RUNS failed — CI Gate blocks this run; open a P1 review item"
               exit 1
             fi
           done
@@ -163,7 +163,7 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then RUNS=10; else RUNS=3; fi
           {
-            echo "## Burn-in (advisory flakiness loop)"
+            echo "## Burn-in (binding flakiness loop)"
             echo ""
             echo "| Metric | Value |"
             echo "|---|---|"
@@ -174,9 +174,9 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── 4. AUDIT (advisory) ────────────────────────────────────────────────
+  # ── 4. AUDIT (non-failing — binding via gate counts) ────────────────────────────────────────────────
   audit:
-    name: "Audit (advisory: security · complexity · types · docs)"
+    name: "Audit (non-failing: security · complexity · types · docs)"
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -336,7 +336,7 @@ jobs:
             fi
           }
           {
-            echo "## Audit (advisory: security · complexity · types · docs)"
+            echo "## Audit (non-failing: security · complexity · types · docs)"
             echo ""
             section "mypy — static types" \
               "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 0 @ mypy 1.18.2)" mypy-findings.txt
@@ -440,32 +440,98 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── 6. CI GATE (single required check) ──────────────────────────────────
+  # ── 6. CI GATE (single required check — binding) ────────────────────────
   ci-gate:
     name: CI Gate
     needs: [lint, test, burn-in, audit]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # job results (required set) + audit counts (binding thresholds below)
+      JOB_LINT: ${{ needs.lint.result }}
+      JOB_TEST: ${{ needs.test.result }}
+      JOB_BURN_IN: ${{ needs.burn-in.result }}
+      JOB_AUDIT: ${{ needs.audit.result }}
+      MYPY_ERRORS: ${{ needs.audit.outputs.mypy_errors }}
+      BANDIT_ISSUES: ${{ needs.audit.outputs.bandit_issues }}
+      SEMGREP_FINDINGS: ${{ needs.audit.outputs.semgrep_findings }}
+      PIP_AUDIT_VULNS: ${{ needs.audit.outputs.pip_audit_vulns }}
+      RADON_COMPLEXITY: ${{ needs.audit.outputs.radon_complexity }}
+      VULTURE_DEAD: ${{ needs.audit.outputs.vulture_dead }}
+      INTERROGATE_PCT: ${{ needs.audit.outputs.interrogate_pct }}
     steps:
       - name: Enforce policy
-        env:
-          JOB_LINT: ${{ needs.lint.result }}
-          JOB_TEST: ${{ needs.test.result }}
-          JOB_BURN_IN: ${{ needs.burn-in.result }}
-          JOB_AUDIT: ${{ needs.audit.result }}
         run: |
           python3 - <<'PY'
           import os
           import sys
+
           results = {n: os.environ[f"JOB_{n}"].lower() for n in ("LINT", "TEST", "BURN_IN", "AUDIT")}
-          required = {"LINT": ("success",), "TEST": ("success",)}
-          # audit/burn-in advisory: tolerated in any state for policy purposes
-          blocking = {n for n, allowed in required.items() if results[n] not in allowed}
-          if blocking:
-              print("Blocking job failures:", ", ".join(sorted(blocking)))
+
+          # Required jobs: lint and test must succeed; burn-in must succeed or
+          # be genuinely skipped (its `if:` excludes push-to-main/dispatch).
+          # The audit job is a non-failing collector — its counts are asserted
+          # below instead of its job result.
+          required = {
+              "LINT": ("lint", ("success",)),
+              "TEST": ("test", ("success",)),
+              "BURN_IN": ("burn-in", ("success", "skipped")),
+          }
+          violations = [
+              f"Gate: BLOCKED | job {display}: {results[name]} (required: success)"
+              for name, (display, allowed) in required.items()
+              if results[name] not in allowed
+          ]
+
+          # Binding audit thresholds (all counters zero, interrogate 100%).
+          # Fail-closed: a missing or unparseable count means the audit job
+          # did not report it, so the threshold cannot be proven met.
+          def check_count(env_name, display, threshold):
+              raw = os.environ.get(env_name, "").strip()
+              try:
+                  value = int(raw)
+              except ValueError:
+                  violations.append(
+                      f"Gate: BLOCKED | {display}: no count reported (threshold: {threshold})"
+                  )
+                  return
+              if value > threshold:
+                  violations.append(f"Gate: BLOCKED | {display}: {value} (threshold: {threshold})")
+
+          check_count("MYPY_ERRORS", "mypy errors", 0)
+          check_count("BANDIT_ISSUES", "bandit issues", 0)
+          check_count("SEMGREP_FINDINGS", "semgrep findings", 0)
+          check_count("RADON_COMPLEXITY", "radon C+ functions", 0)
+          check_count("VULTURE_DEAD", "vulture dead code", 0)
+
+          raw_pct = os.environ.get("INTERROGATE_PCT", "").strip()
+          try:
+              pct = float(raw_pct)
+          except ValueError:
+              violations.append(
+                  "Gate: BLOCKED | interrogate docstrings: no percentage reported (threshold: 100%)"
+              )
+          else:
+              if pct < 100:
+                  violations.append(
+                      f"Gate: BLOCKED | interrogate docstrings: {pct:g}% (threshold: 100%)"
+                  )
+
+          # PIP_AUDIT_VULNS is advisory by design: the weekly CVE-issue
+          # workflow owns remediation; the gate reports but never blocks.
+
+          if violations:
+              for line in violations:
+                  print(line)
               sys.exit(1)
-          print("Required checks green; advisory: burn-in=", results["BURN_IN"], "audit=", results["AUDIT"])
+          print("Gate: PASS | required jobs green, all binding thresholds met")
+          print(
+              "Jobs: "
+              + ", ".join(f"{d}={results[n]}" for n, (d, _) in required.items())
+              + f", audit={results['AUDIT']}"
+          )
+          print(f"Advisory: pip-audit vulns={os.environ.get('PIP_AUDIT_VULNS') or 'n/a'}")
           PY
 
       - name: Step summary
@@ -478,13 +544,21 @@ jobs:
             echo "|---|---|"
             echo "| lint | ${{ needs.lint.result }} |"
             echo "| test (matrix 3.11–3.14) | ${{ needs.test.result }} |"
-            echo "| burn-in (advisory) | ${{ needs.burn-in.result }} |"
-            echo "| audit (advisory) | ${{ needs.audit.result }} |"
+            echo "| burn-in | ${{ needs.burn-in.result }} |"
+            echo "| audit (non-failing collector) | ${{ needs.audit.result }} |"
             echo ""
             echo "### Metrics"
             echo ""
-            echo "- mypy errors: ${{ needs.audit.outputs.mypy_errors }} (baseline 0 @ mypy 1.18.2)"
-            echo "- pip-audit vulns: ${{ needs.audit.outputs.pip_audit_vulns }}"
-            echo "- coverage floor: $COVERAGE_FAIL_UNDER%"
-            echo "- scrapling pin: $SCRAPLING_VERSION (must match pyproject.toml)"
+            echo "| Metric | Value | Policy |"
+            echo "|---|---|---|"
+            echo "| mypy errors | ${MYPY_ERRORS:-n/a} | Binding (threshold 0) |"
+            echo "| bandit issues | ${BANDIT_ISSUES:-n/a} | Binding (threshold 0) |"
+            echo "| semgrep findings | ${SEMGREP_FINDINGS:-n/a} | Binding (threshold 0) |"
+            echo "| radon C+ functions | ${RADON_COMPLEXITY:-n/a} | Binding (threshold 0) |"
+            echo "| vulture dead code | ${VULTURE_DEAD:-n/a} | Binding (threshold 0) |"
+            echo "| interrogate docstrings | ${INTERROGATE_PCT:-n/a} | Binding (threshold 100%) |"
+            echo "| pip-audit vulns | ${PIP_AUDIT_VULNS:-n/a} | Advisory (weekly CVE issues) |"
+            echo ""
+            echo "Coverage floor: $COVERAGE_FAIL_UNDER% (enforced in test job)"
+            echo "Scrapling pin: $SCRAPLING_VERSION (must match pyproject.toml)"
           } >> "$GITHUB_STEP_SUMMARY"
