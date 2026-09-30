@@ -24,7 +24,7 @@ A personal high-performance Python scraping framework. Handles HTTP fetching, st
 pip install "git+https://github.com/yourusername/scrape-kit.git"
 
 # Pin to a specific release tag (recommended for stability)
-pip install "git+https://github.com/yourusername/scrape-kit.git@v0.1.0"
+pip install "git+https://github.com/yourusername/scrape-kit.git@v0.2.0"
 
 # Pin to a specific commit
 pip install "git+https://github.com/yourusername/scrape-kit.git@a3f2c91"
@@ -33,7 +33,7 @@ pip install "git+https://github.com/yourusername/scrape-kit.git@a3f2c91"
 ### In requirements.txt
 
 ```
-git+https://github.com/yourusername/scrape-kit.git@v0.1.0
+git+https://github.com/yourusername/scrape-kit.git@v0.2.0
 ```
 
 ### After installing — browser binaries
