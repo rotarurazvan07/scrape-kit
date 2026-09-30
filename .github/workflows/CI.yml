@@ -16,7 +16,7 @@ concurrency:
 env:
   SRC_DIR: scrape_kit
   TEST_DIR: tests
-  COVERAGE_FAIL_UNDER: "90" # raised 85->90 with TRC remediation (ACR-2/ACR-7); measured 95.81% pre-additions
+  COVERAGE_FAIL_UNDER: "92" # raised 90->92 with clean-baseline (mypy 0, semgrep 0, radon 0); measured 97.47%
   PYTHON_LINT: "3.12"
   PYTHON_AUDIT: "3.11" # floor: catches floor-only breakage
   PYTHON_BURNIN: "3.12"
@@ -64,7 +64,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## 🧹 Lint (ruff + actionlint)"
+            echo "## Lint (ruff + actionlint)"
             echo ""
             echo "| Check | Result |"
             echo "|---|---|"
@@ -114,7 +114,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## 🧪 Test (Python ${{ matrix.python-version }})"
+            echo "## Test (Python ${{ matrix.python-version }})"
             echo ""
             echo "| Metric | Value |"
             echo "|---|---|"
@@ -163,7 +163,7 @@ jobs:
         run: |
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then RUNS=10; else RUNS=3; fi
           {
-            echo "## 🔁 Burn-in (advisory flakiness loop)"
+            echo "## Burn-in (advisory flakiness loop)"
             echo ""
             echo "| Metric | Value |"
             echo "|---|---|"
@@ -336,21 +336,21 @@ jobs:
             fi
           }
           {
-            echo "## 🔍 Audit (advisory: security · complexity · types · docs)"
+            echo "## Audit (advisory: security · complexity · types · docs)"
             echo ""
-            section "🧠 mypy — static types" \
-              "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 6 @ mypy 1.18.2)" mypy-findings.txt
-            section "🛡️ bandit — security SAST" \
+            section "mypy — static types" \
+              "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 0 @ mypy 1.18.2)" mypy-findings.txt
+            section "bandit — security SAST" \
               "Security issues: **${{ steps.bandit.outputs.bandit_issues }}**" bandit-findings.txt
-            section "🔎 semgrep — patterns" \
+            section "semgrep — patterns" \
               "Findings: **${{ steps.semgrep.outputs.semgrep_findings }}**" semgrep-findings.txt
-            section "📦 pip-audit — dependency CVEs" \
+            section "pip-audit — dependency CVEs" \
               "Vulnerability records: **${{ steps.pip_audit.outputs.pip_audit_vulns }}**" pip-audit-findings.txt
-            section "📊 radon — complexity" \
+            section "radon — complexity" \
               "High-complexity functions: **${{ steps.radon.outputs.radon_complexity }}**" radon-findings.txt
-            section "🧟 vulture — dead code" \
+            section "vulture — dead code" \
               "Potential dead locations: **${{ steps.vulture.outputs.vulture_dead }}**" vulture-findings.txt
-            section "📝 interrogate — docstrings" \
+            section "interrogate — docstrings" \
               "Docstring coverage: **${{ steps.interrogate.outputs.interrogate_pct }}%**" interrogate-findings.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -422,21 +422,21 @@ jobs:
         if: always()
         run: |
           {
-            echo "## 🩹 Auto-fix"
+            echo "## Auto-fix"
             echo ""
             if [ -s autofix-files.txt ]; then
               n=$(wc -l < autofix-files.txt)
               if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-                echo "Fixed **$n file(s)** — pushed to the PR branch (synchronize run validates)."
+                echo "Result: $n file(s) fixed | Commit: pushed to PR branch"
               else
-                echo "**$n file(s)** auto-fixable on main — red check, nothing pushed."
+                echo "Result: $n file(s) auto-fixable on main | Commit: none (red check signals drift)"
               fi
               echo ""
               echo '```'
               cat autofix-files.txt
               echo '```'
             else
-              echo "Nothing to fix — no commit pushed."
+              echo "Result: no changes | Commit: none"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -472,7 +472,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## 🚦 CI Gate — consolidated"
+            echo "## CI Gate — consolidated"
             echo ""
             echo "| Job | Result |"
             echo "|---|---|"
@@ -483,7 +483,7 @@ jobs:
             echo ""
             echo "### Metrics"
             echo ""
-            echo "- mypy errors: ${{ needs.audit.outputs.mypy_errors }} (baseline 6 @ mypy 1.18.2)"
+            echo "- mypy errors: ${{ needs.audit.outputs.mypy_errors }} (baseline 0 @ mypy 1.18.2)"
             echo "- pip-audit vulns: ${{ needs.audit.outputs.pip_audit_vulns }}"
             echo "- coverage floor: $COVERAGE_FAIL_UNDER%"
             echo "- scrapling pin: $SCRAPLING_VERSION (must match pyproject.toml)"
