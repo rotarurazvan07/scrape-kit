@@ -16,7 +16,7 @@ concurrency:
 env:
   SRC_DIR: scrape_kit
   TEST_DIR: tests
-  COVERAGE_FAIL_UNDER: "85" # raised from 80 per design G1; current coverage 90.97%
+  COVERAGE_FAIL_UNDER: "92" # raised 90->92 with clean-baseline (mypy 0, semgrep 0, radon 0); measured 97.47%
   PYTHON_LINT: "3.12"
   PYTHON_AUDIT: "3.11" # floor: catches floor-only breakage
   PYTHON_BURNIN: "3.12"
@@ -44,16 +44,45 @@ jobs:
         run: pip install ruff==0.14.8
 
       - name: ruff format — check
-        run: ruff format --line-length 127 --target-version py311 --check "$SRC_DIR" "$TEST_DIR"
+        id: ruff_format
+        run: ruff format --line-length 127 --target-version py311 --check "$SRC_DIR" "$TEST_DIR" | tee ruff-format.txt
 
       - name: ruff lint — check
-        run: ruff check --line-length 127 --select E,F,B,C,SIM,PERF --ignore UP --output-format=concise "$SRC_DIR" "$TEST_DIR"
+        id: ruff_lint
+        run: >-
+          ruff check --line-length 127 --select E,F,B,C,SIM,PERF --ignore UP
+          --output-format=concise "$SRC_DIR" "$TEST_DIR" | tee ruff-lint.txt
 
       - name: actionlint — workflow syntax + expression checks
+        id: actionlint
         run: |
           bash <(curl \
             "https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash")
-          ./actionlint -color
+          ./actionlint -no-color | tee actionlint.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Lint (ruff + actionlint)"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| ruff format | ${{ steps.ruff_format.outcome }} |"
+            echo "| ruff lint | ${{ steps.ruff_lint.outcome }} |"
+            echo "| actionlint | ${{ steps.actionlint.outcome }} |"
+            echo ""
+            for f in ruff-format ruff-lint actionlint; do
+              if [ -s "$f.txt" ]; then
+                echo "### $f — violations"
+                echo ""
+                echo '```'
+                cat "$f.txt"
+                echo '```'
+                echo ""
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── 2. TEST MATRIX (gate) ──────────────────────────────────────────────
   test:
@@ -74,35 +103,35 @@ jobs:
           scrapling-version: ${{ env.SCRAPLING_VERSION }}
 
       - name: Run tests with coverage
+        id: tests
         run: |
           pytest --cov="$SRC_DIR" \
             --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
             --cov-fail-under="$COVERAGE_FAIL_UNDER" \
-            --junitxml=test-results.xml \
-            --timeout=60 -n auto "$TEST_DIR"
+            --timeout=60 -n auto "$TEST_DIR" 2>&1 | tee pytest-output.txt
 
-      - name: Upload coverage XML
+      - name: Summary
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml-py${{ matrix.python-version }}
-          path: coverage.xml
-          retention-days: 14
-          if-no-files-found: warn
+        run: |
+          {
+            echo "## Test (Python ${{ matrix.python-version }})"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            if [ -f pytest-output.txt ]; then
+              counts=$(grep -E "[0-9]+ passed" pytest-output.txt | tail -1 | sed 's/=//g' | xargs || true)
+              total_cov=$(grep -E "^TOTAL" pytest-output.txt | tail -1 || true)
+              echo "| Tests | ${counts:-no summary line} |"
+              echo "| Coverage (stmts · miss · %) | ${total_cov:-n/a} |"
+            else
+              echo "| Tests | no output captured |"
+            fi
+            echo "| Coverage floor | $COVERAGE_FAIL_UNDER% — ${{ steps.tests.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-py${{ matrix.python-version }}
-          path: test-results.xml
-          retention-days: 14
-          if-no-files-found: warn
-
-  # ── 3. BURN-IN (advisory) ──────────────────────────────────────────────
+  # ── 3. BURN-IN (binding) ──────────────────────────────────────────────
   burn-in:
-    name: Burn-in (advisory flakiness loop)
+    name: Burn-in (binding flakiness loop)
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -116,20 +145,38 @@ jobs:
           scrapling-version: ${{ env.SCRAPLING_VERSION }}
 
       - name: Run suite repeatedly to surface flakiness
+        id: burnin
         run: |
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then RUNS=10; else RUNS=3; fi
           for i in $(seq 1 "$RUNS"); do
             echo "── Burn-in run $i/$RUNS ──"
             if ! pytest --timeout=60 -n auto -q "$TEST_DIR"; then
-              echo "::warning title=burn-in (advisory)::Suite run $i/$RUNS failed — flakiness signal, open a P1 review item"
+              echo "$i" > burn-in-failed-at.txt
+              echo "Suite run $i/$RUNS failed — CI Gate blocks this run; open a P1 review item"
               exit 1
             fi
           done
           echo "Burn-in: all $RUNS runs green."
 
-  # ── 4. AUDIT (advisory) ────────────────────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then RUNS=10; else RUNS=3; fi
+          {
+            echo "## Burn-in (binding flakiness loop)"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Iterations | $RUNS |"
+            echo "| Result | ${{ steps.burnin.outcome }} |"
+            if [ -f burn-in-failed-at.txt ]; then
+              echo "| Failed at run | $(cat burn-in-failed-at.txt)/$RUNS |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 4. AUDIT (non-failing — binding via gate counts) ────────────────────────────────────────────────
   audit:
-    name: "Audit (advisory: security · complexity · types · docs)"
+    name: "Audit (non-failing: security · complexity · types · docs)"
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -160,7 +207,11 @@ jobs:
           import json
           try:
               with open("semgrep-report.json") as f:
-                  print(len(json.load(f).get("results", [])))
+                  results = json.load(f).get("results", [])
+              with open("semgrep-findings.txt", "w") as out:
+                  for r in results[:10]:
+                      out.write(f"{r.get('check_id')} — {r.get('path')}:{r.get('start', {}).get('line')}\n")
+              print(len(results))
           except Exception:
               print(0)
           PY
@@ -181,9 +232,7 @@ jobs:
           MYPY_ERRORS=${MYPY_ERRORS:-0}
           echo "mypy_errors=$MYPY_ERRORS" >> "$GITHUB_OUTPUT"
           echo "Found $MYPY_ERRORS type error(s)."
-          if [ "$MYPY_ERRORS" -gt 0 ]; then
-            echo "::warning title=mypy (advisory)::mypy found $MYPY_ERRORS type error(s) — see mypy-output.txt artifact"
-          fi
+          grep "error:" mypy-output.txt | head -10 > mypy-findings.txt || true
 
       - name: bandit — security SAST
         id: bandit
@@ -193,7 +242,12 @@ jobs:
           import json
           try:
               with open("bandit-report.json") as f:
-                  print(len(json.load(f).get("results", [])))
+                  results = json.load(f).get("results", [])
+              with open("bandit-findings.txt", "w") as out:
+                  for r in results[:10]:
+                      head = f"{r.get('test_id')} ({r.get('issue_severity')})"
+                      out.write(f"{head} — {r.get('filename')}:{r.get('line_number')}\n")
+              print(len(results))
           except Exception:
               print(0)
           PY
@@ -210,18 +264,17 @@ jobs:
           try:
               with open("pip-audit-report.json") as f:
                   deps = json.load(f).get("dependencies", [])
-              vulns = sum(len(d.get("vulns", [])) for d in deps)
-              print(vulns)
+              lines = [f"{v.get('id')} — {d.get('name')} {d.get('version')}"
+                      for d in deps for v in d.get("vulns", [])]
+              with open("pip-audit-findings.txt", "w") as out:
+                  out.writelines(l + "\n" for l in lines[:10])
+              print(len(lines))
           except Exception:
               print(0)
           PY
           )
           echo "pip_audit_vulns=$PIP_AUDIT_VULNS" >> "$GITHUB_OUTPUT"
-          echo "Vulnerable dependency findings: $PIP_AUDIT_VULNS"
-          if [ "$PIP_AUDIT_VULNS" -gt 0 ]; then
-            echo "::error title=pip-audit (advisory)::pip-audit found $PIP_AUDIT_VULNS" \
-              "vulnerability record(s) — review pinned-dep CVEs"
-          fi
+          echo "Vulnerable dependency findings: $PIP_AUDIT_VULNS — review pinned-dep CVEs"
 
       - name: radon — complexity & maintainability (single JSON pass)
         id: radon
@@ -233,9 +286,13 @@ jobs:
           try:
               with open("radon-cc-report.json") as f:
                   data = json.load(f)
-              high = sum(1 for file in data.values() for func in file
-                         if func.get("rank", "") in ("C", "D", "E", "F"))
-              print(high)
+              hot = [(func.get("name"), func.get("rank"), path)
+                     for path, funcs in data.items() for func in funcs
+                     if func.get("rank", "") in ("C", "D", "E", "F")]
+              with open("radon-findings.txt", "w") as out:
+                  for name, rank, path in hot[:10]:
+                      out.write(f"{name} (rank {rank}) — {path}\n")
+              print(len(hot))
           except Exception:
               print(0)
           PY
@@ -251,6 +308,7 @@ jobs:
           VULTURE_DEAD=${VULTURE_DEAD:-0}
           echo "vulture_dead=$VULTURE_DEAD" >> "$GITHUB_OUTPUT"
           echo "Found $VULTURE_DEAD potential dead code location(s)."
+          head -10 vulture-report.txt > vulture-findings.txt || true
 
       - name: interrogate — docstring coverage
         id: interrogate
@@ -260,22 +318,41 @@ jobs:
           INTERROGATE_PCT=${INTERROGATE_PCT:-0}
           echo "interrogate_pct=$INTERROGATE_PCT" >> "$GITHUB_OUTPUT"
           echo "Docstring coverage: $INTERROGATE_PCT%"
+          tail -5 interrogate-output.txt > interrogate-findings.txt || true
 
-      - name: Upload audit reports
+      - name: Summary
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: audit-reports
-          retention-days: 30
-          path: |
-            semgrep-report.json
-            mypy-output.txt
-            bandit-report.json
-            pip-audit-report.json
-            radon-cc-report.json
-            radon-mi-report.json
-            vulture-report.txt
-            interrogate-output.txt
+        run: |
+          section() {
+            echo "### $1"
+            echo ""
+            echo "$2"
+            echo ""
+            if [ -s "$3" ]; then
+              echo '```'
+              cat "$3"
+              echo '```'
+              echo ""
+            fi
+          }
+          {
+            echo "## Audit (non-failing: security · complexity · types · docs)"
+            echo ""
+            section "mypy — static types" \
+              "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 0 @ mypy 1.18.2)" mypy-findings.txt
+            section "bandit — security SAST" \
+              "Security issues: **${{ steps.bandit.outputs.bandit_issues }}**" bandit-findings.txt
+            section "semgrep — patterns" \
+              "Findings: **${{ steps.semgrep.outputs.semgrep_findings }}**" semgrep-findings.txt
+            section "pip-audit — dependency CVEs" \
+              "Vulnerability records: **${{ steps.pip_audit.outputs.pip_audit_vulns }}**" pip-audit-findings.txt
+            section "radon — complexity" \
+              "High-complexity functions: **${{ steps.radon.outputs.radon_complexity }}**" radon-findings.txt
+            section "vulture — dead code" \
+              "Potential dead locations: **${{ steps.vulture.outputs.vulture_dead }}**" vulture-findings.txt
+            section "interrogate — docstrings" \
+              "Docstring coverage: **${{ steps.interrogate.outputs.interrogate_pct }}%**" interrogate-findings.txt
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── 5. AUTO-FIX (PR-branch commits / main check-only) ──────────────────
   auto-fix:
@@ -313,6 +390,7 @@ jobs:
             --output-format=concise "$SRC_DIR" "$TEST_DIR" || true
 
       - name: Commit to PR branch (PR events)
+        id: commit
         if: github.event_name == 'pull_request'
         run: |
           git config user.name  "github-actions[bot]"
@@ -320,6 +398,7 @@ jobs:
           if git diff --quiet; then
             echo "Nothing to fix."
           else
+            git diff --name-only > autofix-files.txt
             git add -A
             git commit -m "chore: auto-fix (imports · lint · format)"
             git push origin "HEAD:refs/heads/${GITHUB_HEAD_REF}"
@@ -327,55 +406,159 @@ jobs:
           fi
 
       - name: Report only (push to main)
+        id: report
         if: github.event_name == 'push'
         run: |
           if git diff --quiet; then
             echo "Clean."
           else
+            git diff --name-only > autofix-files.txt
             git diff --stat
-            echo "::warning::Main has auto-fixable issues — open a PR to apply them."
+            echo "Main has auto-fixable issues — open a PR to apply them."
             exit 1 # red check on main signals drift; never pushes
           fi
 
-  # ── 6. CI GATE (single required check) ──────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Auto-fix"
+            echo ""
+            if [ -s autofix-files.txt ]; then
+              n=$(wc -l < autofix-files.txt)
+              if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+                echo "Result: $n file(s) fixed | Commit: pushed to PR branch"
+              else
+                echo "Result: $n file(s) auto-fixable on main | Commit: none (red check signals drift)"
+              fi
+              echo ""
+              echo '```'
+              cat autofix-files.txt
+              echo '```'
+            else
+              echo "Result: no changes | Commit: none"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 6. CI GATE (single required check — binding) ────────────────────────
   ci-gate:
     name: CI Gate
     needs: [lint, test, burn-in, audit]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # job results (required set) + audit counts (binding thresholds below)
+      JOB_LINT: ${{ needs.lint.result }}
+      JOB_TEST: ${{ needs.test.result }}
+      JOB_BURN_IN: ${{ needs.burn-in.result }}
+      JOB_AUDIT: ${{ needs.audit.result }}
+      MYPY_ERRORS: ${{ needs.audit.outputs.mypy_errors }}
+      BANDIT_ISSUES: ${{ needs.audit.outputs.bandit_issues }}
+      SEMGREP_FINDINGS: ${{ needs.audit.outputs.semgrep_findings }}
+      PIP_AUDIT_VULNS: ${{ needs.audit.outputs.pip_audit_vulns }}
+      RADON_COMPLEXITY: ${{ needs.audit.outputs.radon_complexity }}
+      VULTURE_DEAD: ${{ needs.audit.outputs.vulture_dead }}
+      INTERROGATE_PCT: ${{ needs.audit.outputs.interrogate_pct }}
     steps:
       - name: Enforce policy
-        env:
-          JOB_LINT: ${{ needs.lint.result }}
-          JOB_TEST: ${{ needs.test.result }}
-          JOB_BURN_IN: ${{ needs.burn-in.result }}
-          JOB_AUDIT: ${{ needs.audit.result }}
         run: |
           python3 - <<'PY'
           import os
           import sys
+
           results = {n: os.environ[f"JOB_{n}"].lower() for n in ("LINT", "TEST", "BURN_IN", "AUDIT")}
-          required = {"LINT": ("success",), "TEST": ("success",)}
-          # audit/burn-in advisory: tolerated in any state for policy purposes
-          blocking = {n for n, allowed in required.items() if results[n] not in allowed}
-          if blocking:
-              print("::error::Blocking job failures:", ", ".join(sorted(blocking)))
+
+          # Required jobs: lint and test must succeed; burn-in must succeed or
+          # be genuinely skipped (its `if:` excludes push-to-main/dispatch).
+          # The audit job is a non-failing collector — its counts are asserted
+          # below instead of its job result.
+          required = {
+              "LINT": ("lint", ("success",)),
+              "TEST": ("test", ("success",)),
+              "BURN_IN": ("burn-in", ("success", "skipped")),
+          }
+          violations = [
+              f"Gate: BLOCKED | job {display}: {results[name]} (required: success)"
+              for name, (display, allowed) in required.items()
+              if results[name] not in allowed
+          ]
+
+          # Binding audit thresholds (all counters zero, interrogate 100%).
+          # Fail-closed: a missing or unparseable count means the audit job
+          # did not report it, so the threshold cannot be proven met.
+          def check_count(env_name, display, threshold):
+              raw = os.environ.get(env_name, "").strip()
+              try:
+                  value = int(raw)
+              except ValueError:
+                  violations.append(
+                      f"Gate: BLOCKED | {display}: no count reported (threshold: {threshold})"
+                  )
+                  return
+              if value > threshold:
+                  violations.append(f"Gate: BLOCKED | {display}: {value} (threshold: {threshold})")
+
+          check_count("MYPY_ERRORS", "mypy errors", 0)
+          check_count("BANDIT_ISSUES", "bandit issues", 0)
+          check_count("SEMGREP_FINDINGS", "semgrep findings", 0)
+          check_count("RADON_COMPLEXITY", "radon C+ functions", 0)
+          check_count("VULTURE_DEAD", "vulture dead code", 0)
+
+          raw_pct = os.environ.get("INTERROGATE_PCT", "").strip()
+          try:
+              pct = float(raw_pct)
+          except ValueError:
+              violations.append(
+                  "Gate: BLOCKED | interrogate docstrings: no percentage reported (threshold: 100%)"
+              )
+          else:
+              if pct < 100:
+                  violations.append(
+                      f"Gate: BLOCKED | interrogate docstrings: {pct:g}% (threshold: 100%)"
+                  )
+
+          # PIP_AUDIT_VULNS is advisory by design: the weekly CVE-issue
+          # workflow owns remediation; the gate reports but never blocks.
+
+          if violations:
+              for line in violations:
+                  print(line)
               sys.exit(1)
-          print("Required checks green; advisory: burn-in=", results["BURN_IN"], "audit=", results["AUDIT"])
+          print("Gate: PASS | required jobs green, all binding thresholds met")
+          print(
+              "Jobs: "
+              + ", ".join(f"{d}={results[n]}" for n, (d, _) in required.items())
+              + f", audit={results['AUDIT']}"
+          )
+          print(f"Advisory: pip-audit vulns={os.environ.get('PIP_AUDIT_VULNS') or 'n/a'}")
           PY
 
       - name: Step summary
         if: always()
         run: |
           {
-            echo "## CI Summary"
-            echo "- lint: ${{ needs.lint.result }}"
-            echo "- test (matrix 3.11–3.14): ${{ needs.test.result }}"
-            echo "- burn-in (advisory): ${{ needs.burn-in.result }}"
-            echo "- audit (advisory): ${{ needs.audit.result }}"
-            echo "- mypy errors: ${{ needs.audit.outputs.mypy_errors }} (baseline 6 @ mypy 1.18.2)"
-            echo "- pip-audit vulns: ${{ needs.audit.outputs.pip_audit_vulns }}"
-            echo "- coverage floor: $COVERAGE_FAIL_UNDER%"
-            echo "- scrapling pin: $SCRAPLING_VERSION (must match pyproject.toml)"
+            echo "## CI Gate — consolidated"
+            echo ""
+            echo "| Job | Result |"
+            echo "|---|---|"
+            echo "| lint | ${{ needs.lint.result }} |"
+            echo "| test (matrix 3.11–3.14) | ${{ needs.test.result }} |"
+            echo "| burn-in | ${{ needs.burn-in.result }} |"
+            echo "| audit (non-failing collector) | ${{ needs.audit.result }} |"
+            echo ""
+            echo "### Metrics"
+            echo ""
+            echo "| Metric | Value | Policy |"
+            echo "|---|---|---|"
+            echo "| mypy errors | ${MYPY_ERRORS:-n/a} | Binding (threshold 0) |"
+            echo "| bandit issues | ${BANDIT_ISSUES:-n/a} | Binding (threshold 0) |"
+            echo "| semgrep findings | ${SEMGREP_FINDINGS:-n/a} | Binding (threshold 0) |"
+            echo "| radon C+ functions | ${RADON_COMPLEXITY:-n/a} | Binding (threshold 0) |"
+            echo "| vulture dead code | ${VULTURE_DEAD:-n/a} | Binding (threshold 0) |"
+            echo "| interrogate docstrings | ${INTERROGATE_PCT:-n/a} | Binding (threshold 100%) |"
+            echo "| pip-audit vulns | ${PIP_AUDIT_VULNS:-n/a} | Advisory (weekly CVE issues) |"
+            echo ""
+            echo "Coverage floor: $COVERAGE_FAIL_UNDER% (enforced in test job)"
+            echo "Scrapling pin: $SCRAPLING_VERSION (must match pyproject.toml)"
           } >> "$GITHUB_STEP_SUMMARY"

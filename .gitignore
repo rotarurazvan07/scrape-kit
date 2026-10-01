@@ -213,3 +213,9 @@ __marimo__/
 test-results.xml
 coverage.json
 ruff-fix-output.txt
+
+# Local agent tooling state (BMAD / Serena / NeuralMind)
+.a0proj/
+.neuralmind/
+.serena/
+graphify-out/

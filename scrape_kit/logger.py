@@ -1,3 +1,5 @@
+"""Central logging: get_logger factory, colourised formatter, and the time_profiler decorator."""
+
 import logging
 import os
 import sys
@@ -29,6 +31,7 @@ class ScrapeKitFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format a record using the colourised scheme for its level."""
         log_fmt = self.FORMATS.get(record.levelno)
         formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
         return formatter.format(record)
@@ -92,8 +95,11 @@ def time_profiler(level: int = logging.DEBUG) -> Callable[..., Any]:
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap func so each call logs its duration at the configured level."""
+
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            """Call the wrapped function, then log the elapsed duration in milliseconds."""
             start_time = time.perf_counter()
             result = func(*args, **kwargs)
             end_time = time.perf_counter()

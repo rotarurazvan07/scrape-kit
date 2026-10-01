@@ -1,3 +1,5 @@
+"""Hybrid name matching: fuzzy metrics, phonetics, and strong-token enforcement via SimilarityEngine."""
+
 import re
 import unicodedata
 from typing import Any
@@ -69,6 +71,10 @@ class SimilarityEngine:
         self.weak_tokens: frozenset[str] = frozenset(str(t).lower() for t in cfg.get("weak_tokens", []))
 
         w = cfg.get("weights", {})
+        valid_keys = frozenset({"token", "substr", "phonetic", "ratio", "partial", "strong_mismatch_cap"})
+        unknown = set(w) - valid_keys
+        if unknown:
+            raise ValueError(f"Unknown weight key(s) {sorted(unknown)}; valid keys: {sorted(valid_keys)}")
         self.token_weight: float = w.get("token", 0.40)
         self.substr_weight: float = w.get("substr", 0.10)
         self.phonetic_weight: float = w.get("phonetic", 0.10)
@@ -324,42 +330,61 @@ class SimilarityEngine:
         base_score = max(0.0, min(100.0, base_score))
 
         # --- Strong-token enforcement ----------------------------------------
-        if strong1 and strong2:
-            # Both sides are discriminative; they must share at least one strong
-            # token – or have a phonetic match – to avoid the cap.
-            if strong1.isdisjoint(strong2) and phonetic_score == 0.0:
-                logger.debug(
-                    "Strong-token mismatch: %s ↔ %s  (strong: %s vs %s)",
-                    s1,
-                    s2,
-                    strong1,
-                    strong2,
-                )
-                return min(base_score, self.strong_mismatch_cap)
+        # Arms are mutually exclusive (a side either has strong tokens or not),
+        # so the two cap helpers can run in sequence without changing outcomes.
+        base_score = self._strong_mismatch_cap(base_score, s1, s2, strong1, strong2, phonetic_score)
+        base_score = self._strong_containment_cap(base_score, s1, s2, tokens1, tokens2, strong1, strong2)
 
-        elif strong1 and not strong2:
-            # s2 is all weak; s1's strong tokens must appear verbatim in s2's
-            # token set – otherwise s2 simply lacks the discriminative word.
-            if not strong1.issubset(tokens2):
-                logger.debug(
-                    "Strong-token containment miss (s1→s2): %s ↔ %s  (strong1: %s)",
-                    s1,
-                    s2,
-                    strong1,
-                )
-                return min(base_score, self.strong_mismatch_cap)
+        return base_score
 
-        elif not strong1 and strong2 and not strong2.issubset(tokens1):
-            logger.debug(
+    def _strong_mismatch_cap(
+        self,
+        base_score: float,
+        s1: str,
+        s2: str,
+        strong1: frozenset[str],
+        strong2: frozenset[str],
+        phonetic_score: float,
+    ) -> float:
+        """Cap the score when both sides carry strong tokens that are fully disjoint."""
+        if strong1 and strong2 and strong1.isdisjoint(strong2) and phonetic_score == 0.0:
+            logger.debug(  # nosemgrep: python-logger-credential-disclosure — entity-name token sets, not credentials
+                "Strong-token mismatch: %s ↔ %s  (strong: %s vs %s)",
+                s1,
+                s2,
+                strong1,
+                strong2,
+            )
+            return min(base_score, self.strong_mismatch_cap)
+        return base_score
+
+    def _strong_containment_cap(
+        self,
+        base_score: float,
+        s1: str,
+        s2: str,
+        tokens1: frozenset[str],
+        tokens2: frozenset[str],
+        strong1: frozenset[str],
+        strong2: frozenset[str],
+    ) -> float:
+        """Cap the score when one side's strong tokens are missing from the other's token set."""
+        if strong1 and not strong2 and not strong1.issubset(tokens2):
+            logger.debug(  # nosemgrep: python-logger-credential-disclosure — entity-name token sets, not credentials
+                "Strong-token containment miss (s1→s2): %s ↔ %s  (strong1: %s)",
+                s1,
+                s2,
+                strong1,
+            )
+            return min(base_score, self.strong_mismatch_cap)
+        if not strong1 and strong2 and not strong2.issubset(tokens1):
+            logger.debug(  # nosemgrep: python-logger-credential-disclosure — entity-name token sets, not credentials
                 "Strong-token containment miss (s2→s1): %s ↔ %s  (strong2: %s)",
                 s1,
                 s2,
                 strong2,
             )
             return min(base_score, self.strong_mismatch_cap)
-
-        # Both empty → neither name has discriminative tokens; use full score.
-
         return base_score
 
     # ------------------------------------------------------------------

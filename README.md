@@ -7,11 +7,11 @@ A personal high-performance Python scraping framework. Handles HTTP fetching, st
 | Stage | Description | Status |
 |-------|-------------|--------|
 | **Lint** | ruff format + ruff check (E,F,B,C,SIM,PERF; line length 127), actionlint workflow validation | 🔒 Gate |
-| **Tests** | Matrix across Python 3.11, 3.12, 3.13, 3.14; coverage gate at 85% | 🔒 Gate |
-| **Burn-in** | Repeated suite runs (3× per PR, 10× weekly schedule) to surface flakiness | ℹ️ Advisory |
-| **Audit** | bandit, semgrep, mypy, pip-audit, radon, vulture, interrogate — metrics annotated, never blocking | ℹ️ Advisory |
+| **Tests** | Matrix across Python 3.11, 3.12, 3.13, 3.14; coverage gate at 92% | 🔒 Gate |
+| **Burn-in** | Repeated suite runs (3× per PR, 10× weekly schedule) to surface flakiness — a failed run blocks the gate | 🔒 Gate |
+| **Audit** | bandit, semgrep, mypy, radon, vulture, interrogate (zero thresholds) + pip-audit (advisory) — counts collected without failing the job; CI Gate enforces the binding thresholds | 🔒 Gate: binding thresholds (pip-audit advisory) |
 | **Auto-fix** | Removes unused imports, modernises syntax, sorts imports, formats code; commits to the PR branch (check-only on main) | ℹ️ Informational |
-| **CI Gate** | Single required check — green iff lint + all four matrix legs + coverage pass | 🔒 Required |
+| **CI Gate** | Single required check — green iff lint + tests (4 matrix legs, coverage ≥92%) + burn-in pass and all binding audit thresholds met | 🔒 Required |
 
 ---
 
@@ -24,7 +24,7 @@ A personal high-performance Python scraping framework. Handles HTTP fetching, st
 pip install "git+https://github.com/yourusername/scrape-kit.git"
 
 # Pin to a specific release tag (recommended for stability)
-pip install "git+https://github.com/yourusername/scrape-kit.git@v0.1.0"
+pip install "git+https://github.com/yourusername/scrape-kit.git@v0.2.0"
 
 # Pin to a specific commit
 pip install "git+https://github.com/yourusername/scrape-kit.git@a3f2c91"
@@ -33,7 +33,7 @@ pip install "git+https://github.com/yourusername/scrape-kit.git@a3f2c91"
 ### In requirements.txt
 
 ```
-git+https://github.com/yourusername/scrape-kit.git@v0.1.0
+git+https://github.com/yourusername/scrape-kit.git@v0.2.0
 ```
 
 ### After installing — browser binaries
@@ -118,6 +118,14 @@ with fetcher.browser(headless=True) as session:
     session.wait_for_selector(".results")
     html = session.page.content()
 ```
+
+#### Infinite scroll
+
+```python
+with fetcher.browser(headless=True) as session:
+    session.fetch("https://feed.example.com")
+    session.scroll_to_bottom(infinite=True, idle_ms=10000)
+    html = session.page.content()  # all lazily-loaded content present
 
 #### Cloudflare bypass session
 

@@ -1,106 +1,65 @@
-"""
-Comprehensive tests for logger.py — logging functionality.
-
-Public API covered:
-  ScrapeKitFormatter, get_logger, time_profiler
-
-Each method has: normal case, edge case(s), error case.
-"""
-
 import logging
 import os
 import sys
-import time
 from unittest.mock import patch
 
 import pytest
 
 from scrape_kit.logger import ScrapeKitFormatter, get_logger, time_profiler
 
+pytestmark = pytest.mark.p0
+
+
+@pytest.fixture(autouse=True)
+def restore_logger_state():
+    """Snapshot/restore the process-global 'test_logger' logger around every test (#16)."""
+    target = logging.getLogger("test_logger")
+    level, handlers, propagate = target.level, list(target.handlers), target.propagate
+    yield
+    target.setLevel(level)
+    for h in list(target.handlers):
+        target.removeHandler(h)
+        if h not in handlers:
+            h.close()
+    for h in handlers:
+        target.addHandler(h)
+    target.propagate = propagate
+
 
 class TestScrapeKitFormatter:
-    def test_normal_formats_debug_message(self):
-        formatter = ScrapeKitFormatter()
-        record = logging.LogRecord(
-            name="test",
-            level=logging.DEBUG,
-            pathname="test.py",
-            lineno=1,
-            msg="Debug message",
-            args=(),
-            exc_info=None,
-        )
-        formatted = formatter.format(record)
-        assert "DEBUG" in formatted
-        assert "test" in formatted
-        assert "Debug message" in formatted
+    """ScrapeKitFormatter renders level, name and message for every log level."""
 
-    def test_normal_formats_info_message(self):
-        formatter = ScrapeKitFormatter()
+    @pytest.mark.parametrize(
+        ("level", "level_name", "message"),
+        [
+            (logging.DEBUG, "DEBUG", "Debug message"),
+            (logging.INFO, "INFO", "Info message"),
+            (logging.WARNING, "WARNING", "Warning message"),
+            (logging.ERROR, "ERROR", "Error message"),
+            (logging.CRITICAL, "CRITICAL", "Critical message"),
+        ],
+    )
+    def test_normal_formats_message(self, level, level_name, message):
+        """Every log level renders level, logger name and message."""
         record = logging.LogRecord(
             name="test",
-            level=logging.INFO,
+            level=level,
             pathname="test.py",
             lineno=1,
-            msg="Info message",
+            msg=message,
             args=(),
             exc_info=None,
         )
-        formatted = formatter.format(record)
-        assert "INFO" in formatted
+        formatted = ScrapeKitFormatter().format(record)
+        assert level_name in formatted
         assert "test" in formatted
-        assert "Info message" in formatted
-
-    def test_normal_formats_warning_message(self):
-        formatter = ScrapeKitFormatter()
-        record = logging.LogRecord(
-            name="test",
-            level=logging.WARNING,
-            pathname="test.py",
-            lineno=1,
-            msg="Warning message",
-            args=(),
-            exc_info=None,
-        )
-        formatted = formatter.format(record)
-        assert "WARNING" in formatted
-        assert "test" in formatted
-        assert "Warning message" in formatted
-
-    def test_normal_formats_error_message(self):
-        formatter = ScrapeKitFormatter()
-        record = logging.LogRecord(
-            name="test",
-            level=logging.ERROR,
-            pathname="test.py",
-            lineno=1,
-            msg="Error message",
-            args=(),
-            exc_info=None,
-        )
-        formatted = formatter.format(record)
-        assert "ERROR" in formatted
-        assert "test" in formatted
-        assert "Error message" in formatted
-
-    def test_normal_formats_critical_message(self):
-        formatter = ScrapeKitFormatter()
-        record = logging.LogRecord(
-            name="test",
-            level=logging.CRITICAL,
-            pathname="test.py",
-            lineno=1,
-            msg="Critical message",
-            args=(),
-            exc_info=None,
-        )
-        formatted = formatter.format(record)
-        assert "CRITICAL" in formatted
-        assert "test" in formatted
-        assert "Critical message" in formatted
+        assert message in formatted
 
 
 class TestGetLogger:
+    """get_logger configures level, handlers, propagation and stream targets."""
+
+    @pytest.mark.smoke
     def test_normal_creates_logger_with_default_debug_level(self):
         logger = get_logger("test_logger")
         assert isinstance(logger, logging.Logger)
@@ -156,50 +115,47 @@ class TestGetLogger:
 
 
 class TestTimeProfiler:
+    """time_profiler decorates with and without parens, times and re-raises."""
+
     def test_normal_decorator_measures_execution_time(self):
         @time_profiler()
-        def test_function():
-            time.sleep(0.1)
+        def sample_function():
             return "result"
 
-        result = test_function()
+        result = sample_function()
         assert result == "result"
 
     def test_normal_decorator_without_parens(self):
         @time_profiler
-        def test_function():
-            time.sleep(0.1)
+        def sample_function():
             return "result"
 
-        result = test_function()
+        result = sample_function()
         assert result == "result"
 
     def test_normal_custom_logging_level(self):
         @time_profiler(level=logging.WARNING)
-        def test_function():
-            time.sleep(0.1)
+        def sample_function():
             return "result"
 
-        result = test_function()
+        result = sample_function()
         assert result == "result"
 
     def test_normal_function_with_arguments(self):
         @time_profiler()
-        def test_function(arg1, arg2, kwarg1=None):
-            time.sleep(0.05)
+        def sample_function(arg1, arg2, kwarg1=None):
             return f"{arg1}_{arg2}_{kwarg1}"
 
-        result = test_function("hello", "world", kwarg1="test")
+        result = sample_function("hello", "world", kwarg1="test")
         assert result == "hello_world_test"
 
     def test_normal_exception_function_still_times_and_raises(self):
         @time_profiler()
-        def test_function():
-            time.sleep(0.1)
+        def sample_function():
             raise ValueError("test error")
 
         with pytest.raises(ValueError, match="test error"):
-            test_function()
+            sample_function()
 
     def test_normal_logger_with_no_handlers_gets_configured(self):
         # Create a unique module name for testing
@@ -210,9 +166,8 @@ class TestTimeProfiler:
         with patch("logging.getLogger", return_value=test_logger):
 
             @time_profiler()
-            def test_function():
-                time.sleep(0.05)
+            def sample_function():
                 return "result"
 
-            result = test_function()
+            result = sample_function()
             assert result == "result"

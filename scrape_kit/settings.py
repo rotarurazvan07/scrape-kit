@@ -1,3 +1,5 @@
+"""YAML settings management: SettingsManager with atomic writes and depth-first key lookup."""
+
 import os
 from pathlib import Path
 from typing import Any
@@ -110,9 +112,10 @@ class SettingsManager:
         for key in keys:
             if not isinstance(node, dict):
                 break
-            node = node.get(key)
-            if node is None:
+            value = node.get(key)
+            if value is None:
                 break
+            node = value
         else:
             if node is not None:
                 return node

@@ -1,60 +1,27 @@
-"""
-Comprehensive tests for matching.py — SimilarityEngine.
-
-Public API covered:
-  __init__, hybrid_match, is_similar
-  (plus internal helpers _normalize, _soundex, _share_token covered via integration)
-
-Each method has: normal case(s), edge case(s), error case.
-Plus 5 complex integration scenarios at the bottom.
-"""
+"""SimilarityEngine core: init/hybrid_match/is_similar."""
 
 import pytest
+from conftest import (
+    RICH_CONFIG,
+    THRESHOLD_HIGH,
+    THRESHOLD_MODERATE,
+    make_matching_cfg,
+)
 
 from scrape_kit.matching import SimilarityEngine
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-RICH_CONFIG = {
-    "threshold": 65,
-    "acronyms": {
-        "fc": "football club",
-        "utd": "united",
-        "afc": "athletic football club",
-    },
-    "synonyms": {
-        "man city": "manchester city",
-        "barca": "fc barcelona",
-    },
-    "weights": {
-        "token": 0.5,
-        "substr": 0.1,
-        "phonetic": 0.1,
-        "ratio": 0.3,
-    },
-}
-
-
-@pytest.fixture
-def engine():
-    """Default engine — pre-loaded with rich config."""
-    return SimilarityEngine(RICH_CONFIG)
-
-
-@pytest.fixture
-def rich_engine():
-    """Engine pre-loaded with rich config (alias for 'engine' now)."""
-    return SimilarityEngine(RICH_CONFIG)
+pytestmark = pytest.mark.p0
 
 
 # ── __init__ ──────────────────────────────────────────────────────────────────
 
 
 class TestInit:
+    """SettingsManager loads YAML trees into nested settings dict."""
+
     def test_normal_full_config_applied(self):
         cfg = {
-            "threshold": 80,
+            "threshold": THRESHOLD_HIGH,
             "acronyms": {"nba": "national basketball association"},
             "synonyms": {"la": "los angeles"},
             "weights": {"token": 0.6, "substr": 0.1, "phonetic": 0.1, "ratio": 0.2},
@@ -91,7 +58,7 @@ class TestInit:
     def test_error_weight_sum_deviation_raises_value_error(self):
         # Issue #1: weight sets drifting far from 1.0 silently rescale every
         # score — reject them at construction (explicit-errors philosophy).
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["weights"] = {"token": 0.9, "substr": 0.3, "phonetic": 0.1, "ratio": 0.3}
         with pytest.raises(ValueError, match="weights must sum to approximately 1.0"):
             SimilarityEngine(cfg)
@@ -99,9 +66,17 @@ class TestInit:
     def test_error_negative_weight_raises_value_error(self):
         # Review finding: negative weights can sum to exactly 1.0 while
         # corrupting individual metric contributions — must still be rejected.
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["weights"] = {"token": -0.5, "substr": 1.5, "phonetic": 0.0, "ratio": 0.0, "partial": 0.0}
         with pytest.raises(ValueError, match="weights must be non-negative"):
+            SimilarityEngine(cfg)
+
+    def test_error_unknown_weight_key_raises_value_error(self):
+        # Clean-baseline contract: typo'd weight keys must not vanish silently —
+        # raise ValueError naming the valid keys; missing keys keep defaults.
+        cfg = make_matching_cfg()
+        cfg["weights"] = {"tokn": 0.4, "substr": 0.1, "phonetic": 0.1, "ratio": 0.3}
+        with pytest.raises(ValueError, match="Unknown weight key.*valid keys"):
             SimilarityEngine(cfg)
 
     def test_edge_partial_weights_documented_sum_still_accepted(self, engine):
@@ -112,7 +87,7 @@ class TestInit:
         assert score == pytest.approx(100.0)
 
     def test_edge_zero_threshold_works_with_weights(self):
-        cfg = RICH_CONFIG.copy()
+        cfg = make_matching_cfg()
         cfg["threshold"] = 0
         eng = SimilarityEngine(cfg)
         match, _ = eng.is_similar("apple", "orange")
@@ -125,6 +100,8 @@ class TestInit:
 
 
 class TestHybridMatch:
+    """hybrid_match returns clamped 0-100 scores with contract error paths."""
+
     def test_normal_identical_strings_score_100(self, engine):
         assert engine.hybrid_match("Real Madrid", "Real Madrid") == pytest.approx(100.0)
 
@@ -171,6 +148,9 @@ class TestHybridMatch:
 
 
 class TestIsSimilar:
+    """is_similar thresholds the hybrid score and returns (bool, float)."""
+
+    @pytest.mark.smoke
     def test_normal_clearly_similar_returns_true(self, engine):
         match, score = engine.is_similar("Tottenham Hotspur", "Tottenham")
         assert match is True
@@ -193,8 +173,8 @@ class TestIsSimilar:
         assert score == pytest.approx(100.0)
 
     def test_edge_diacritics_stripped_before_comparison(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["threshold"] = 70
+        cfg = make_matching_cfg()
+        cfg["threshold"] = THRESHOLD_MODERATE
         eng = SimilarityEngine(cfg)
         match, _ = eng.is_similar("Müller", "Muller")
         assert match is True
@@ -203,7 +183,7 @@ class TestIsSimilar:
         match, score = engine.is_similar("", "")
         # No shared tokens → score 0.0 → not > threshold
         assert match is False
-        assert score == 0.0
+        assert score == pytest.approx(0.0)
 
     def test_edge_result_is_symmetric(self, engine):
         m1, s1 = engine.is_similar("Alpha Beta", "Beta Alpha")
@@ -222,274 +202,71 @@ class TestIsSimilar:
             engine.is_similar("test", 123)
 
 
-# ── _normalize ────────────────────────────────────────────────────────────────
+class TestBoundaryMatrix:
+    """Designed boundary partitions: empty, whitespace, single-token, unicode, typo-phonetic (#8)."""
 
-
-class TestNormalize:
-    def test_normal_lowercases_and_strips_punctuation(self, engine):
-        result = engine._normalize("Hello, World!")
-        assert result == result.lower()
-        assert "," not in result
-
-    def test_normal_removes_diacritics(self, engine):
-        assert engine._normalize("Ångström") == "angstrom"
-        assert engine._normalize("Résumé") == "resume"
-        assert engine._normalize("Barçelona") == "barcelona"
-
-    def test_normal_collapses_extra_whitespace(self, engine):
-        result = engine._normalize("  too   many   spaces  ")
-        assert "  " not in result
-
-    def test_edge_already_clean_string_unchanged(self, engine):
-        assert engine._normalize("hello world") == "hello world"
-
-    def test_edge_synonym_exact_match_replaced(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["synonyms"] = {"man utd": "manchester united"}
-        cfg["acronyms"] = {}  # Clear to avoid interference
-        eng = SimilarityEngine(cfg)
-        assert eng._normalize("Man Utd") == "manchester united"
-
-    def test_edge_synonym_partial_match_not_replaced(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["synonyms"] = {"man utd": "manchester united"}
-        cfg["acronyms"] = {}  # Clear to avoid interference
-        eng = SimilarityEngine(cfg)
-        # "man utd fc" ≠ "man utd" exactly, no synonym replacement; no acronyms to replace either
-        result = eng._normalize("Man Utd FC")
-        assert result == "man utd fc"
-
-    def test_normal_acronym_token_replaced(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["acronyms"] = {"fc": "football club"}
-        eng = SimilarityEngine(cfg)
-        assert "football club" in eng._normalize("Liverpool FC")
-
-    def test_edge_acronym_does_not_replace_inside_word(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["acronyms"] = {"al ": "", "real ": ""}
-        eng = SimilarityEngine(cfg)
-        assert eng._normalize("Real Betis") == "betis"
-
-    def test_normal_acronym_prefix_with_separator_replaced(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["acronyms"] = {"al ": "", "al-": ""}
-        eng = SimilarityEngine(cfg)
-        assert eng._normalize("Al-Ahli") == "ahli"
-
-    def test_normal_exact_synonym_is_protected_from_acronyms(self):
-        cfg = RICH_CONFIG.copy()
-        cfg["synonyms"] = {"inter": "inter milan"}
-        cfg["acronyms"] = {"inter ": ""}
-        eng = SimilarityEngine(cfg)
-        assert eng._normalize("Inter") == "inter milan"
-
-    def test_normal_result_cached_on_second_call(self, engine):
-        engine._normalize("Cache Test")
-        assert "cache test" in engine._norm_cache.values()
-        first_val = engine._norm_cache.get("Cache Test")
-        engine._normalize("Cache Test")  # second call — must hit cache
-        assert engine._norm_cache.get("Cache Test") == first_val
-
-
-# ── _soundex ──────────────────────────────────────────────────────────────────
-
-
-class TestSoundex:
-    def test_normal_standard_soundex_codes(self, engine):
-        assert engine._soundex("Smith") == "S530"
-        assert engine._soundex("Smyth") == "S530"  # phonetically equivalent
-        assert engine._soundex("Robert") == "R163"
-
-    def test_normal_result_cached(self, engine):
-        engine._soundex("Taylor")
-        assert "Taylor" in engine._soundex_cache
-        cached = engine._soundex_cache["Taylor"]
-        engine._soundex("Taylor")
-        assert engine._soundex_cache["Taylor"] == cached
-
-    def test_edge_empty_string_returns_zeros(self, engine):
-        assert engine._soundex("") == "0000"
-
-    def test_edge_single_character(self, engine):
-        result = engine._soundex("A")
-        assert len(result) == 4
-        assert result.startswith("A")
-
-    def test_normal_different_names_different_codes(self, engine):
-        assert engine._soundex("Adams") != engine._soundex("Brown")
-
-
-# ── Caching ───────────────────────────────────────────────────────────────────
-
-
-class TestCaching:
-    def test_normal_result_cached_after_first_is_similar(self, engine):
-        engine.is_similar("Arsenal", "Arsenal FC")
-        key = tuple(sorted(["Arsenal", "Arsenal FC"]))
-        assert key in engine._result_cache
-
-    def test_normal_second_call_returns_identical_result(self, engine):
-        m1, s1 = engine.is_similar("Chelsea", "Chelsea FC")
-        m2, s2 = engine.is_similar("Chelsea", "Chelsea FC")
-        assert m1 == m2
-        assert s1 == pytest.approx(s2)
-
-    def test_edge_symmetric_cache_key(self, engine):
-        engine.is_similar("A B", "B A")
-        key_fwd = tuple(sorted(["A B", "B A"]))
-        assert key_fwd in engine._result_cache
-
-    def test_normal_separate_instances_have_independent_caches(self):
-        cfg_a = RICH_CONFIG.copy()
-        cfg_a["threshold"] = 90
-        cfg_b = RICH_CONFIG.copy()
-        cfg_b["threshold"] = 40
-        eng_a = SimilarityEngine(cfg_a)
-        eng_b = SimilarityEngine(cfg_b)
-        eng_a.is_similar("X Y", "Y X")
-        # eng_b cache must be untouched
-        assert eng_a is not eng_b
-        assert eng_b._result_cache == {}
-
-    def test_edge_large_number_of_cached_pairs(self, engine):
-        for i in range(200):
-            engine.is_similar(f"Team {i}", f"Squad {i}")
-        assert len(engine._result_cache) == 200
-
-
-# ── Complex Scenarios ─────────────────────────────────────────────────────────
-
-
-class TestMatchingScenarios:
-    def test_scenario_diacritic_plus_synonym_chain(self):
-        """Diacritic stripping and synonym replacement must compose correctly."""
-        cfg = RICH_CONFIG.copy()
-        cfg.update(
-            {
-                "threshold": 70,
-                "synonyms": {"fc barcelona": "barcelona"},
-            }
-        )
-        eng = SimilarityEngine(cfg)
-        # "FC Barçelona" → strip diacritic → "FC Barcelona" → lowercase → "fc barcelona"
-        # → synonym match → "barcelona"
-        # "Barcelona" → normalize → "barcelona"
-        match, _ = eng.is_similar("FC Barçelona", "Barcelona")
-        assert match is True
-
-    def test_scenario_acronym_expands_before_similarity(self):
-        """Acronym expansion during normalization bridges abbreviated vs full name."""
-        cfg = RICH_CONFIG.copy()
-        cfg.update(
-            {
-                "threshold": 65,
-                "acronyms": {"fc": "football club", "utd": "united"},
-            }
-        )
-        eng = SimilarityEngine(cfg)
-        match, _ = eng.is_similar("Manchester FC", "Manchester Football Club")
-        assert match is True
-        match2, _ = eng.is_similar("Man Utd", "Man United")
-        assert match2 is True
-
-    def test_scenario_short_prefix_rule_does_not_break_real_betis(self):
-        """Short prefix rules must not corrupt longer words before matching."""
-        cfg = RICH_CONFIG.copy()
-        cfg.update(
-            {
-                "threshold": 65,
-                "acronyms": {"al ": "", "real ": ""},
-            }
-        )
-        eng = SimilarityEngine(cfg)
-        match, score = eng.is_similar("Real Betis", "Betis")
-        assert match is True
-        assert score > 65
-
-    def test_scenario_weak_tokens_do_not_establish_match_alone(self):
-        """Ambiguous shared words should not merge clearly different clubs."""
-        cfg = RICH_CONFIG.copy()
-        cfg.update(
-            {
-                "threshold": 65,
-                "weak_tokens": ["new", "york", "sporting", "inter"],
-            }
-        )
-        eng = SimilarityEngine(cfg)
-        match, score = eng.is_similar("New York City", "New York Red Bulls")
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [("", ""), ("   ", "   "), ("", "word"), ("word", ""), ("  ", "word"), ("word", "   ")],
+    )
+    def test_edge_empty_and_whitespace_score_zero(self, engine, left, right):
+        match, score = engine.is_similar(left, right)
         assert match is False
-        assert score == pytest.approx(35.0)  # strong_mismatch_cap residual (issue #2)
+        assert score == pytest.approx(0.0)
 
-        match, score = eng.is_similar("Sporting CP", "Sporting Kansas City")
+    def test_edge_single_token_identical_scores_100(self, engine):
+        assert engine.is_similar("Nike", "Nike") == (True, pytest.approx(100.0))
+
+    def test_edge_single_token_disjoint_scores_residual(self, engine):
+        match, score = engine.is_similar("Alpha", "Omega")
+        assert match is False
+        assert score == pytest.approx(19.07, abs=0.01)  # single-token residual under the 35 cap
+
+    def test_edge_multi_token_disjoint_hits_cap(self, engine):
+        _, score = engine.is_similar("Alpha Beta", "Omega Delta")
+        assert score == pytest.approx(35.0)  # strong_mismatch_cap residual (documented 28.57→35 family)
+
+    def test_normal_unicode_diacritics_match_exactly(self, engine):
+        assert engine.is_similar("Café", "Cafe") == (True, pytest.approx(100.0))
+
+    def test_normal_typo_phonetic_bridge(self, engine):
+        match, score = engine.is_similar("Smith", "Smyth")
+        assert match is True
+        assert score > 50  # soundex bridges the homophone typo
+
+    def test_edge_internal_whitespace_does_not_merge_tokens(self, engine):
+        # "sp  ace" keeps two strong tokens — disjoint with "space" → capped residual
+        match, score = engine.is_similar("  sp  ace  ", "space")
         assert match is False
         assert score == pytest.approx(35.0)
 
-    def test_scenario_weak_tokens_still_allow_exact_canonical_synonyms(self):
-        cfg = RICH_CONFIG.copy()
-        cfg.update(
-            {
-                "threshold": 65,
-                "synonyms": {"inter": "inter milan"},
-                "weak_tokens": ["inter"],
-            }
-        )
-        eng = SimilarityEngine(cfg)
-        match, score = eng.is_similar("Inter", "Inter Milan")
-        assert match is True
-        assert score == pytest.approx(100.0)
 
-    def test_scenario_token_weight_vs_ratio_weight_on_reordered_names(self):
-        """Token set ratio handles order-independence; character ratio does not."""
-        cfg_token = RICH_CONFIG.copy()
-        cfg_token.update(
-            {
-                "threshold": 80,
-                "weights": {"token": 1.0, "substr": 0.0, "phonetic": 0.0, "ratio": 0.0},
-            }
-        )
-        cfg_ratio = RICH_CONFIG.copy()
-        cfg_ratio.update(
-            {
-                "threshold": 80,
-                "weights": {"token": 0.0, "substr": 0.0, "phonetic": 0.0, "ratio": 1.0},
-            }
-        )
-        token_eng = SimilarityEngine(cfg_token)
-        ratio_eng = SimilarityEngine(cfg_ratio)
-        m_token, _ = token_eng.is_similar("Moby Dick", "Dick Moby")
-        m_ratio, _ = ratio_eng.is_similar("Moby Dick", "Dick Moby")
-        assert m_token is True
-        assert m_ratio is False  # character-level order mismatch lowers ratio
+class TestStrongTokenContainmentArms:
+    """Asymmetric containment: one discriminative side vs an all-weak side caps at 35.
 
-    def test_scenario_phonetic_weight_boosts_homophones(self):
-        """High phonetic weight helps match names that sound alike but are spelled differently."""
-        cfg = RICH_CONFIG.copy()
-        cfg.update(
-            {
-                "threshold": 50,
-                "weights": {"token": 0.2, "substr": 0.0, "phonetic": 0.8, "ratio": 0.0},
-            }
-        )
-        eng = SimilarityEngine(cfg)
-        # "Smith" and "Smyth" share soundex S530
-        match, score = eng.is_similar("John Smith", "John Smyth")
-        assert match is True
-        assert score > 50
+    Both containment arms are reachable only as misses - a containment hit is
+    impossible (any token shared verbatim would make the weak side strong too),
+    so every arm entry asserts the documented strong_mismatch_cap.
+    """
 
-    def test_scenario_threshold_sensitivity(self):
-        """Same pair — strict vs lenient threshold flips the boolean result."""
-        cfg_strict = RICH_CONFIG.copy()
-        cfg_strict["threshold"] = 95
-        cfg_lenient = RICH_CONFIG.copy()
-        cfg_lenient["threshold"] = 40
+    def test_edge_strong_left_all_weak_right_miss_caps(self):
+        # ACR-2 (arm s1->s2): 'city' is strong, 'new york' is all weak, city is absent.
+        eng = SimilarityEngine(make_matching_cfg(weak_tokens=["new", "york"]))
+        match, score = eng.is_similar("new york city", "new york")
+        assert match is False
+        assert score == pytest.approx(35.0)
 
-        strict = SimilarityEngine(cfg_strict)
-        lenient = SimilarityEngine(cfg_lenient)
-        # Moderately similar pair
-        _, score = lenient.is_similar("Liverpool FC", "Liverpool")
-        m_strict, _ = strict.is_similar("Liverpool FC", "Liverpool")
-        m_lenient, _ = lenient.is_similar("Liverpool FC", "Liverpool")
-        if score < 95:
-            assert m_strict is False
-        assert m_lenient is True
+    def test_edge_strong_right_all_weak_left_miss_caps(self):
+        # ACR-2 (arm s2->s1): fresh engine - the order-independent result cache
+        # would short-circuit the reverse pair on an engine that already saw it.
+        eng = SimilarityEngine(make_matching_cfg(weak_tokens=["new", "york"]))
+        match, score = eng.is_similar("new york", "new york city")
+        assert match is False
+        assert score == pytest.approx(35.0)
+
+    def test_edge_single_weak_token_strong_left_miss_caps(self):
+        # ACR-2: minimal weak list - 'corp' strong vs all-weak 'acme'.
+        eng = SimilarityEngine(make_matching_cfg(weak_tokens=["acme"]))
+        match, score = eng.is_similar("acme corp", "acme")
+        assert match is False
+        assert score == pytest.approx(35.0)
