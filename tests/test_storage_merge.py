@@ -24,6 +24,7 @@ class TestMergeDatabases:
         db.merge_databases(str(chunk_dir), "items")
         rows = db.fetch_rows("SELECT * FROM staging_items")
         assert len(rows) == 2
+        assert len(db.fetch_rows("SELECT * FROM items")) == 0  # staging only — destination untouched without end_process_query
 
     def test_normal_multiple_chunks_all_merged(self, db, tmp_path):
         chunk_dir = tmp_path / "chunks"
