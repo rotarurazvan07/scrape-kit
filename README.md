@@ -1,5 +1,7 @@
 # scrape-kit
 
+![code health](scorecard.png)
+
 A personal high-performance Python scraping framework. Handles HTTP fetching, stealth browser sessions, fuzzy entity matching, SQLite storage, and YAML-based configuration — packaged for direct installation from GitHub rather than as a submodule.
 
 ### CI Pipeline Overview
@@ -17,23 +19,25 @@ A personal high-performance Python scraping framework. Handles HTTP fetching, st
 
 ## Installation
 
+Dependencies are exact-pinned for reproducible scraping runs and audited weekly (the pip-audit workflow files CVE issues automatically). Install into a dedicated venv; pin bumps ship in dedicated PRs.
+
 ### Into a project
 
 ```bash
 # Latest from main
-pip install "git+https://github.com/yourusername/scrape-kit.git"
+pip install "git+https://github.com/rotarurazvan07/scrape-kit.git"
 
 # Pin to a specific release tag (recommended for stability)
-pip install "git+https://github.com/yourusername/scrape-kit.git@v0.2.0"
+pip install "git+https://github.com/rotarurazvan07/scrape-kit.git@v0.2.0"
 
 # Pin to a specific commit
-pip install "git+https://github.com/yourusername/scrape-kit.git@a3f2c91"
+pip install "git+https://github.com/rotarurazvan07/scrape-kit.git@a3f2c91"
 ```
 
 ### In requirements.txt
 
 ```
-git+https://github.com/yourusername/scrape-kit.git@v0.2.0
+git+https://github.com/rotarurazvan07/scrape-kit.git@v0.2.0
 ```
 
 ### After installing — browser binaries
@@ -47,7 +51,7 @@ scrapling install
 ### Local development
 
 ```bash
-git clone https://github.com/yourusername/scrape-kit.git
+git clone https://github.com/rotarurazvan07/scrape-kit.git
 cd scrape-kit
 pip install -e .
 scrapling install
@@ -60,21 +64,25 @@ scrapling install
 Everything public is re-exported from the top-level package:
 
 ```python
-from scrape_kit import WebFetcher, ScrapeMode
+from scrape_kit import WebFetcher, InteractiveSession, ScrapeMode
+from scrape_kit import fetch, browser, scrape, is_blocked, reset_shared
+from scrape_kit import configure, configure_defaults
 from scrape_kit import SimilarityEngine
 from scrape_kit import SettingsManager
-from scrape_kit import BaseStorageManager, BufferedStorageManager
-from scrape_kit import FetcherError, StorageError, SettingsError, ScrapeKitError
+from scrape_kit import BaseStorageManager, BufferedStorageManager, MergeReport
+from scrape_kit import FetcherError, StorageError, SettingsError, MatchingError, ScrapeKitError
+from scrape_kit import get_logger, time_profiler
 ```
 
 Or import directly from the module if you prefer to be explicit:
 
 ```python
-from scrape_kit.fetcher import WebFetcher, InteractiveSession, ScrapeMode
+from scrape_kit.fetcher import WebFetcher, InteractiveSession, ScrapeMode, reset_shared
 from scrape_kit.matching import SimilarityEngine
 from scrape_kit.settings import SettingsManager
-from scrape_kit.storage import BaseStorageManager, BufferedStorageManager
-from scrape_kit.errors import FetcherError, StorageError, SettingsError
+from scrape_kit.storage import BaseStorageManager, BufferedStorageManager, MergeReport
+from scrape_kit.errors import FetcherError, StorageError, SettingsError, MatchingError
+from scrape_kit.logger import get_logger, time_profiler
 ```
 
 ---
@@ -84,6 +92,20 @@ from scrape_kit.errors import FetcherError, StorageError, SettingsError
 ### `fetcher` — Web Fetching
 
 `WebFetcher` wraps [scrapling](https://github.com/D4Vinci/Scrapling) to provide fast HTTP fetching with automatic escalation to a stealth browser when blocked.
+
+#### Module-level static usage
+
+Configure once, then use the module-level proxies — they delegate to a shared instance (`reset_shared()` clears it, e.g. between tests):
+
+```python
+from scrape_kit import configure, configure_defaults, fetch, browser, scrape, is_blocked
+
+configure("path/to/config")   # load retry/block indicators from config/scraper_config.yaml
+# or
+configure_defaults()          # use the built-in default indicator lists
+
+html = fetch("https://example.com")
+```
 
 #### Simple fetch
 
@@ -126,6 +148,7 @@ with fetcher.browser(headless=True) as session:
     session.fetch("https://feed.example.com")
     session.scroll_to_bottom(infinite=True, idle_ms=10000)
     html = session.page.content()  # all lazily-loaded content present
+```
 
 #### Cloudflare bypass session
 
@@ -162,7 +185,7 @@ if fetcher.is_blocked(html):
 
 ### `matching` — Fuzzy Entity Matching
 
-`SimilarityEngine` uses a weighted hybrid of token ratio, substring presence, Soundex phonetics, and character ratio to match entity names. Designed for matching scraped names against a known dataset (sports teams, book titles, people, etc.).
+`SimilarityEngine` uses a weighted hybrid of token ratio, shared full-word overlap, Soundex phonetics, and character ratio to match entity names. Designed for matching scraped names against a known dataset (sports teams, book titles, people, etc.).
 
 #### Basic usage
 
@@ -173,13 +196,13 @@ engine = SimilarityEngine({
     "threshold": 75,
     "weights": {
         "token":    0.5,   # token set ratio — handles word reordering
-        "substr":   0.1,   # substring presence
+        "shared_word": 0.1,   # shared full-word overlap
         "phonetic": 0.1,   # Soundex — catches spelling variations
         "ratio":    0.3,   # character-level ratio
     }
 })
 
-is_match, score = engine.is_similar("Manchester United", "Man United FC")
+is_match, score = engine.similarity("Manchester United", "Man United FC")
 # True, 87.3
 ```
 
@@ -196,11 +219,11 @@ engine = SimilarityEngine({
 })
 
 # "Barca" normalises to "fc barcelona" before comparison
-is_match, score = engine.is_similar("Barca", "FC Barcelona")
+is_match, score = engine.similarity("Barca", "FC Barcelona")
 # True, 100.0
 ```
 
-#### Acronyms — substring replacements
+#### Acronyms — whole-word replacements
 
 ```python
 engine = SimilarityEngine({
@@ -212,7 +235,7 @@ engine = SimilarityEngine({
     }
 })
 
-is_match, score = engine.is_similar("Liverpool FC", "Liverpool Football Club")
+is_match, score = engine.similarity("Liverpool FC", "Liverpool Football Club")
 # True, 100.0
 ```
 
@@ -221,9 +244,9 @@ is_match, score = engine.is_similar("Liverpool FC", "Liverpool Football Club")
 Diacritics are stripped automatically before comparison — no config needed:
 
 ```python
-is_match, score = engine.is_similar("Müller", "Muller")       # True
-is_match, score = engine.is_similar("Résumé", "Resume")       # True
-is_match, score = engine.is_similar("Târgu Mureș", "Targu Mures")  # True
+is_match, score = engine.similarity("Müller", "Muller")       # True
+is_match, score = engine.similarity("Résumé", "Resume")       # True
+is_match, score = engine.similarity("Târgu Mureș", "Targu Mures")  # True
 ```
 
 #### Tuning for different domains
@@ -232,13 +255,13 @@ is_match, score = engine.is_similar("Târgu Mureș", "Targu Mures")  # True
 # Strict mode — order matters, used for exact title matching
 strict = SimilarityEngine({
     "threshold": 90,
-    "weights": {"token": 0.0, "substr": 0.0, "phonetic": 0.0, "ratio": 1.0}
+    "weights": {"token": 0.0, "shared_word": 0.0, "phonetic": 0.0, "ratio": 1.0}
 })
 
 # Lenient mode — good for noisy scraped data
 lenient = SimilarityEngine({
     "threshold": 55,
-    "weights": {"token": 0.7, "substr": 0.2, "phonetic": 0.1, "ratio": 0.0}
+    "weights": {"token": 0.7, "shared_word": 0.2, "phonetic": 0.1, "ratio": 0.0}
 })
 ```
 
@@ -316,8 +339,9 @@ db.create_index("articles", ["scraped"])
 Useful when scraping in parallel across processes — each worker writes its own `.db` file, then you merge:
 
 ```python
-# SQL-level bulk merge (fast, no per-row logic)
-db.merge_databases("./chunks/", "articles")
+# SQL-level bulk merge (fast, no per-row logic) — both merge APIs return a MergeReport
+report = db.merge_databases("./chunks/", "articles")
+print(report.processed_chunks, report.skipped_chunks, report.processed_rows, report.errors)
 
 # Row-by-row merge (when you need similarity checks or dedup logic per row)
 def process_row(row):
@@ -337,8 +361,8 @@ from scrape_kit import BufferedStorageManager
 db = BufferedStorageManager("matches.db", table_name="matches")
 
 # Fast in-memory check — no SQL
-if not db.exists("match_id", 12345):
-    db.insert({"match_id": 12345, "home": "Arsenal", "away": "Chelsea"})
+if not db.exists("matches", "match_id", 12345):
+    db.insert("matches", {"match_id": 12345, "home": "Arsenal", "away": "Chelsea"})
 
 # Write buffer to disk
 db.flush()
@@ -380,17 +404,17 @@ timeout = settings.get("timeout")
 #### Write (atomic)
 
 ```python
-settings.write("config/scrapers", "site3", {
+settings.write("site3", {
     "url": "https://site3.com",
     "rate_limit": 2,
     "retry_on": ["just a moment"],
-})
+}, subpath="scrapers")
 ```
 
 #### Delete
 
 ```python
-settings.delete("config/scrapers", "site3")
+settings.delete("site3", subpath="scrapers")
 ```
 
 ---
@@ -401,13 +425,14 @@ settings.delete("config/scrapers", "site3")
 ScrapeKitError          base for all scrape-kit exceptions
 ├── FetcherError        fetch() failed after all retries / escalation crashed
 ├── StorageError        SQLite operation or buffer flush failed
-└── SettingsError       YAML file missing, malformed, or unreadable
+├── SettingsError       YAML file missing, malformed, or unreadable
+└── MatchingError       SimilarityEngine received invalid configuration
 ```
 
 #### Usage
 
 ```python
-from scrape_kit import FetcherError, StorageError, SettingsError, ScrapeKitError
+from scrape_kit import FetcherError, StorageError, SettingsError, MatchingError, ScrapeKitError
 
 try:
     html = fetcher.fetch(url)
@@ -428,6 +453,23 @@ except ScrapeKitError as e:
 
 ---
 
+### `logger` — Structured Logging
+
+`get_logger` returns a configured logger with colourised terminal output; the level defaults to the `SCRAPE_KIT_LOG_LEVEL` env var (or `INFO`). `time_profiler` logs a function's duration in milliseconds — usable as `@time_profiler(level)` or bare `@time_profiler`.
+
+```python
+import logging
+from scrape_kit import get_logger, time_profiler
+
+log = get_logger(__name__, level=logging.DEBUG, log_file="scrape.log")
+
+@time_profiler(logging.INFO)
+def slow_scrape(url: str) -> str:
+    ...
+```
+
+---
+
 ## Releasing a new version
 
 ```bash
@@ -436,7 +478,7 @@ git tag v0.2.0
 git push origin v0.2.0
 
 # Update a dependent project
-pip install "git+https://github.com/yourusername/scrape-kit.git@v0.2.0"
+pip install "git+https://github.com/rotarurazvan07/scrape-kit.git@v0.2.0"
 ```
 
 ---
