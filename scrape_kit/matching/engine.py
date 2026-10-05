@@ -1,12 +1,11 @@
-"""Hybrid name matching: fuzzy metrics, phonetics, and strong-token enforcement via SimilarityEngine."""
+"""SimilarityEngine: hybrid fuzzy scoring, Soundex phonetics, strong-token enforcement."""
 
-import re
-import unicodedata
 from typing import Any
 
 from rapidfuzz import fuzz
 
-from .errors import MatchingError
+from ..errors import MatchingError
+from .normalize import normalize, strong_tokens
 
 
 class SimilarityEngine:
@@ -28,7 +27,7 @@ class SimilarityEngine:
       words after normalization) the full fuzzy score is used unchanged.
 
     The cap is intentionally not zero: it preserves a small residual signal so that
-    callers can inspect scores for debugging without hitting a hard wall.
+      callers can inspect scores for debugging without hitting a hard wall.
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
@@ -174,93 +173,21 @@ class SimilarityEngine:
         matches = sum(1 for t in smaller if any(self._soundex(t) == self._soundex(u) for u in larger))
         return 100.0 * matches / len(smaller)
 
-    # ------------------------------------------------------------------
-    # Normalisation
-    # ------------------------------------------------------------------
-
     def _normalize(self, raw: str) -> str:
-        """Normalise a raw team/entity name for matching.
+        """Return the cached normalised form of ``raw``.
 
-        Steps
-        -----
-        1. Unicode NFD decomposition → strip combining diacritics (accents).
-        2. Remove punctuation noise; collapse whitespace; lowercase.
-        3. Synonym pass 1 – pre-acronym canonical expansions take priority so that
-           e.g. ``"man utd"`` → ``"manchester united"`` before any acronym rule fires.
-        4. Acronym stripping – removes organisational prefixes/suffixes.
-        5. Synonym pass 2 – a stripped name may now equal a synonym key
-           (e.g. ``"ac milan"`` → ``"milan"`` … unlikely but guarded).
+        Thin cache wrapper around the pure ``normalize`` helper; caching semantics
+        are identical to the pre-package-split single-module implementation.
+
+        Args:
+            raw: Raw string to normalise.
+
+        Returns:
+            The normalised form, cached per raw input.
         """
-        if raw in self._norm_cache:
-            return self._norm_cache[raw]
-
-        # 1. Strip diacritics
-        name = unicodedata.normalize("NFD", raw)
-        name = "".join(ch for ch in name if unicodedata.category(ch) != "Mn")
-
-        # 2. Punctuation / whitespace cleanup
-        name = re.sub(r"[(),.`'\-]+", " ", name)
-        name = " ".join(name.split()).lower()
-
-        # 3. Synonym pass 1
-        resolved = self.synonyms.get(name)
-        if resolved is not None:
-            name = " ".join(str(resolved).lower().split())
-            self._norm_cache[raw] = name
-            return name
-
-        # 4. Acronym stripping
-        for k, v in self.acronyms.items():
-            name = self._replace_acronym(name, k, v)
-        name = " ".join(name.split())
-
-        # 5. Synonym pass 2
-        resolved = self.synonyms.get(name)
-        if resolved is not None:
-            name = " ".join(str(resolved).lower().split())
-
-        self._norm_cache[raw] = name
-        return name
-
-    def _replace_acronym(self, name: str, key: str, replacement: str) -> str:
-        """Apply one acronym substitution respecting word boundaries.
-
-        Keys with leading/trailing spaces encode positional intent:
-          ``"fc "``  → strip only at the *start* of the string
-          ``" fc"``  → strip only at the *end*
-          ``" de "`` → strip only when surrounded by spaces (mid-word safe)
-        """
-        token = " ".join(key.split()).lower()
-        if not token:
-            return name
-
-        repl = f" {replacement.strip()} " if replacement.strip() else " "
-
-        if key.startswith(" ") and key.endswith(" "):
-            # Interior word – must be surrounded by non-word boundaries
-            pattern = rf"(?<!\S){re.escape(token)}(?!\S)"
-        elif key.startswith(" "):
-            # Suffix
-            pattern = rf"(?<!\S){re.escape(token)}$"
-        elif key.endswith(" "):
-            # Prefix
-            pattern = rf"^{re.escape(token)}(?!\S)"
-        elif re.search(r"\W$", key):
-            pattern = rf"^{re.escape(token)}"
-        elif re.search(r"^\W", key):
-            pattern = rf"{re.escape(token)}$"
-        else:
-            pattern = rf"(?<!\w){re.escape(token)}(?!\w)"
-
-        return re.sub(pattern, repl, name)
-
-    # ------------------------------------------------------------------
-    # Token helpers
-    # ------------------------------------------------------------------
-
-    def _strong_tokens(self, s: str) -> frozenset[str]:
-        """Return the subset of tokens that are NOT in ``weak_tokens``."""
-        return frozenset(t for t in s.split() if t not in self.weak_tokens)
+        if raw not in self._norm_cache:
+            self._norm_cache[raw] = normalize(raw, self.synonyms, self.acronyms)
+        return self._norm_cache[raw]
 
     # ------------------------------------------------------------------
     # Scoring
@@ -319,8 +246,8 @@ class SimilarityEngine:
 
         tokens1: frozenset[str] = frozenset(s1.split())
         tokens2: frozenset[str] = frozenset(s2.split())
-        strong1 = self._strong_tokens(s1)
-        strong2 = self._strong_tokens(s2)
+        strong1 = strong_tokens(s1, self.weak_tokens)
+        strong2 = strong_tokens(s2, self.weak_tokens)
 
         # --- Fuzzy metrics ---------------------------------------------------
         tset = fuzz.token_set_ratio(s1, s2)
