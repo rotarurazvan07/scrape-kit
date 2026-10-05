@@ -114,6 +114,10 @@ class BatchScraperMixin:
                 if self.is_blocked(html):
                     continue
             except Exception as exc:
+                # Deliberate broad catch: any per-URL failure (transport
+                # error or FetcherError from retry exhaustion) is retried
+                # once with stealthy headers; breadth is the boundary
+                # contract. Only final exhaustion converts to FetcherError.
                 last_error = exc
                 continue
             # Callback runs unguarded: user-callback bugs must not be retried

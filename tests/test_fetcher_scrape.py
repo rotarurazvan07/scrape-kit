@@ -5,10 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from scrape_kit.errors import FetcherError
-from scrape_kit.fetcher import (
-    ScrapeMode,
-    WebFetcher,
-)
+from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.web_fetcher import WebFetcher
 
 pytestmark = pytest.mark.p0
 

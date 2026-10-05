@@ -149,6 +149,12 @@ class InteractiveSession:
                 break  # success, exit loop
 
             except Exception as e:
+                # Deliberate broad catch: the settle script runs through
+                # page.evaluate, whose failure surface spans arbitrary
+                # Playwright/scrapling runtime errors (JS exceptions,
+                # navigation races, timeouts). The bounded max_wait loop is
+                # the failure policy — retry, then give up — so narrowing the
+                # exception type would only risk crashing on an unlisted one.
                 elapsed = time.time() - start_time
                 if elapsed >= max_wait:
                     logger.warning(f"Page settle script failed after {max_wait}s, giving up: {e}")

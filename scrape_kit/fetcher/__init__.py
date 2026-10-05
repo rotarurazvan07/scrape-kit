@@ -3,35 +3,17 @@
 from collections.abc import Callable
 from typing import Any
 
+from . import _state
+from ._state import reset_shared
 from .batch import ScrapeMode
 from .session import InteractiveSession
 from .web_fetcher import WebFetcher
 
+
 # ── Module-level shared instance ──────────────────────────────────────────────
-# Populated by WebFetcher.configure() / configure_defaults() (via _set_shared).
-# Module-level proxy functions below delegate to this instance.
-
-_shared: WebFetcher | None = None
-
-
-def _set_shared(instance: WebFetcher) -> None:
-    """Set the module-level shared WebFetcher instance.
-
-    Args:
-        instance: The WebFetcher instance to store as the shared instance.
-    """
-    global _shared
-    _shared = instance
-
-
-def reset_shared() -> None:
-    """Reset the shared WebFetcher instance to None.
-
-    Test-isolation helper: clears the module-level singleton so the next
-    proxy call auto-creates a fresh default-configured instance.
-    """
-    global _shared
-    _shared = None
+# State lives in the ._state leaf module (no import cycles, no `global`
+# statements); reset_shared is re-exported from there. Legacy private aliases
+# (_shared/_set_shared on this package) resolve through __getattr__.
 
 
 def _get_shared() -> WebFetcher:
@@ -44,10 +26,36 @@ def _get_shared() -> WebFetcher:
     Returns:
         The shared WebFetcher instance.
     """
-    global _shared
-    if _shared is None:
-        _shared = WebFetcher.configure_defaults()
-    return _shared
+    shared = _state._peek_shared()
+    if shared is None:
+        # configure_defaults() also stores the instance (set_shared=True),
+        # so the auto-created fetcher becomes the shared one — one call
+        # does both, exactly like the old module-global assignment.
+        return WebFetcher.configure_defaults(set_shared=True)
+    return shared
+
+
+def __getattr__(name: str) -> Any:
+    """Serve the legacy ``_shared``/``_set_shared`` private state aliases.
+
+    The shared-instance state moved to ``._state``; the test suite (conftest)
+    still snapshots and restores it through these package attributes.
+
+    Args:
+        name: Attribute name being resolved.
+
+    Returns:
+        The current shared instance (or None) for ``_shared``, or the
+        ``_set_shared`` setter function.
+
+    Raises:
+        AttributeError: For any other unknown module attribute.
+    """
+    if name == "_shared":
+        return _state._peek_shared()
+    if name == "_set_shared":
+        return _state._set_shared
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # ── Public module-level proxies ───────────────────────────────────────────────

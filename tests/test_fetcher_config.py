@@ -10,16 +10,14 @@ from conftest import (
 
 import scrape_kit as sk
 import scrape_kit.fetcher as fetcher_module
-from scrape_kit.fetcher import (
-    InteractiveSession,
-    ScrapeMode,
-    WebFetcher,
-    _get_shared,
-)
+from scrape_kit.fetcher import _get_shared
 from scrape_kit.fetcher import browser as module_browser
 from scrape_kit.fetcher import fetch as module_fetch
 from scrape_kit.fetcher import is_blocked as module_is_blocked
 from scrape_kit.fetcher import scrape as module_scrape
+from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.session import InteractiveSession
+from scrape_kit.fetcher.web_fetcher import WebFetcher
 
 pytestmark = pytest.mark.p0
 
@@ -64,8 +62,8 @@ class TestConfigure:
         """If config key not found, configure() uses class-level _DEFAULT_RETRY/_DEFAULT_BLOCK."""
         cfg_dir = make_fetcher_config(tmp_path, name="other.yaml")  # different stem, key not found
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
-        assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
-        assert instance.block_indicators == WebFetcher._DEFAULT_BLOCK
+        assert instance.retry_indicators == list(WebFetcher._DEFAULT_RETRY)
+        assert instance.block_indicators == list(WebFetcher._DEFAULT_BLOCK)
 
 
 class TestConfigureDefaults:
@@ -73,8 +71,8 @@ class TestConfigureDefaults:
 
     def test_normal_uses_class_defaults(self):
         instance = WebFetcher.configure_defaults(set_shared=False)
-        assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
-        assert instance.block_indicators == WebFetcher._DEFAULT_BLOCK
+        assert instance.retry_indicators == list(WebFetcher._DEFAULT_RETRY)
+        assert instance.block_indicators == list(WebFetcher._DEFAULT_BLOCK)
 
     def test_normal_sets_shared_by_default(self):
         fetcher_module.reset_shared()
@@ -108,7 +106,7 @@ class TestPackageConfigure:
         fetcher_module.reset_shared()
         instance = sk.configure_defaults()
         assert fetcher_module._shared is instance
-        assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
+        assert instance.retry_indicators == list(WebFetcher._DEFAULT_RETRY)
 
 
 # ── Module-level proxy functions ──────────────────────────────────────────────
@@ -123,8 +121,8 @@ class TestModuleProxies:
         shared = _get_shared()
         assert isinstance(shared, WebFetcher)
         # Zero-config fallback matches configure_defaults() exactly.
-        assert shared.retry_indicators == WebFetcher._DEFAULT_RETRY
-        assert shared.block_indicators == WebFetcher._DEFAULT_BLOCK
+        assert shared.retry_indicators == list(WebFetcher._DEFAULT_RETRY)
+        assert shared.block_indicators == list(WebFetcher._DEFAULT_BLOCK)
         assert shared.retry_indicators is not WebFetcher._DEFAULT_RETRY  # copy, not alias
         # Subsequent call returns same instance
         assert _get_shared() is shared
@@ -166,3 +164,37 @@ class TestModuleProxies:
         # is_blocked now uses the configured indicators
         assert module_is_blocked("page is totally_blocked") is True
         assert module_is_blocked("clean page") is False
+
+
+# ── Shared-state module contract ─────────────────────────────────────────────
+
+
+class TestSharedStateContract:
+    """Shared-instance state lives in the ._state leaf; aliases stay in sync."""
+
+    def test_normal_state_leaf_is_single_source_of_truth(self):
+        """Package reset_shared/_set_shared resolve to the ._state leaf's functions."""
+        state = fetcher_module._state
+        assert sk.reset_shared is state.reset_shared
+        assert fetcher_module.reset_shared is state.reset_shared
+        assert fetcher_module._set_shared is state._set_shared
+
+    def test_normal_legacy_shared_alias_reads_state(self):
+        """Legacy _shared/_set_shared package aliases reflect the ._state instance."""
+        state = fetcher_module._state
+        instance = WebFetcher(retry_indicators=["legacy"])
+        fetcher_module._set_shared(instance)
+        assert fetcher_module._shared is instance
+        assert state._peek_shared() is instance
+        fetcher_module.reset_shared()
+        assert fetcher_module._shared is None
+        assert state._peek_shared() is None
+
+    def test_normal_get_shared_autoconfigures_state(self):
+        """_get_shared() stores the auto-created default instance in ._state."""
+        state = fetcher_module._state
+        fetcher_module.reset_shared()
+        shared = _get_shared()
+        assert state._peek_shared() is shared
+        assert fetcher_module._shared is shared
+        assert shared.retry_indicators == list(WebFetcher._DEFAULT_RETRY)

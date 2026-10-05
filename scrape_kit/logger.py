@@ -6,7 +6,25 @@ import sys
 import time
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, overload
+from typing import Any, Final, overload
+
+# ANSI colours and the per-level format table — constants shared by every
+# formatter instance, not per-instance state, so they live at module level.
+_GREY = "\x1b[38;20m"
+_YELLOW = "\x1b[33;20m"
+_RED = "\x1b[31;20m"
+_BOLD_RED = "\x1b[31;1m"
+_BLUE = "\x1b[34;20m"
+_RESET = "\x1b[0m"
+_FORMAT_STR = "%(asctime)s - %(name)s - %(levelname)8s - %(message)s"
+
+_LEVEL_FORMATS: Final[dict[int, str]] = {
+    logging.DEBUG: _GREY + _FORMAT_STR + _RESET,
+    logging.INFO: _BLUE + _FORMAT_STR + _RESET,
+    logging.WARNING: _YELLOW + _FORMAT_STR + _RESET,
+    logging.ERROR: _RED + _FORMAT_STR + _RESET,
+    logging.CRITICAL: _BOLD_RED + _FORMAT_STR + _RESET,
+}
 
 
 class ScrapeKitFormatter(logging.Formatter):
@@ -14,25 +32,9 @@ class ScrapeKitFormatter(logging.Formatter):
     Custom formatter with colors for terminal output.
     """
 
-    grey = "\x1b[38;20m"
-    yellow = "\x1b[33;20m"
-    red = "\x1b[31;20m"
-    bold_red = "\x1b[31;1m"
-    blue = "\x1b[34;20m"
-    reset = "\x1b[0m"
-    format_str = "%(asctime)s - %(name)s - %(levelname)8s - %(message)s"
-
-    FORMATS = {
-        logging.DEBUG: grey + format_str + reset,
-        logging.INFO: blue + format_str + reset,
-        logging.WARNING: yellow + format_str + reset,
-        logging.ERROR: red + format_str + reset,
-        logging.CRITICAL: bold_red + format_str + reset,
-    }
-
     def format(self, record: logging.LogRecord) -> str:
         """Format a record using the colourised scheme for its level."""
-        log_fmt = self.FORMATS.get(record.levelno)
+        log_fmt = _LEVEL_FORMATS.get(record.levelno)
         formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
         return formatter.format(record)
 

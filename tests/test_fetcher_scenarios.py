@@ -11,12 +11,10 @@ from conftest import (
 )
 
 import scrape_kit.fetcher as fetcher_module
-from scrape_kit.fetcher import (
-    InteractiveSession,
-    ScrapeMode,
-    WebFetcher,
-)
 from scrape_kit.fetcher import is_blocked as module_is_blocked
+from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.session import InteractiveSession
+from scrape_kit.fetcher.web_fetcher import WebFetcher
 
 pytestmark = pytest.mark.p1
 

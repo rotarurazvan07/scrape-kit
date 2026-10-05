@@ -17,9 +17,7 @@ from conftest import (
 )
 
 from scrape_kit.errors import FetcherError
-from scrape_kit.fetcher import (
-    InteractiveSession,
-)
+from scrape_kit.fetcher.session import InteractiveSession
 
 pytestmark = pytest.mark.p0
 
@@ -79,7 +77,7 @@ class TestInteractiveSessionFetch:
         mock_page.wait_for_timeout.assert_not_called()
         mock_page.evaluate.assert_called_once()
 
-    def test_edge_fetch_without_enter_raises_runtime_error(self):
+    def test_edge_fetch_without_enter_raises_fetcher_error(self):
         mock_session = MagicMock()
         session = InteractiveSession(mock_session)
         with pytest.raises(FetcherError, match="Session not started"):
@@ -213,7 +211,7 @@ class TestInteractiveSessionHelpers:
         session = InteractiveSession(mock_session)
         assert session.cookies == {"session": "abc"}
 
-    def test_edge_helpers_without_enter_raise_runtime(self):
+    def test_edge_helpers_without_enter_raise_fetcher_error(self):
         session = InteractiveSession(MagicMock())
         for method, args in [
             ("wait_for_selector", ("#x",)),
@@ -262,7 +260,7 @@ class TestScrollToBottom:
         script = mock_page.evaluate.call_args[0][0]
         assert "var infinite = false;" in script
 
-    def test_error_before_enter_raises_runtime(self):
+    def test_error_before_enter_raises_fetcher_error(self):
         session = InteractiveSession(MagicMock())
         with pytest.raises(FetcherError, match=re.escape("Call fetch() first")):
             session.scroll_to_bottom()

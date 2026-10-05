@@ -1,13 +1,14 @@
 """WebFetcher: fast HTTP fetching with retry, block detection, and stealth-browser escalation."""
 
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from scrapling.fetchers import DynamicSession, Fetcher, StealthySession
 
 from ..errors import FetcherError
 from ..logger import get_logger
 from ..settings import SettingsManager
+from ._state import _set_shared
 from .batch import BatchScraperMixin
 from .session import InteractiveSession
 
@@ -36,7 +37,7 @@ class WebFetcher(BatchScraperMixin):
     """
 
     # ── Default indicators — override via configure() or __init__ ─────────────
-    _DEFAULT_RETRY: list[str] = [
+    _DEFAULT_RETRY: ClassVar[tuple[str, ...]] = (
         "403 Forbidden",
         "Access Denied",
         "429 Too Many Requests",
@@ -52,8 +53,8 @@ class WebFetcher(BatchScraperMixin):
         "Just a moment",
         "Checking your browser",
         "verify you are a human",
-    ]
-    _DEFAULT_BLOCK: list[str] = [
+    )
+    _DEFAULT_BLOCK: ClassVar[tuple[str, ...]] = (
         "Just a moment...",
         "cf-browser-verification",
         "Access Denied",
@@ -62,7 +63,7 @@ class WebFetcher(BatchScraperMixin):
         "403 Forbidden",
         "429 Too Many Requests",
         "Attention Required!",
-    ]
+    )
 
     def __init__(
         self,
@@ -132,10 +133,6 @@ class WebFetcher(BatchScraperMixin):
         )
 
         if set_shared:
-            # Deferred import: the package __init__ imports this module, so a
-            # module-level import of the package root here would be circular.
-            from . import _set_shared
-
             _set_shared(instance)
         return instance
 
@@ -157,10 +154,6 @@ class WebFetcher(BatchScraperMixin):
             block_indicators=list(cls._DEFAULT_BLOCK),
         )
         if set_shared:
-            # Deferred import: the package __init__ imports this module, so a
-            # module-level import of the package root here would be circular.
-            from . import _set_shared
-
             _set_shared(instance)
         logger.info(
             "WebFetcher configured with defaults (%d retry / %d block indicators)",
@@ -204,6 +197,11 @@ class WebFetcher(BatchScraperMixin):
             except FetcherError:
                 raise
             except Exception as e:
+                # Deliberate broad catch: this is the retry boundary — any
+                # attempt failure (transport error, scrapling runtime error,
+                # parser error) is classified by _handle_fetch_error, which
+                # retries or converts to FetcherError. FetcherError re-raises
+                # above; breadth is the boundary contract.
                 self._handle_fetch_error(url, e, attempt, retries, backoff)
 
         raise FetcherError(f"Fetch failed for {url} after {retries} attempts")
