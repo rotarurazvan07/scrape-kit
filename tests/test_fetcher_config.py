@@ -10,6 +10,7 @@ from conftest import (
 
 import scrape_kit as sk
 import scrape_kit.fetcher as fetcher_module
+import scrape_kit.fetcher._state
 from scrape_kit.fetcher import _get_shared
 from scrape_kit.fetcher import browser as module_browser
 from scrape_kit.fetcher import fetch as module_fetch
