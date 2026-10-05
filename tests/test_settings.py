@@ -64,8 +64,24 @@ class TestInit:
         cfg = tmp_path / "config"
         cfg.mkdir()
         (cfg / "locked.yaml").write_text("x: 1")
-        with patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")), pytest.raises(SettingsError):
+        with (
+            patch("pathlib.Path.read_text", side_effect=OSError("Permission denied")),
+            pytest.raises(SettingsError),
+        ):
             SettingsManager(str(cfg))
+
+    def test_normal_init_logs_redacted_summary_not_values(self, tmp_path):
+        """Init logs the source directory and top-level key count, never config values."""
+        cfg = make_cfg(tmp_path, {"section/hidden.yaml": "secret_token: abc123"})
+        with patch("scrape_kit.settings.logger") as mock_logger:
+            SettingsManager(str(cfg))
+        mock_logger.info.assert_called_once()
+        info_args = mock_logger.info.call_args.args
+        assert info_args[1] == cfg  # source directory
+        assert info_args[2] == 1  # top-level key count
+        # No log call at any level may contain the secret value
+        for call in mock_logger.method_calls:
+            assert "abc123" not in " ".join(str(a) for a in call.args)
 
 
 # ── get ───────────────────────────────────────────────────────────────────────
@@ -115,6 +131,31 @@ class TestGet:
         assert manager.get("count") == 42
         assert manager.get("flag") is True
         assert manager.get("pi") == pytest.approx(3.14)
+
+    def test_edge_present_key_with_none_value_returns_none(self, tmp_path):
+        """A present key with an explicit None value counts as found, not missing."""
+        cfg = make_cfg(tmp_path, {"db.yaml": "host:"})
+        manager = SettingsManager(str(cfg))
+        # Both the full-path walk and the DFS fallback treat the present None as found
+        assert manager.get("config", "db", "host") is None
+        assert manager.get("host") is None
+
+    def test_edge_nested_none_value_wins_over_sibling_subtree(self, tmp_path):
+        """A nested present-None key must not be skipped in favor of a sibling subtree."""
+        cfg = make_cfg(
+            tmp_path,
+            {
+                "a_db.yaml": "conn:\n  host:",
+                "z_fallback.yaml": "conn:\n  host: real-host",
+            },
+        )
+        manager = SettingsManager(str(cfg))
+        # sorted rglob hits a_db.yaml first: its None-valued host is the first match,
+        # so the DFS must stop there instead of returning z_fallback's real value
+        assert manager.get("host") is None
+        assert manager.get("config", "a_db", "conn", "host") is None
+        # The sibling value stays reachable through its own full path
+        assert manager.get("config", "z_fallback", "conn", "host") == "real-host"
 
     def test_error_corrupted_yaml_on_reload_raises(self, tmp_path):
         cfg = tmp_path / "config"

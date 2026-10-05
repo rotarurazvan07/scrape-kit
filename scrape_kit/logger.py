@@ -6,7 +6,7 @@ import sys
 import time
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, overload
 
 
 class ScrapeKitFormatter(logging.Formatter):
@@ -37,6 +37,10 @@ class ScrapeKitFormatter(logging.Formatter):
         return formatter.format(record)
 
 
+# ponytail: flat kwargs beat a config object — every knob is used independently by callers;
+# introduce a profile/bundle type only if a real caller needs to pass them as a group.
+
+
 def get_logger(
     name: str,
     level: int | None = None,
@@ -49,17 +53,17 @@ def get_logger(
 
     Args:
         name: Name of the logger (usually __name__)
-        level: Logging level (e.g. logging.DEBUG). Defaults to SCRAPE_KIT_LOG_LEVEL env var or DEBUG.
+        level: Logging level (e.g. logging.DEBUG). Defaults to SCRAPE_KIT_LOG_LEVEL env var or INFO.
         log_file: Optional path to a file to write logs to.
         stream: Stream to output logs to (e.g. sys.stdout, sys.stderr). Defaults to sys.stderr.
         propagate: Whether to propagate logs to parent loggers.
     """
     logger = logging.getLogger(name)
 
-    # Set level from argument, environment variable, or default to DEBUG
+    # Set level from argument, environment variable, or default to INFO
     if level is None:
-        env_level = os.environ.get("SCRAPE_KIT_LOG_LEVEL", "DEBUG").upper()
-        level = getattr(logging, env_level, logging.DEBUG)
+        env_level = os.environ.get("SCRAPE_KIT_LOG_LEVEL", "INFO").upper()
+        level = getattr(logging, env_level, logging.INFO)
 
     logger.setLevel(level)
     logger.propagate = propagate
@@ -86,39 +90,69 @@ def get_logger(
     return logger
 
 
-def time_profiler(level: int = logging.DEBUG) -> Callable[..., Any]:
+_MS_PER_SECOND = 1000
+
+
+def _timed_call(func: Callable[..., Any], level: int, *args: Any, **kwargs: Any) -> Any:
+    """Call func, then log its elapsed duration in milliseconds at level."""
+    start_time = time.perf_counter()
+    result = func(*args, **kwargs)
+    duration_ms = (time.perf_counter() - start_time) * _MS_PER_SECOND
+
+    logger = logging.getLogger(func.__module__)
+    # If the logger isn't configured yet, get_logger will handle it
+    if not logger.handlers:
+        logger = get_logger(func.__module__)
+
+    logger.log(level, "Function '%s' took %.2fms", func.__name__, duration_ms)
+    return result
+
+
+@overload
+def time_profiler(
+    level: int = ...,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Factory form: ``@time_profiler(level)`` returns a decorator for the wrapped function."""
+
+
+@overload
+def time_profiler(level: Callable[..., Any]) -> Callable[..., Any]:
+    """Bare-decorator form: ``@time_profiler`` returns the wrapped function directly."""
+
+
+def time_profiler(
+    level: int | Callable[..., Any] = logging.DEBUG,
+) -> Callable[..., Any]:
     """
     Decorator to log execution time of a function.
 
+    Usable as ``@time_profiler(level)`` (factory form) or as a bare
+    ``@time_profiler`` decorator; in the bare form the duration is
+    logged at ``logging.DEBUG``.
+
     Args:
-        level: The logging level to use for the duration message.
+        level: The logging level for the duration message. May also be the
+            decorated function itself when ``@time_profiler`` is used
+            without parentheses.
+
+    Returns:
+        The decorator (when called with a level) or the wrapped function
+        (when used as a bare decorator).
     """
+
+    log_level: int = logging.DEBUG if callable(level) else level
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         """Wrap func so each call logs its duration at the configured level."""
 
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            """Call the wrapped function, then log the elapsed duration in milliseconds."""
-            start_time = time.perf_counter()
-            result = func(*args, **kwargs)
-            end_time = time.perf_counter()
-            duration_ms = (end_time - start_time) * 1000
-
-            logger = logging.getLogger(func.__module__)
-            # If the logger isn't configured yet, get_logger will handle it
-            if not logger.handlers:
-                logger = get_logger(func.__module__)
-
-            logger.log(level, f"Function '{func.__name__}' took {duration_ms:.2f}ms")
-            return result
+            """Time a single invocation of the wrapped function."""
+            return _timed_call(func, log_level, *args, **kwargs)
 
         return wrapper
 
     # Support @time_profiler without parens
     if callable(level):
-        f = level
-        level = logging.DEBUG
-        return decorator(f)
-
+        return decorator(level)
     return decorator

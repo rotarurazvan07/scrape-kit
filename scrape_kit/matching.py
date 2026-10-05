@@ -6,15 +6,13 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
-from .logger import get_logger
-
-logger = get_logger(__name__)
+from .errors import MatchingError
 
 
 class SimilarityEngine:
     """Encapsulates string similarity logic for sports team names and similar entities.
 
-    Exposes ``is_similar(a, b)`` for external use.  Normalizes inputs (diacritic
+    Exposes ``similarity(a, b)`` for external use.  Normalizes inputs (diacritic
     stripping, acronym removal, synonym expansion), then applies a hybrid scoring
     strategy with *strong-token enforcement*:
 
@@ -48,53 +46,80 @@ class SimilarityEngine:
                                     ``city`` or ``united`` here – those ARE the
                                     tokens that tell two clubs apart.
         weights           : dict  – scoring weights:
-                              token              (default 0.40) – best of token_set/sort ratio
-                              substr             (default 0.10) – shared full-word bonus
-                              phonetic           (default 0.10) – Soundex similarity across
+                              token               (default 0.40) – best of token_set/sort ratio
+                              shared_word         (default 0.10) – shared full-word bonus;
+                                                   ``substr`` is accepted as a deprecated alias
+                              phonetic            (default 0.10) – Soundex similarity across
                                                                   strong tokens
-                              ratio              (default 0.30) – character-level ratio
-                              partial            (default 0.10) – partial_ratio, applied only
+                              ratio               (default 0.30) – character-level ratio
+                              partial             (default 0.10) – partial_ratio, applied only
                                                                   when the shorter string ≤ 8 chars
                               strong_mismatch_cap (default 35)  – score ceiling when strong
                                                                   tokens are present but disjoint
-        threshold         : float – minimum score for ``is_similar`` to return True (default 65).
+        threshold         : float – minimum score for ``similarity`` to return True (default 65).
 
-        A weight set with negative entries, or whose sum deviates from 1.0 by more
-        than 0.25, raises ``ValueError`` at construction; upward drift is absorbed
-        by the 0-100 score clamp applied in ``hybrid_match``.
+        Unknown top-level or weight keys, negative weights, or a weight sum that
+        deviates from 1.0 by more than 0.25 raise ``MatchingError`` at construction;
+        upward drift is absorbed by the 0-100 score clamp applied in ``hybrid_match``.
+
+        Raises:
+            MatchingError: If ``cfg`` is empty, a top-level key is unknown, a weight
+                key is unknown, a weight is negative, or the weight sum deviates
+                from 1.0 by more than 0.25.
         """
         if not cfg:
-            raise ValueError("Configuration is required for SimilarityEngine")
+            raise MatchingError("Configuration is required for SimilarityEngine")
+
+        valid_top_keys = frozenset({"acronyms", "synonyms", "weak_tokens", "weights", "threshold"})
+        unknown_top = set(cfg) - valid_top_keys
+        if unknown_top:
+            raise MatchingError(f"Unknown config key(s) {sorted(unknown_top)}; valid keys: {sorted(valid_top_keys)}")
 
         self.acronyms: dict[str, str] = cfg.get("acronyms", {})
         self.synonyms: dict[str, str] = cfg.get("synonyms", {})
         self.weak_tokens: frozenset[str] = frozenset(str(t).lower() for t in cfg.get("weak_tokens", []))
 
-        w = cfg.get("weights", {})
-        valid_keys = frozenset({"token", "substr", "phonetic", "ratio", "partial", "strong_mismatch_cap"})
+        w = dict(cfg.get("weights", {}))
+        # 'substr' is accepted as a deprecated alias for 'shared_word' (the
+        # metric always scored full-word token overlap, never substrings).
+        if "shared_word" not in w and "substr" in w:
+            w["shared_word"] = w.pop("substr")
+        valid_keys = frozenset(
+            {
+                "token",
+                "shared_word",
+                "phonetic",
+                "ratio",
+                "partial",
+                "strong_mismatch_cap",
+            }
+        )
         unknown = set(w) - valid_keys
         if unknown:
-            raise ValueError(f"Unknown weight key(s) {sorted(unknown)}; valid keys: {sorted(valid_keys)}")
+            raise MatchingError(f"Unknown weight key(s) {sorted(unknown)}; valid keys: {sorted(valid_keys)}")
         self.token_weight: float = w.get("token", 0.40)
-        self.substr_weight: float = w.get("substr", 0.10)
+        self.shared_word_weight: float = w.get("shared_word", 0.10)
         self.phonetic_weight: float = w.get("phonetic", 0.10)
         self.ratio_weight: float = w.get("ratio", 0.30)
         self.partial_weight: float = w.get("partial", 0.10)
         self.strong_mismatch_cap: float = w.get("strong_mismatch_cap", 35.0)
 
-        # Weight-sum sanity check (explicit-errors philosophy): weights that
-        # drift far from 1.0 silently rescale every score, so reject them at
-        # construction time instead of letting consumer thresholds shift.
-        weight_sum = self.token_weight + self.substr_weight + self.phonetic_weight + self.ratio_weight + self.partial_weight
-        # Negative weights can sum to ~1.0 while corrupting individual metric
-        # contributions (one metric punished, another inflated) — reject them
-        # alongside the sum check (explicit-errors philosophy).
-        if min(self.token_weight, self.substr_weight, self.phonetic_weight, self.ratio_weight, self.partial_weight) < 0:
-            raise ValueError("Scoring weights must be non-negative")
-        if abs(weight_sum - 1.0) > 0.25:
-            raise ValueError(
+        # Weight sanity (explicit-errors philosophy): negative weights corrupt
+        # individual metric contributions, and sums drifting far from 1.0
+        # silently rescale every score — reject both at construction time.
+        weights = (
+            self.token_weight,
+            self.shared_word_weight,
+            self.phonetic_weight,
+            self.ratio_weight,
+            self.partial_weight,
+        )
+        if min(weights) < 0:
+            raise MatchingError("Scoring weights must be non-negative")
+        if abs(sum(weights) - 1.0) > 0.25:
+            raise MatchingError(
                 "Scoring weights must sum to approximately 1.0"
-                f" (got {weight_sum:.2f}); fix the 'weights' config or omit it to use the defaults"
+                f" (got {sum(weights):.2f}); fix the 'weights' config or omit it to use the defaults"
             )
 
         self.similarity_threshold: float = cfg.get("threshold", 65.0)
@@ -252,15 +277,17 @@ class SimilarityEngine:
              - ``ratio``            – raw character-level Levenshtein
              - ``partial_ratio``    – substring containment; applied conservatively
                                       only for short strings (≤ 8 chars on either side)
-        2. Word-level shared-token bonus (``substr_score``).
+        2. Word-level shared-token bonus (``shared_word_score``).
         3. Phonetic score across *strong* tokens only (multi-token Soundex).
         4. Weighted sum → ``base_score``.
+        5. Strong-token enforcement: cap the score when the sides' discriminative
+           tokens cannot confirm each other (see below).
 
         Strong-token enforcement (the key guard)
         -----------------------------------------
         After computing ``base_score``, classify each side's tokens as strong
         (discriminative, not in ``weak_tokens``) or weak (geographic / franchise
-        filler).
+        filler), then apply the first matching arm:
 
         • **Both sides have strong tokens, and they are disjoint (no shared token,
           no phonetic match)**
@@ -310,7 +337,7 @@ class SimilarityEngine:
             partial_contribution = fuzz.partial_ratio(s1, s2) * 0.92
 
         # Word-level overlap (full-word shared token, not substring)
-        substr_score = 100.0 if tokens1 & tokens2 else 0.0
+        shared_word_score = 100.0 if tokens1 & tokens2 else 0.0
 
         # Phonetic similarity across strong tokens (0–100)
         phonetic_score = self._phonetic_overlap(strong1, strong2)
@@ -318,7 +345,7 @@ class SimilarityEngine:
         # --- Weighted combination --------------------------------------------
         base_score = (
             self.token_weight * best_token
-            + self.substr_weight * substr_score
+            + self.shared_word_weight * shared_word_score
             + self.phonetic_weight * phonetic_score
             + self.ratio_weight * ratio
             + self.partial_weight * partial_contribution
@@ -330,60 +357,29 @@ class SimilarityEngine:
         base_score = max(0.0, min(100.0, base_score))
 
         # --- Strong-token enforcement ----------------------------------------
-        # Arms are mutually exclusive (a side either has strong tokens or not),
-        # so the two cap helpers can run in sequence without changing outcomes.
-        base_score = self._strong_mismatch_cap(base_score, s1, s2, strong1, strong2, phonetic_score)
-        base_score = self._strong_containment_cap(base_score, s1, s2, tokens1, tokens2, strong1, strong2)
+        # Arms are mutually exclusive (a side either has strong tokens or not);
+        # _cap_score reproduces the original two-pass capping exactly.
+        return self._cap_score(base_score, strong1, strong2, tokens1, tokens2, phonetic_score)
 
-        return base_score
-
-    def _strong_mismatch_cap(
+    def _cap_score(
         self,
         base_score: float,
-        s1: str,
-        s2: str,
         strong1: frozenset[str],
         strong2: frozenset[str],
-        phonetic_score: float,
-    ) -> float:
-        """Cap the score when both sides carry strong tokens that are fully disjoint."""
-        if strong1 and strong2 and strong1.isdisjoint(strong2) and phonetic_score == 0.0:
-            logger.debug(  # nosemgrep: python-logger-credential-disclosure — entity-name token sets, not credentials
-                "Strong-token mismatch: %s ↔ %s  (strong: %s vs %s)",
-                s1,
-                s2,
-                strong1,
-                strong2,
-            )
-            return min(base_score, self.strong_mismatch_cap)
-        return base_score
-
-    def _strong_containment_cap(
-        self,
-        base_score: float,
-        s1: str,
-        s2: str,
         tokens1: frozenset[str],
         tokens2: frozenset[str],
-        strong1: frozenset[str],
-        strong2: frozenset[str],
+        phonetic_score: float,
     ) -> float:
-        """Cap the score when one side's strong tokens are missing from the other's token set."""
-        if strong1 and not strong2 and not strong1.issubset(tokens2):
-            logger.debug(  # nosemgrep: python-logger-credential-disclosure — entity-name token sets, not credentials
-                "Strong-token containment miss (s1→s2): %s ↔ %s  (strong1: %s)",
-                s1,
-                s2,
-                strong1,
-            )
-            return min(base_score, self.strong_mismatch_cap)
-        if not strong1 and strong2 and not strong2.issubset(tokens1):
-            logger.debug(  # nosemgrep: python-logger-credential-disclosure — entity-name token sets, not credentials
-                "Strong-token containment miss (s2→s1): %s ↔ %s  (strong2: %s)",
-                s1,
-                s2,
-                strong2,
-            )
+        """Apply strong-token enforcement caps to a computed base score.
+
+        Arms are mutually exclusive (a side either has strong tokens or not).
+        Both-strong-but-disjoint sides, or a one-sided strong set unconfirmed
+        by the other's tokens, cap the score at ``strong_mismatch_cap``.
+        """
+        if strong1 and strong2:
+            if strong1.isdisjoint(strong2) and phonetic_score == 0.0:
+                return min(base_score, self.strong_mismatch_cap)
+        elif strong1 and not strong1.issubset(tokens2) or strong2 and not strong2.issubset(tokens1):
             return min(base_score, self.strong_mismatch_cap)
         return base_score
 
@@ -391,8 +387,8 @@ class SimilarityEngine:
     # Public API
     # ------------------------------------------------------------------
 
-    def is_similar(self, s1: str, s2: str) -> tuple[bool, float]:
-        """Return ``(is_similar, score)`` for two raw strings.
+    def similarity(self, s1: str, s2: str) -> tuple[bool, float]:
+        """Return ``(is_match, score)`` for two raw strings.
 
         Args:
             s1: First raw string.
@@ -405,20 +401,13 @@ class SimilarityEngine:
             ValueError: If either input is not a string.
         """
         if not isinstance(s1, str) or not isinstance(s2, str):
-            raise ValueError(f"is_similar expects two strings, got {type(s1).__name__} and {type(s2).__name__}")
+            raise ValueError(f"similarity expects two strings, got {type(s1).__name__} and {type(s2).__name__}")
         # Canonical cache key: order-independent
         cache_key = (min(s1, s2), max(s1, s2))
         if cache_key in self._result_cache:
             return self._result_cache[cache_key]
 
-        n1 = self._normalize(s1)
-        n2 = self._normalize(s2)
-
-        logger.debug("Matching '%s' → '%s'  vs  '%s' → '%s'", s1, n1, s2, n2)
-
-        score = self.hybrid_match(n1, n2)
+        score = self.hybrid_match(self._normalize(s1), self._normalize(s2))
         result = (score > self.similarity_threshold, score)
-
-        logger.debug("Result: %s | Score: %.2f", result[0], score)
         self._result_cache[cache_key] = result
         return result

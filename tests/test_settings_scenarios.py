@@ -133,6 +133,12 @@ class TestInitEdgeCases:
         # The file becomes the root with its stem as the key
         assert "single" in str(manager.settings) or manager.settings
 
+    def test_error_stem_directory_collision_raises(self, tmp_path):
+        """A YAML stem colliding with a sibling directory key raises SettingsError."""
+        cfg = make_cfg(tmp_path, {"db.yaml": "host: a", "db/cache.yaml": "ttl: 300"})
+        with pytest.raises(SettingsError, match="Ambiguous config layout"):
+            SettingsManager(str(cfg))
+
 
 class TestGetEdgeCases:
     """get() with no keys and non-dict intermediates."""
@@ -186,3 +192,34 @@ class TestDeleteEdgeCases:
             pytest.raises(SettingsError, match="delete failed"),
         ):
             manager.delete("to_delete")
+
+
+class TestPathContainment:
+    """write()/delete() reject names and subpaths that escape the settings directory."""
+
+    def test_error_write_name_escaping_directory_raises(self, tmp_path):
+        """A name whose resolution escapes the settings directory raises SettingsError."""
+        cfg = tmp_path / "config"
+        cfg.mkdir()
+        manager = SettingsManager(str(cfg))
+        with pytest.raises(SettingsError, match="must stay within"):
+            manager.write("../escape", {"x": 1})
+
+    def test_error_write_subpath_escaping_directory_raises(self, tmp_path):
+        """A subpath whose resolution escapes the settings directory raises SettingsError."""
+        cfg = tmp_path / "config"
+        cfg.mkdir()
+        manager = SettingsManager(str(cfg))
+        with pytest.raises(SettingsError, match="must stay within"):
+            manager.write("file", {"x": 1}, subpath=Path("..") / "outside")
+
+    def test_error_delete_escaping_name_blocked_and_file_survives(self, tmp_path):
+        """delete() on an escaping name raises and the outside file is left untouched."""
+        cfg = tmp_path / "config"
+        cfg.mkdir()
+        victim = tmp_path / "victim.yaml"
+        victim.write_text("x: 1")
+        manager = SettingsManager(str(cfg))
+        with pytest.raises(SettingsError, match="must stay within"):
+            manager.delete("../victim")
+        assert victim.exists()

@@ -126,19 +126,19 @@ class TestSoundex:
 class TestCaching:
     """Result and normalization caches are symmetric, isolated and bounded."""
 
-    def test_normal_result_cached_after_first_is_similar(self, engine):
-        engine.is_similar("Arsenal", "Arsenal FC")
+    def test_normal_result_cached_after_first_similarity(self, engine):
+        engine.similarity("Arsenal", "Arsenal FC")
         key = tuple(sorted(["Arsenal", "Arsenal FC"]))
         assert key in engine._result_cache
 
     def test_normal_second_call_returns_identical_result(self, engine):
-        m1, s1 = engine.is_similar("Chelsea", "Chelsea FC")
-        m2, s2 = engine.is_similar("Chelsea", "Chelsea FC")
+        m1, s1 = engine.similarity("Chelsea", "Chelsea FC")
+        m2, s2 = engine.similarity("Chelsea", "Chelsea FC")
         assert m1 == m2
         assert s1 == pytest.approx(s2)
 
     def test_edge_symmetric_cache_key(self, engine):
-        engine.is_similar("A B", "B A")
+        engine.similarity("A B", "B A")
         key_fwd = tuple(sorted(["A B", "B A"]))
         assert key_fwd in engine._result_cache
 
@@ -149,14 +149,14 @@ class TestCaching:
         cfg_b["threshold"] = THRESHOLD_LENIENT
         eng_a = SimilarityEngine(cfg_a)
         eng_b = SimilarityEngine(cfg_b)
-        eng_a.is_similar("X Y", "Y X")
+        eng_a.similarity("X Y", "Y X")
         # eng_b cache must be untouched
         assert eng_a is not eng_b
         assert eng_b._result_cache == {}
 
     def test_edge_large_number_of_cached_pairs(self, engine):
         for i in range(200):
-            engine.is_similar(f"Team {i}", f"Squad {i}")
+            engine.similarity(f"Team {i}", f"Squad {i}")
         assert len(engine._result_cache) == 200
 
 
