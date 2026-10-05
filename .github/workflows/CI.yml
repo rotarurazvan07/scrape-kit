@@ -20,7 +20,6 @@ env:
   PYTHON_LINT: "3.12"
   PYTHON_AUDIT: "3.11" # floor: catches floor-only breakage
   PYTHON_BURNIN: "3.12"
-  SCRAPLING_VERSION: "0.4.14" # keep in sync with pyproject.toml — gate summary prints both
 
 permissions:
   contents: read
@@ -100,7 +99,6 @@ jobs:
       - uses: ./.github/actions/setup-python-deps
         with:
           python-version: "${{ matrix.python-version }}"
-          scrapling-version: ${{ env.SCRAPLING_VERSION }}
 
       - name: Run tests with coverage
         id: tests
@@ -142,7 +140,6 @@ jobs:
       - uses: ./.github/actions/setup-python-deps
         with:
           python-version: ${{ env.PYTHON_BURNIN }}
-          scrapling-version: ${{ env.SCRAPLING_VERSION }}
 
       - name: Run suite repeatedly to surface flakiness
         id: burnin
@@ -197,7 +194,6 @@ jobs:
           install-tools: >-
             bandit==1.9.2 pip-audit==2.9.0 radon==6.0.1 vulture==2.14
             mypy==1.18.2 interrogate==1.7.0 semgrep==1.144.0
-          scrapling-version: ${{ env.SCRAPLING_VERSION }}
 
       - name: semgrep — pattern-based security & bug detection
         id: semgrep
@@ -560,5 +556,4 @@ jobs:
             echo "| pip-audit vulns | ${PIP_AUDIT_VULNS:-n/a} | Advisory (weekly CVE issues) |"
             echo ""
             echo "Coverage floor: $COVERAGE_FAIL_UNDER% (enforced in test job)"
-            echo "Scrapling pin: $SCRAPLING_VERSION (must match pyproject.toml)"
           } >> "$GITHUB_STEP_SUMMARY"

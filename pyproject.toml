@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 dependencies = [
     "PyYAML==6.0.3",
     "rapidfuzz==3.14.5",
-    "scrapling[fetchers]==0.4.14",
+    "scrapling[fetchers]==0.4.14",  # single source of truth — CI reads this pin (setup-python-deps action)
     "pandas==3.0.5",
 ]
 
@@ -26,3 +26,6 @@ test = [
 # up without any changes here.
 where = ["."]
 include = ["scrape_kit*"]
+
+[tool.setuptools.package-data]
+scrape_kit = ["py.typed"]

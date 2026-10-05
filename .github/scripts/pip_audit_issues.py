@@ -3,6 +3,9 @@
 
 Used by the weekly pip-audit workflow (schedule/dispatch only — never PR CI).
 Idempotent: existing open issues mentioning an advisory id are skipped.
+
+Library failures raise ``GhCommandError``; the CLI entry point maps that
+to exit code 1 with the message on stderr.
 """
 
 import json
@@ -11,12 +14,31 @@ import subprocess
 import sys
 from pathlib import Path
 
+GH_TIMEOUT_S = 60  # generous ceiling: gh talks to GitHub over the network
+
+
+class GhCommandError(RuntimeError):
+    """A gh CLI invocation failed (missing binary or nonzero exit)."""
+
 
 def gh(*args: str) -> str:
-    """Run a gh CLI command and return its stdout."""
-    proc = subprocess.run(["gh", *args], capture_output=True, text=True)
+    """Run a gh CLI command and return its stdout.
+
+    Args:
+        *args: The gh subcommand and its arguments.
+
+    Returns:
+        The command's stdout.
+
+    Raises:
+        GhCommandError: If the gh binary is missing or the command exits nonzero.
+    """
+    gh_bin = shutil.which("gh")  # resolve to an absolute path — no partial-path exec
+    if gh_bin is None:
+        raise GhCommandError("gh CLI not available")
+    proc = subprocess.run([gh_bin, *args], capture_output=True, text=True, timeout=GH_TIMEOUT_S)
     if proc.returncode != 0:
-        sys.exit(f"gh {' '.join(args)} failed: {proc.stderr.strip()}")
+        raise GhCommandError(f"gh {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
 
 
@@ -32,8 +54,19 @@ def issue_exists(vuln_id: str) -> bool:
 
 
 def main(report_path: str) -> int:
-    if shutil.which("gh") is None:
-        sys.exit("gh CLI not available")
+    """File one GitHub issue per new advisory in a pip-audit JSON report.
+
+    Args:
+        report_path: Path to the pip-audit JSON report.
+
+    Returns:
+        Exit code: 0 after processing the report.
+
+    Raises:
+        GhCommandError: If any gh CLI call fails.
+        json.JSONDecodeError: If the report is not valid JSON.
+        FileNotFoundError: If the report path does not exist.
+    """
     ensure_labels()
 
     deps = json.loads(Path(report_path).read_text()).get("dependencies", [])
@@ -84,4 +117,9 @@ def main(report_path: str) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "pip-audit-report.json"))
+    try:
+        code = main(sys.argv[1] if len(sys.argv) > 1 else "pip-audit-report.json")
+    except GhCommandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        code = 1
+    raise SystemExit(code)
