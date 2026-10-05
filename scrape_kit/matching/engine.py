@@ -8,6 +8,73 @@ from ..errors import MatchingError
 from .normalize import normalize, strong_tokens
 
 
+def _resolve_weights(cfg: dict[str, Any]) -> dict[str, float]:
+    """Validate the ``weights`` section of ``cfg`` and return fully-resolved values.
+
+    Applies the documented defaults for missing keys, resolves the deprecated
+    ``substr`` alias onto ``shared_word``, then enforces the explicit-errors
+    contract: unknown weight keys, negative scoring weights, and scoring-weight
+    sums drifting more than 0.25 from 1.0 all raise ``MatchingError``.
+
+    Args:
+        cfg: Full engine configuration; only its ``weights`` section is read.
+
+    Returns:
+        Resolved weight values keyed by ``token``, ``shared_word``, ``phonetic``,
+        ``ratio``, ``partial`` and ``strong_mismatch_cap``.
+
+    Raises:
+        MatchingError: If a weight key is unknown, a scoring weight is negative,
+            or the scoring weights deviate from 1.0 by more than 0.25.
+    """
+    w = dict(cfg.get("weights", {}))
+    # 'substr' is accepted as a deprecated alias for 'shared_word' (the
+    # metric always scored full-word token overlap, never substrings).
+    if "shared_word" not in w and "substr" in w:
+        w["shared_word"] = w.pop("substr")
+    valid_keys = frozenset(
+        {
+            "token",
+            "shared_word",
+            "phonetic",
+            "ratio",
+            "partial",
+            "strong_mismatch_cap",
+        }
+    )
+    unknown = set(w) - valid_keys
+    if unknown:
+        raise MatchingError(f"Unknown weight key(s) {sorted(unknown)}; valid keys: {sorted(valid_keys)}")
+
+    resolved: dict[str, float] = {
+        "token": w.get("token", 0.40),
+        "shared_word": w.get("shared_word", 0.10),
+        "phonetic": w.get("phonetic", 0.10),
+        "ratio": w.get("ratio", 0.30),
+        "partial": w.get("partial", 0.10),
+        "strong_mismatch_cap": w.get("strong_mismatch_cap", 35.0),
+    }
+
+    # Weight sanity (explicit-errors philosophy): negative weights corrupt
+    # individual metric contributions, and sums drifting far from 1.0
+    # silently rescale every score — reject both at construction time.
+    scoring = (
+        resolved["token"],
+        resolved["shared_word"],
+        resolved["phonetic"],
+        resolved["ratio"],
+        resolved["partial"],
+    )
+    if min(scoring) < 0:
+        raise MatchingError("Scoring weights must be non-negative")
+    if abs(sum(scoring) - 1.0) > 0.25:
+        raise MatchingError(
+            "Scoring weights must sum to approximately 1.0"
+            f" (got {sum(scoring):.2f}); fix the 'weights' config or omit it to use the defaults"
+        )
+    return resolved
+
+
 class SimilarityEngine:
     """Encapsulates string similarity logic for sports team names and similar entities.
 
@@ -78,48 +145,13 @@ class SimilarityEngine:
         self.synonyms: dict[str, str] = cfg.get("synonyms", {})
         self.weak_tokens: frozenset[str] = frozenset(str(t).lower() for t in cfg.get("weak_tokens", []))
 
-        w = dict(cfg.get("weights", {}))
-        # 'substr' is accepted as a deprecated alias for 'shared_word' (the
-        # metric always scored full-word token overlap, never substrings).
-        if "shared_word" not in w and "substr" in w:
-            w["shared_word"] = w.pop("substr")
-        valid_keys = frozenset(
-            {
-                "token",
-                "shared_word",
-                "phonetic",
-                "ratio",
-                "partial",
-                "strong_mismatch_cap",
-            }
-        )
-        unknown = set(w) - valid_keys
-        if unknown:
-            raise MatchingError(f"Unknown weight key(s) {sorted(unknown)}; valid keys: {sorted(valid_keys)}")
-        self.token_weight: float = w.get("token", 0.40)
-        self.shared_word_weight: float = w.get("shared_word", 0.10)
-        self.phonetic_weight: float = w.get("phonetic", 0.10)
-        self.ratio_weight: float = w.get("ratio", 0.30)
-        self.partial_weight: float = w.get("partial", 0.10)
-        self.strong_mismatch_cap: float = w.get("strong_mismatch_cap", 35.0)
-
-        # Weight sanity (explicit-errors philosophy): negative weights corrupt
-        # individual metric contributions, and sums drifting far from 1.0
-        # silently rescale every score — reject both at construction time.
-        weights = (
-            self.token_weight,
-            self.shared_word_weight,
-            self.phonetic_weight,
-            self.ratio_weight,
-            self.partial_weight,
-        )
-        if min(weights) < 0:
-            raise MatchingError("Scoring weights must be non-negative")
-        if abs(sum(weights) - 1.0) > 0.25:
-            raise MatchingError(
-                "Scoring weights must sum to approximately 1.0"
-                f" (got {sum(weights):.2f}); fix the 'weights' config or omit it to use the defaults"
-            )
+        resolved = _resolve_weights(cfg)
+        self.token_weight: float = resolved["token"]
+        self.shared_word_weight: float = resolved["shared_word"]
+        self.phonetic_weight: float = resolved["phonetic"]
+        self.ratio_weight: float = resolved["ratio"]
+        self.partial_weight: float = resolved["partial"]
+        self.strong_mismatch_cap: float = resolved["strong_mismatch_cap"]
 
         self.similarity_threshold: float = cfg.get("threshold", 65.0)
 

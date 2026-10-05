@@ -7,6 +7,7 @@ from conftest import (
     make_matching_cfg,
 )
 
+import scrape_kit.matching.normalize  # noqa: F401  # direct import edge pins normalize.py (transitive_only finding)
 from scrape_kit.matching import SimilarityEngine
 
 pytestmark = pytest.mark.p0
