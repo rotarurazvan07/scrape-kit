@@ -10,7 +10,9 @@ to exit code 1 with the message on stderr.
 
 import json
 import shutil
-import subprocess
+
+# B404 rationale: this CI helper's whole purpose is shelling out to gh; every call is path-resolved and timeout-bounded.
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -36,7 +38,8 @@ def gh(*args: str) -> str:
     gh_bin = shutil.which("gh")  # resolve to an absolute path — no partial-path exec
     if gh_bin is None:
         raise GhCommandError("gh CLI not available")
-    proc = subprocess.run([gh_bin, *args], capture_output=True, text=True, timeout=GH_TIMEOUT_S)
+    # B603 rationale: arguments are internal constants, never user input; gh path resolved absolutely above.
+    proc = subprocess.run([gh_bin, *args], capture_output=True, text=True, timeout=GH_TIMEOUT_S)  # nosec B603
     if proc.returncode != 0:
         raise GhCommandError(f"gh {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
