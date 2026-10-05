@@ -280,28 +280,32 @@ class SimilarityEngine:
         tokens2: frozenset[str] = frozenset(s2.split())
         strong1 = strong_tokens(s1, self.weak_tokens)
         strong2 = strong_tokens(s2, self.weak_tokens)
+        base_score, phonetic_score = self._compute_base_score(s1, s2, tokens1, tokens2, strong1, strong2)
+        return self._cap_score(base_score, strong1, strong2, tokens1, tokens2, phonetic_score)
 
-        # --- Fuzzy metrics ---------------------------------------------------
+    def _compute_base_score(
+        self,
+        s1: str,
+        s2: str,
+        tokens1: frozenset[str],
+        tokens2: frozenset[str],
+        strong1: frozenset[str],
+        strong2: frozenset[str],
+    ) -> tuple[float, float]:
+        """Compute the uncapped weighted score and the phonetic overlap.
+
+        Returns:
+            ``(base_score, phonetic_score)`` in the documented 0–100 range.
+        """
         tset = fuzz.token_set_ratio(s1, s2)
         tsort = fuzz.token_sort_ratio(s1, s2)
         ratio = fuzz.ratio(s1, s2)
-
-        # Best token-based score
         best_token = float(max(tset, tsort))
-
-        # partial_ratio helps short abbreviations/nicknames but can cause false
-        # positives on longer strings, so apply it only when one side is short.
         partial_contribution = 0.0
         if min(len(s1), len(s2)) <= 8:
             partial_contribution = fuzz.partial_ratio(s1, s2) * 0.92
-
-        # Word-level overlap (full-word shared token, not substring)
         shared_word_score = 100.0 if tokens1 & tokens2 else 0.0
-
-        # Phonetic similarity across strong tokens (0–100)
         phonetic_score = self._phonetic_overlap(strong1, strong2)
-
-        # --- Weighted combination --------------------------------------------
         base_score = (
             self.token_weight * best_token
             + self.shared_word_weight * shared_word_score
@@ -309,16 +313,7 @@ class SimilarityEngine:
             + self.ratio_weight * ratio
             + self.partial_weight * partial_contribution
         )
-
-        # Clamp to the documented 0-100 range: weight sets drifting slightly
-        # above 1.0 (e.g. the documented example config) must never produce
-        # scores above 100, and no metric combination can go below 0.
-        base_score = max(0.0, min(100.0, base_score))
-
-        # --- Strong-token enforcement ----------------------------------------
-        # Arms are mutually exclusive (a side either has strong tokens or not);
-        # _cap_score reproduces the original two-pass capping exactly.
-        return self._cap_score(base_score, strong1, strong2, tokens1, tokens2, phonetic_score)
+        return max(0.0, min(100.0, base_score)), phonetic_score
 
     def _cap_score(
         self,
