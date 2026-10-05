@@ -86,9 +86,9 @@ def make_fetcher_config(tmp_path, retry=(), block=(), name="scraper_config.yaml"
 def reset_shared():
     """Reset the fetcher module-global shared instance around every test."""
     old = fetcher_module._shared
-    fetcher_module._shared = None
+    fetcher_module.reset_shared()
     yield
-    fetcher_module._shared = old
+    fetcher_module._set_shared(old)
 
 
 # ── Matching factory ───────────────────────────────────────────────────────────

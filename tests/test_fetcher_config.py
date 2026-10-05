@@ -40,14 +40,14 @@ class TestConfigure:
     def test_normal_sets_shared_instance_by_default(self, tmp_path):
         """configure() stores result as module-level shared instance when set_shared=True."""
         cfg_dir = make_fetcher_config(tmp_path, retry=["test"])
-        fetcher_module._shared = None
+        fetcher_module.reset_shared()
         instance = WebFetcher.configure(str(cfg_dir), set_shared=True)
         assert fetcher_module._shared is instance
 
     def test_edge_set_shared_false_does_not_replace_shared(self, tmp_path):
         """configure(set_shared=False) does not overwrite the module shared instance."""
         existing = WebFetcher(retry_indicators=["existing"])
-        fetcher_module._shared = existing
+        fetcher_module._set_shared(existing)
 
         cfg_dir = make_fetcher_config(tmp_path, retry=["new"])
         WebFetcher.configure(str(cfg_dir), set_shared=False)
@@ -77,12 +77,12 @@ class TestConfigureDefaults:
         assert instance.block_indicators == WebFetcher._DEFAULT_BLOCK
 
     def test_normal_sets_shared_by_default(self):
-        fetcher_module._shared = None
+        fetcher_module.reset_shared()
         instance = WebFetcher.configure_defaults(set_shared=True)
         assert fetcher_module._shared is instance
 
     def test_edge_set_shared_false_leaves_shared_none(self):
-        fetcher_module._shared = None
+        fetcher_module.reset_shared()
         WebFetcher.configure_defaults(set_shared=False)
         assert fetcher_module._shared is None
 
@@ -99,13 +99,13 @@ class TestPackageConfigure:
 
     def test_normal_sk_configure_sets_shared(self, tmp_path):
         cfg_dir = make_fetcher_config(tmp_path, retry=["pkg"])
-        fetcher_module._shared = None
+        fetcher_module.reset_shared()
         instance = sk.configure(str(cfg_dir))
         assert fetcher_module._shared is instance
         assert "pkg" in instance.retry_indicators
 
     def test_normal_sk_configure_defaults_sets_shared(self):
-        fetcher_module._shared = None
+        fetcher_module.reset_shared()
         instance = sk.configure_defaults()
         assert fetcher_module._shared is instance
         assert instance.retry_indicators == WebFetcher._DEFAULT_RETRY
@@ -117,46 +117,48 @@ class TestPackageConfigure:
 class TestModuleProxies:
     """Module-level fetch/is_blocked/browser/scrape delegate to the shared instance."""
 
-    def test_normal_get_shared_creates_zero_config_instance_if_not_set(self):
-        """_get_shared() auto-creates an empty WebFetcher when none is configured."""
-        fetcher_module._shared = None
+    def test_normal_get_shared_creates_default_configured_instance_if_not_set(self):
+        """_get_shared() auto-creates a default-configured WebFetcher (configure_defaults semantics)."""
+        fetcher_module.reset_shared()
         shared = _get_shared()
         assert isinstance(shared, WebFetcher)
-        assert shared.retry_indicators == []
-        assert shared.block_indicators == []
+        # Zero-config fallback matches configure_defaults() exactly.
+        assert shared.retry_indicators == WebFetcher._DEFAULT_RETRY
+        assert shared.block_indicators == WebFetcher._DEFAULT_BLOCK
+        assert shared.retry_indicators is not WebFetcher._DEFAULT_RETRY  # copy, not alias
         # Subsequent call returns same instance
         assert _get_shared() is shared
 
-    @patch("scrape_kit.fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
     def test_normal_module_fetch_delegates_to_shared(self, MockFetcher):
         """module fetch() uses whatever shared instance is set."""
         MockFetcher.get.return_value = make_page("<html>proxied</html>")
         fetcher = WebFetcher()
-        fetcher_module._shared = fetcher
+        fetcher_module._set_shared(fetcher)
         result = module_fetch("http://example.com")
         assert result == "<html>proxied</html>"
 
     def test_normal_module_is_blocked_delegates_to_shared(self):
         fetcher = WebFetcher(block_indicators=["BLOCKED"])
-        fetcher_module._shared = fetcher
+        fetcher_module._set_shared(fetcher)
         assert module_is_blocked("<html>BLOCKED</html>") is True
         assert module_is_blocked("<html>clean</html>") is False
 
-    @patch("scrape_kit.fetcher.DynamicSession")
+    @patch("scrape_kit.fetcher.web_fetcher.DynamicSession")
     def test_normal_module_browser_delegates_to_shared(self, MockDynamic):
         fetcher = WebFetcher()
-        fetcher_module._shared = fetcher
+        fetcher_module._set_shared(fetcher)
         session = module_browser()
         assert isinstance(session, InteractiveSession)
 
     @patch.object(WebFetcher, "_scrape_fast")
     def test_normal_module_scrape_delegates_to_shared(self, mock_fast):
         fetcher = WebFetcher()
-        fetcher_module._shared = fetcher
+        fetcher_module._set_shared(fetcher)
         module_scrape(["http://a.com"], callback=MagicMock(), mode=ScrapeMode.FAST)
         mock_fast.assert_called_once()
 
-    @patch("scrape_kit.fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
     def test_normal_configure_then_proxy_uses_configured_indicators(self, MockFetcher, tmp_path):
         """Full flow: configure from YAML → module proxy picks up the indicators."""
         cfg_dir = make_fetcher_config(tmp_path, retry=["proxy_test"], block=["totally_blocked"])
