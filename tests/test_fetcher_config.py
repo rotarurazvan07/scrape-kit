@@ -41,16 +41,16 @@ class TestConfigure:
         cfg_dir = make_fetcher_config(tmp_path, retry=["test"])
         fetcher_module.reset_shared()
         instance = WebFetcher.configure(str(cfg_dir), set_shared=True)
-        assert fetcher_module._shared is instance
+        assert fetcher_module._state._peek_shared() is instance
 
     def test_edge_set_shared_false_does_not_replace_shared(self, tmp_path):
         """configure(set_shared=False) does not overwrite the module shared instance."""
         existing = WebFetcher(retry_indicators=["existing"])
-        fetcher_module._set_shared(existing)
+        fetcher_module._state._set_shared(existing)
 
         cfg_dir = make_fetcher_config(tmp_path, retry=["new"])
         WebFetcher.configure(str(cfg_dir), set_shared=False)
-        assert fetcher_module._shared is existing
+        assert fetcher_module._state._peek_shared() is existing
 
     def test_normal_custom_config_key(self, tmp_path):
         """configure() uses a custom key to look up a differently named YAML block."""
@@ -78,12 +78,12 @@ class TestConfigureDefaults:
     def test_normal_sets_shared_by_default(self):
         fetcher_module.reset_shared()
         instance = WebFetcher.configure_defaults(set_shared=True)
-        assert fetcher_module._shared is instance
+        assert fetcher_module._state._peek_shared() is instance
 
     def test_edge_set_shared_false_leaves_shared_none(self):
         fetcher_module.reset_shared()
         WebFetcher.configure_defaults(set_shared=False)
-        assert fetcher_module._shared is None
+        assert fetcher_module._state._peek_shared() is None
 
     def test_normal_default_indicators_are_nonempty(self):
         assert len(WebFetcher._DEFAULT_RETRY) > 0
@@ -100,13 +100,13 @@ class TestPackageConfigure:
         cfg_dir = make_fetcher_config(tmp_path, retry=["pkg"])
         fetcher_module.reset_shared()
         instance = sk.configure(str(cfg_dir))
-        assert fetcher_module._shared is instance
+        assert fetcher_module._state._peek_shared() is instance
         assert "pkg" in instance.retry_indicators
 
     def test_normal_sk_configure_defaults_sets_shared(self):
         fetcher_module.reset_shared()
         instance = sk.configure_defaults()
-        assert fetcher_module._shared is instance
+        assert fetcher_module._state._peek_shared() is instance
         assert instance.retry_indicators == list(WebFetcher._DEFAULT_RETRY)
 
 
@@ -133,27 +133,27 @@ class TestModuleProxies:
         """module fetch() uses whatever shared instance is set."""
         MockFetcher.get.return_value = make_page("<html>proxied</html>")
         fetcher = WebFetcher()
-        fetcher_module._set_shared(fetcher)
+        fetcher_module._state._set_shared(fetcher)
         result = module_fetch("http://example.com")
         assert result == "<html>proxied</html>"
 
     def test_normal_module_is_blocked_delegates_to_shared(self):
         fetcher = WebFetcher(block_indicators=["BLOCKED"])
-        fetcher_module._set_shared(fetcher)
+        fetcher_module._state._set_shared(fetcher)
         assert module_is_blocked("<html>BLOCKED</html>") is True
         assert module_is_blocked("<html>clean</html>") is False
 
     @patch("scrape_kit.fetcher.web_fetcher.DynamicSession")
     def test_normal_module_browser_delegates_to_shared(self, MockDynamic):
         fetcher = WebFetcher()
-        fetcher_module._set_shared(fetcher)
+        fetcher_module._state._set_shared(fetcher)
         session = module_browser()
         assert isinstance(session, InteractiveSession)
 
     @patch.object(WebFetcher, "_scrape_fast")
     def test_normal_module_scrape_delegates_to_shared(self, mock_fast):
         fetcher = WebFetcher()
-        fetcher_module._set_shared(fetcher)
+        fetcher_module._state._set_shared(fetcher)
         module_scrape(["http://a.com"], callback=MagicMock(), mode=ScrapeMode.FAST)
         mock_fast.assert_called_once()
 
@@ -171,25 +171,13 @@ class TestModuleProxies:
 
 
 class TestSharedStateContract:
-    """Shared-instance state lives in the ._state leaf; aliases stay in sync."""
+    """Shared-instance state lives in the ._state leaf."""
 
     def test_normal_state_leaf_is_single_source_of_truth(self):
-        """Package reset_shared/_set_shared resolve to the ._state leaf's functions."""
+        """Package reset_shared resolves to the ._state leaf function."""
         state = fetcher_module._state
         assert sk.reset_shared is state.reset_shared
         assert fetcher_module.reset_shared is state.reset_shared
-        assert fetcher_module._set_shared is state._set_shared
-
-    def test_normal_legacy_shared_alias_reads_state(self):
-        """Legacy _shared/_set_shared package aliases reflect the ._state instance."""
-        state = fetcher_module._state
-        instance = WebFetcher(retry_indicators=["legacy"])
-        fetcher_module._set_shared(instance)
-        assert fetcher_module._shared is instance
-        assert state._peek_shared() is instance
-        fetcher_module.reset_shared()
-        assert fetcher_module._shared is None
-        assert state._peek_shared() is None
 
     def test_normal_get_shared_autoconfigures_state(self):
         """_get_shared() stores the auto-created default instance in ._state."""
@@ -197,5 +185,4 @@ class TestSharedStateContract:
         fetcher_module.reset_shared()
         shared = _get_shared()
         assert state._peek_shared() is shared
-        assert fetcher_module._shared is shared
         assert shared.retry_indicators == list(WebFetcher._DEFAULT_RETRY)

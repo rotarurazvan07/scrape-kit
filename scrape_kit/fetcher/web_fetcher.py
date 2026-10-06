@@ -111,8 +111,10 @@ class WebFetcher(BatchScraperMixin):
         Returns:
             The newly constructed WebFetcher instance.
 
+        A missing directory or YAML key uses the class-level default lists.
+
         Raises:
-            SettingsError: If the YAML configuration cannot be read.
+            SettingsError: If a YAML file is present but malformed.
         """
         sm = SettingsManager(config_path)
         cfg: dict[str, Any] = sm.get(config_key) or {}

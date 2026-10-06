@@ -288,6 +288,10 @@ class BaseStorageManager(ChunkMergeMixin):
                 logger.warning("Cleanup error on shutdown: %s", close_e)
             raise StorageError(f"Fatal error during shutdown: {e}") from e
 
+    def close(self) -> None:
+        """Alias for :meth:`flush_and_close` so both storage types share one shutdown name."""
+        self.flush_and_close()
+
     def clear_table(self, table_name: str) -> None:
         """Delete all rows from a table without dropping it.
 

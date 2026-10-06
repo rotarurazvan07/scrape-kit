@@ -91,8 +91,8 @@ class TestFetcherScenarios:
         cfg_a = make_fetcher_config(tmp_path, retry=["first"], dirname="cfg_a")
         cfg_b = make_fetcher_config(tmp_path, retry=["second"], dirname="cfg_b")
         WebFetcher.configure(str(cfg_a))
-        first = fetcher_module._shared
+        first = fetcher_module._state._peek_shared()
         WebFetcher.configure(str(cfg_b))
-        second = fetcher_module._shared
+        second = fetcher_module._state._peek_shared()
         assert first is not second
         assert second.retry_indicators == ["second"]

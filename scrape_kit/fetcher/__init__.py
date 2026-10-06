@@ -10,10 +10,7 @@ from .session import InteractiveSession
 from .web_fetcher import WebFetcher
 
 
-# ── Module-level shared instance ──────────────────────────────────────────────
-# State lives in the ._state leaf module (no import cycles, no `global`
-# statements); reset_shared is re-exported from there. Legacy private aliases
-# (_shared/_set_shared on this package) resolve through __getattr__.
+# Shared-instance state lives in the ._state leaf (no import cycles, no `global`).
 
 
 def _get_shared() -> WebFetcher:
@@ -33,29 +30,6 @@ def _get_shared() -> WebFetcher:
         # does both, exactly like the old module-global assignment.
         return WebFetcher.configure_defaults(set_shared=True)
     return shared
-
-
-def __getattr__(name: str) -> Any:
-    """Serve the legacy ``_shared``/``_set_shared`` private state aliases.
-
-    The shared-instance state moved to ``._state``; the test suite (conftest)
-    still snapshots and restores it through these package attributes.
-
-    Args:
-        name: Attribute name being resolved.
-
-    Returns:
-        The current shared instance (or None) for ``_shared``, or the
-        ``_set_shared`` setter function.
-
-    Raises:
-        AttributeError: For any other unknown module attribute.
-    """
-    if name == "_shared":
-        return _state._peek_shared()
-    if name == "_set_shared":
-        return _state._set_shared
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # ── Public module-level proxies ───────────────────────────────────────────────
@@ -129,8 +103,11 @@ def scrape(
         mode: Scraping mode - "fast" or "stealth" (ScrapeMode values). Defaults to "fast".
         max_concurrency: Maximum concurrent requests. Defaults to 1.
 
+    STEALTH uses ``asyncio.run`` and cannot be called from a running event loop.
+
     Raises:
-        ValueError: If mode is not a supported scrape mode ("fast"/"stealth").
+        ValueError: If mode is unsupported or ``max_concurrency`` is less than 1.
+        RuntimeError: If STEALTH is requested from a running event loop.
         FetcherError: If scraping encounters fetch failures.
     """
     _get_shared().scrape(urls, callback, mode=mode, max_concurrency=max_concurrency)

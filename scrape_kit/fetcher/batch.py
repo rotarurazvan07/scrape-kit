@@ -56,12 +56,17 @@ class BatchScraperMixin:
                 Defaults to "fast" (ScrapeMode.FAST).
             max_concurrency: Maximum concurrent requests. Defaults to 1.
 
+        STEALTH uses ``asyncio.run`` and cannot be called from a running event loop.
+
         Raises:
-            ValueError: If mode is not a supported scrape mode ("fast"/"stealth").
+            ValueError: If mode is unsupported or ``max_concurrency`` is less than 1.
+            RuntimeError: If STEALTH is requested from a running event loop.
             FetcherError: If scraping encounters fetch failures.
         """
         if not urls:
             return
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be >= 1")
         if mode == ScrapeMode.FAST:
             logger.info("Batch scrape FAST %d URLs concurrency=%d", len(urls), max_concurrency)
             self._scrape_fast(urls, callback, max_concurrency)
@@ -211,7 +216,8 @@ class BatchScraperMixin:
             try:
                 page = await session.fetch(url, disable_resources=False, network_idle=True, timeout=90000)
                 status = self._page_status(page)
-                if status in (429, 503):
+                html = page.html_content
+                if status in (429, 503) or self.is_blocked(html):
                     if attempt < 4:
                         await asyncio.sleep(30 * attempt)
                         continue
@@ -226,5 +232,5 @@ class BatchScraperMixin:
             else:
                 # Callback runs unguarded: user-callback bugs must not be retried
                 # or misreported as fetch failures.
-                await loop.run_in_executor(None, callback, url, page.html_content)
+                await loop.run_in_executor(None, callback, url, html)
                 return

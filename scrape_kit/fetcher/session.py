@@ -289,7 +289,7 @@ class InteractiveSession:
         visible_only: bool = False,
         idle_ms: int = 5000,
         hard_cap_ms: int | None = None,
-    ) -> Any:
+    ) -> bool:
         """Click an element matching the selector (optionally by text) and wait for DOM changes to settle.
 
         Selector and text are JSON-escaped before splicing into the script, so
@@ -310,10 +310,10 @@ class InteractiveSession:
             or the script failed.
 
         Raises:
-            FetcherError: If fetch() has not been called first.
+            FetcherError: If the session has not been entered (no page).
         """
         if not self.page:
-            raise FetcherError("Call fetch() first")
+            raise FetcherError("Session has not been entered")
         hard_cap_ms = hard_cap_ms if hard_cap_ms is not None else idle_ms * 6
         return bool(
             self.execute_script(

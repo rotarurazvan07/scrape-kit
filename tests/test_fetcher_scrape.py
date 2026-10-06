@@ -57,6 +57,11 @@ class TestScrape:
             fetcher.scrape(["http://example.com"], callback=lambda u, h: called.append(u), mode=ScrapeMode.FAST)
         assert called == []
 
+    def test_error_zero_concurrency_raises_value_error(self):
+        fetcher = WebFetcher()
+        with pytest.raises(ValueError, match="max_concurrency must be >= 1"):
+            fetcher.scrape(["http://a.com"], callback=lambda u, h: None, max_concurrency=0)
+
     def test_error_invalid_mode_raises_value_error(self):
         fetcher = WebFetcher()
         with pytest.raises(ValueError, match="Unsupported scrape mode"):

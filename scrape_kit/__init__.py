@@ -116,8 +116,10 @@ def configure(config_path: str, config_key: str = "scraper_config") -> "WebFetch
     Returns:
         The configured WebFetcher instance in case you need it directly.
 
+    A missing directory or YAML key uses WebFetcher built-in defaults.
+
     Raises:
-        SettingsError: If the config directory or YAML file is missing or malformed.
+        SettingsError: If a YAML file is present but malformed.
     """
     from .fetcher import WebFetcher
 
