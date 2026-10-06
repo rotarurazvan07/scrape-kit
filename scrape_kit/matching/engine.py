@@ -333,11 +333,23 @@ class SimilarityEngine:
         if strong1 and strong2:
             if strong1.isdisjoint(strong2) and phonetic_score == 0.0:
                 return min(base_score, self.strong_mismatch_cap)
-        elif strong1 and not strong2 and not strong1.issubset(tokens2):  # noqa: SIM114  # keep documented one-sided arms separate
-            return min(base_score, self.strong_mismatch_cap)
-        elif strong2 and not strong1 and not strong2.issubset(tokens1):
+        elif self._one_sided_unconfirmed(strong1, strong2, tokens2) or self._one_sided_unconfirmed(strong2, strong1, tokens1):
             return min(base_score, self.strong_mismatch_cap)
         return base_score
+
+    @staticmethod
+    def _one_sided_unconfirmed(strong_side: frozenset[str], other_side: frozenset[str], other_tokens: frozenset[str]) -> bool:
+        """One-sided strong arm: one side has strong tokens the other never confirms.
+
+        Args:
+            strong_side: Token set that has strong tokens (must be non-empty).
+            other_side: The other side's strong-token set (must be empty here).
+            other_tokens: The other side's full token set.
+
+        Returns:
+            True when strong_side is unconfirmed by other_tokens, capping the score.
+        """
+        return bool(strong_side) and not other_side and not strong_side.issubset(other_tokens)
 
     # ------------------------------------------------------------------
     # Public API
