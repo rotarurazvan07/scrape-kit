@@ -76,7 +76,11 @@ class InteractiveSession:
         finally:
             logger.info("Closing browser session")
             # scrapling ships no type stubs, so close() is untyped at the call site.
-            self.session.close()  # type: ignore[no-untyped-call]
+            try:
+                self.session.close()  # type: ignore[no-untyped-call]
+            except Exception as close_e:
+                # Session is being abandoned either way; never mask body/page-close errors.
+                logger.error("Session close failed: %s", close_e)
 
     def fetch(self, url: str, timeout: int = 90000, wait_until: str = "load") -> str:
         """Navigate to a URL and return the settled page HTML.
@@ -103,48 +107,7 @@ class InteractiveSession:
         while True:
             try:
                 self.execute_script(
-                    """
-                    (function() {
-                        return new Promise((resolve) => {
-                            var prevHeight = document.documentElement.scrollHeight;
-                            var prevHTML = document.body.innerHTML.length;
-
-                            var timeout = setTimeout(() => {
-                                observer.disconnect();
-                                resolve();
-                            }, 10000);  // hard cap
-
-                            var idleTimer = setTimeout(() => {
-                                observer.disconnect();
-                                clearTimeout(timeout);
-                                resolve();
-                            }, 2000);  // resolve after 2s of no changes
-
-                            var observer = new MutationObserver(() => {
-                                var newHeight = document.documentElement.scrollHeight;
-                                var newHTML = document.body.innerHTML.length;
-
-                                if (newHeight !== prevHeight || newHTML !== prevHTML) {
-                                    prevHeight = newHeight;
-                                    prevHTML = newHTML;
-                                    clearTimeout(idleTimer);
-                                    idleTimer = setTimeout(() => {
-                                        observer.disconnect();
-                                        clearTimeout(timeout);
-                                        resolve();
-                                    }, 2000);
-                                }
-                            });
-
-                            observer.observe(document.body, {
-                                childList: true,
-                                subtree: true,
-                                attributes: true,
-                                characterData: true
-                            });
-                        });
-                    })()
-                """
+                    "(function() { return new Promise((resolve) => {" + self._dom_idle_js(2000, 10000) + "}); })()"
                 )
                 break  # success, exit loop
 
@@ -233,6 +196,48 @@ class InteractiveSession:
         if not self.page:
             raise FetcherError("Call fetch() first")
         self.page.wait_for_timeout(ms, **kwargs)
+
+    @staticmethod
+    def _dom_idle_js(idle_ms: int, hard_cap_ms: int, *, resolve_true: bool = False) -> str:
+        """Return the shared MutationObserver idle/hard-cap settle snippet.
+
+        Used by ``fetch`` and ``click`` so settle policy lives in one place.
+        ``scroll_to_bottom`` keeps its recursive height-only cycle — that is a
+        grow-until-idle loop, not settle-after-action.
+
+        Args:
+            idle_ms: Milliseconds of DOM quiet before resolving.
+            hard_cap_ms: Absolute resolve deadline in milliseconds.
+            resolve_true: If True, resolve with ``true`` (click); else bare resolve (fetch).
+
+        Returns:
+            JavaScript source for the observer/idle/hard-cap body (no IIFE wrapper).
+        """
+        resolve = "resolve(true)" if resolve_true else "resolve()"
+        return f"""
+                        var prevHeight = document.documentElement.scrollHeight;
+                        var prevHTML = document.body.innerHTML.length;
+                        var observer = null;
+                        var hardCap = setTimeout(() => {{ observer && observer.disconnect(); {resolve}; }}, {hard_cap_ms});
+                        var idleTimer = setTimeout(() => {{
+                            observer && observer.disconnect(); clearTimeout(hardCap); {resolve};
+                        }}, {idle_ms});
+                        observer = new MutationObserver(() => {{
+                            var newHeight = document.documentElement.scrollHeight;
+                            var newHTML = document.body.innerHTML.length;
+                            if (newHeight !== prevHeight || newHTML !== prevHTML) {{
+                                prevHeight = newHeight;
+                                prevHTML = newHTML;
+                                clearTimeout(idleTimer);
+                                idleTimer = setTimeout(() => {{
+                                    observer && observer.disconnect(); clearTimeout(hardCap); {resolve};
+                                }}, {idle_ms});
+                            }}
+                        }});
+                        observer.observe(document.body, {{
+                            childList: true, subtree: true, attributes: true, characterData: true
+                        }});
+"""
 
     def scroll_to_bottom(self, infinite: bool = True, idle_ms: int = 10000, cycle_delay_ms: int | None = None) -> None:
         """Scroll to the page bottom, optionally looping until content stops growing.
@@ -338,32 +343,9 @@ class InteractiveSession:
                         if ({"true" if visible_only else "false"} && !isVisible(el)) {{ resolve(false); return; }}
 
                         el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
-
-                        var prevHeight = document.documentElement.scrollHeight;
-                        var prevHTML = document.body.innerHTML.length;
-                        var observer = null;
-
-                        var hardCap = setTimeout(() => {{ observer && observer.disconnect(); resolve(true); }}, hard_cap_ms);
-                        var idleTimer = setTimeout(() => {{
-                            observer && observer.disconnect(); clearTimeout(hardCap); resolve(true);
-                        }}, idle_ms);
-
-                        observer = new MutationObserver(() => {{
-                            var newHeight = document.documentElement.scrollHeight;
-                            var newHTML = document.body.innerHTML.length;
-                            if (newHeight !== prevHeight || newHTML !== prevHTML) {{
-                                prevHeight = newHeight;
-                                prevHTML = newHTML;
-                                clearTimeout(idleTimer);
-                                idleTimer = setTimeout(() => {{
-                                    observer && observer.disconnect(); clearTimeout(hardCap); resolve(true);
-                                }}, idle_ms);
-                            }}
-                        }});
-
-                        observer.observe(document.body, {{
-                            childList: true, subtree: true, attributes: true, characterData: true
-                        }});
+                        """
+                + self._dom_idle_js(idle_ms, hard_cap_ms, resolve_true=True)
+                + """
 
                     }} catch(e) {{ resolve(false); }}
                 }});

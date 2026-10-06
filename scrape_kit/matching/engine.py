@@ -333,7 +333,9 @@ class SimilarityEngine:
         if strong1 and strong2:
             if strong1.isdisjoint(strong2) and phonetic_score == 0.0:
                 return min(base_score, self.strong_mismatch_cap)
-        elif strong1 and not strong1.issubset(tokens2) or strong2 and not strong2.issubset(tokens1):
+        elif strong1 and not strong2 and not strong1.issubset(tokens2):  # noqa: SIM114  # keep documented one-sided arms separate
+            return min(base_score, self.strong_mismatch_cap)
+        elif strong2 and not strong1 and not strong2.issubset(tokens1):
             return min(base_score, self.strong_mismatch_cap)
         return base_score
 

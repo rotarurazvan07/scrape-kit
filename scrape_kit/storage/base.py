@@ -22,7 +22,10 @@ class BaseStorageManager(ChunkMergeMixin):
     def __init__(self, db_path: str) -> None:
         """Open the SQLite database, create tables, and record the file mtime for reload detection."""
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        try:
+            self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        except sqlite3.Error as e:
+            raise StorageError(f"Failed to open {db_path}: {e}") from e
         self.conn.row_factory = sqlite3.Row
         self.db_lock = threading.RLock()
         logger.info("Initialized StorageManager for %s", db_path)
@@ -74,7 +77,7 @@ class BaseStorageManager(ChunkMergeMixin):
             return None
 
     def row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
-        """ "Convert a sqlite3.Row to a plain dictionary.
+        """Convert a sqlite3.Row to a plain dictionary.
 
         Args:
             row: The sqlite3.Row to convert.
@@ -91,7 +94,7 @@ class BaseStorageManager(ChunkMergeMixin):
         query: str,
         params: Sequence[Any] | None = None,
     ) -> list[sqlite3.Row]:
-        """ "Execute a query and return all results as sqlite3.Row objects."""
+        """Execute a query and return all results as sqlite3.Row objects."""
         params = params or ()
         self.reopen_if_changed()
         with self.db_lock:
@@ -109,7 +112,7 @@ class BaseStorageManager(ChunkMergeMixin):
         query: str,
         params: Sequence[Any] | None = None,
     ) -> pd.DataFrame:
-        """ "Execute a query and return results directly as a pandas DataFrame."""
+        """Execute a query and return results directly as a pandas DataFrame."""
         params = params or ()
         self.reopen_if_changed()
         with self.db_lock:
@@ -124,7 +127,7 @@ class BaseStorageManager(ChunkMergeMixin):
         params: Sequence[Any] | None = None,
         mapper: Callable[[sqlite3.Row], Any] | None = None,
     ) -> list[Any]:
-        """ "Fetch rows and automatically map them to objects using a provided callback."""
+        """Fetch rows and automatically map them to objects using a provided callback."""
         rows = self.fetch_rows(query, params)
         if mapper:
             return [mapper(row) for row in rows]
@@ -168,7 +171,7 @@ class BaseStorageManager(ChunkMergeMixin):
         columns: list[str],
         unique: bool = False,
     ) -> None:
-        """ "Helper to safely create indexes on tables."""
+        """Helper to safely create indexes on tables."""
         idx_name = f"idx_{table_name}_{'_'.join(columns)}"
         unique_str = "UNIQUE" if unique else ""
         index_cols = ", ".join(_qi(c) for c in columns)
@@ -233,7 +236,7 @@ class BaseStorageManager(ChunkMergeMixin):
     # ── Internals ─────────────────────────────────────────────────────────────
 
     def _create_tables(self) -> None:
-        """ "Override to create application-specific tables."""
+        """Override to create application-specific tables."""
 
     def reopen_if_changed(self) -> None:
         """Reopen the connection if the underlying file was modified externally.
@@ -257,7 +260,10 @@ class BaseStorageManager(ChunkMergeMixin):
                 logger.warning("Cleanup error on reopen: %s", e)
 
             logger.info("Database file changed externally, reopening %s", self.db_path)
-            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            try:
+                self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            except sqlite3.Error as e:
+                raise StorageError(f"Failed to open {self.db_path}: {e}") from e
             self.conn.row_factory = sqlite3.Row
             self._file_mtime = current_mtime
 

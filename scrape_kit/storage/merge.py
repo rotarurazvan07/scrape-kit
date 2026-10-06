@@ -64,7 +64,7 @@ class ChunkMergeMixin:
         table_name: str,
         end_process_query: str | None = None,
     ) -> MergeReport:
-        """ "Land all .db chunks from input_dir in a staging_<table> table.
+        """Land all .db chunks from input_dir in a staging_<table> table.
 
         Bulk-fetches data using SQLite ATTACH into ``staging_<table_name>``;
         the destination table itself is untouched unless an explicit

@@ -204,7 +204,7 @@ class WebFetcher(BatchScraperMixin):
                 # above; breadth is the boundary contract.
                 self._handle_fetch_error(url, e, attempt, retries, backoff)
 
-        raise FetcherError(f"Fetch failed for {url} after {retries} attempts")
+        raise FetcherError(f"Fetch failed for {url} after {retries} attempts", url=url)
 
     def _fetch_attempt(
         self,
@@ -237,7 +237,7 @@ class WebFetcher(BatchScraperMixin):
 
         if self._is_blocked_status(status):
             if attempt >= retries:
-                raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts")
+                raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts", url=url)
             self._log_and_wait(f"Status {status} on {url}", attempt, retries, backoff)
             return None
 
@@ -329,7 +329,7 @@ class WebFetcher(BatchScraperMixin):
             time.sleep(wait)
         else:
             logger.error("Failed after %d attempts on %s: %s", retries, url, error)
-            raise FetcherError(f"Fetch failed after {retries} attempts: {error}") from error
+            raise FetcherError(f"Fetch failed after {retries} attempts: {error}", url=url) from error
 
     def _escalate_to_browser(self, url: str, blocked_by: str) -> str:
         """Escalate to a browser session to bypass blocking.
@@ -352,7 +352,7 @@ class WebFetcher(BatchScraperMixin):
                 return html
         except Exception as browser_e:
             logger.error("Browser escalation failed for %s: %s", url, browser_e)
-            raise FetcherError(f"Escalation failed: {browser_e}") from browser_e
+            raise FetcherError(f"Escalation failed: {browser_e}", url=url) from browser_e
 
     def is_blocked(self, html: str) -> bool:
         """Check if the HTML content indicates blocking.

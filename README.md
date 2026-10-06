@@ -19,7 +19,7 @@ A personal high-performance Python scraping framework. Handles HTTP fetching, st
 
 ## Installation
 
-Dependencies are exact-pinned for reproducible scraping runs and audited weekly (the pip-audit workflow files CVE issues automatically). Install into a dedicated venv; pin bumps ship in dedicated PRs.
+Direct runtime deps are exact-pinned; install into a dedicated venv. The transitive scrapling stack (browser binaries) is resolved at install time and audited weekly via pip-audit. Pin bumps ship in dedicated PRs.
 
 ### Into a project
 
