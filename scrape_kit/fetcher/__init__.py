@@ -9,7 +9,6 @@ from .batch import ScrapeMode
 from .session import InteractiveSession
 from .web_fetcher import WebFetcher
 
-
 # Shared-instance state lives in the ._state leaf (no import cycles, no `global`).
 
 
