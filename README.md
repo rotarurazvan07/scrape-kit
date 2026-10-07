@@ -1,8 +1,14 @@
 # scrape-kit
 
+![code health](scorecard.png)
+
+[![CI](https://github.com/rotarurazvan07/scrape-kit/actions/workflows/CI.yml/badge.svg)](https://github.com/rotarurazvan07/scrape-kit/actions/workflows/CI.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A Python library you install into another project for anti-detection fetching, fuzzy entity matching, SQLite storage, and YAML settings. You call the public API from `scrape_kit`.
 
-**Requires Python 3.11+.** Current version is **0.2.0**.
+Requires Python 3.11+.
 
 ## Install
 
