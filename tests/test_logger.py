@@ -60,11 +60,11 @@ class TestGetLogger:
     """get_logger configures level, handlers, propagation and stream targets."""
 
     @pytest.mark.smoke
-    def test_normal_creates_logger_with_default_debug_level(self):
+    def test_normal_creates_logger_with_default_info_level(self):
         logger = get_logger("test_logger")
         assert isinstance(logger, logging.Logger)
         assert logger.name == "test_logger"
-        assert logger.level == logging.DEBUG
+        assert logger.level == logging.INFO
         assert len(logger.handlers) == 1
         assert isinstance(logger.handlers[0], logging.StreamHandler)
 
@@ -77,10 +77,10 @@ class TestGetLogger:
             logger = get_logger("test_logger")
             assert logger.level == logging.WARNING
 
-    def test_normal_uses_environment_variable_invalid_defaults_to_debug(self):
+    def test_normal_uses_environment_variable_invalid_defaults_to_info(self):
         with patch.dict(os.environ, {"SCRAPE_KIT_LOG_LEVEL": "INVALID"}):
             logger = get_logger("test_logger")
-            assert logger.level == logging.DEBUG
+            assert logger.level == logging.INFO
 
     def test_normal_creates_file_handler_when_log_file_specified(self, tmp_path):
         log_file = tmp_path / "test.log"

@@ -5,10 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from scrape_kit.errors import FetcherError
-from scrape_kit.fetcher import (
-    ScrapeMode,
-    WebFetcher,
-)
+from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.web_fetcher import WebFetcher
 
 pytestmark = pytest.mark.p0
 
@@ -59,6 +57,11 @@ class TestScrape:
             fetcher.scrape(["http://example.com"], callback=lambda u, h: called.append(u), mode=ScrapeMode.FAST)
         assert called == []
 
+    def test_error_zero_concurrency_raises_value_error(self):
+        fetcher = WebFetcher()
+        with pytest.raises(ValueError, match="max_concurrency must be >= 1"):
+            fetcher.scrape(["http://a.com"], callback=lambda u, h: None, max_concurrency=0)
+
     def test_error_invalid_mode_raises_value_error(self):
         fetcher = WebFetcher()
         with pytest.raises(ValueError, match="Unsupported scrape mode"):
@@ -89,6 +92,38 @@ class TestFetchOneFast:
             pytest.raises(FetcherError, match="Fast scrape remained blocked for http://test.com"),
         ):
             fetcher._fetch_one_fast("http://test.com", MagicMock())
+
+    def test_error_fetch_one_fast_failure_carries_url(self):
+        """_fetch_one_fast failures expose the offending URL via exc.url."""
+        fetcher = WebFetcher()
+        with (
+            patch.object(fetcher, "fetch", side_effect=Exception("Network error")),
+            pytest.raises(FetcherError) as excinfo,
+        ):
+            fetcher._fetch_one_fast("http://test.com", MagicMock())
+        assert excinfo.value.url == "http://test.com"
+
+    def test_error_fetch_one_fast_blocked_carries_url(self):
+        fetcher = WebFetcher(block_indicators=["blocked"])
+        with (
+            patch.object(fetcher, "fetch", return_value="<html>blocked</html>"),
+            pytest.raises(FetcherError) as excinfo,
+        ):
+            fetcher._fetch_one_fast("http://test.com", MagicMock())
+        assert excinfo.value.url == "http://test.com"
+
+    @patch.object(WebFetcher, "fetch")
+    def test_error_fast_mode_callback_bug_propagates(self, mock_fetch):
+        """A user-callback exception propagates immediately, never retried as a fetch failure."""
+        mock_fetch.return_value = "<html>Clean</html>"
+        fetcher = WebFetcher()
+
+        def bad_callback(url: str, html: str) -> None:
+            raise ValueError("callback bug")
+
+        with pytest.raises(ValueError, match="callback bug"):
+            fetcher._fetch_one_fast("http://a.com", bad_callback)
+        assert mock_fetch.call_count == 1  # no stealthy re-fetch after the callback bug
 
 
 class TestScrapeStealth:
@@ -130,7 +165,7 @@ class TestScrapeStealthPipeline:
         return cm
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
-    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    @patch("scrape_kit.fetcher.batch.AsyncStealthySession")
     def test_normal_stealth_batch_delivers_callbacks(self, MockSession, mock_sleep):
         pages = {"http://a.com": self._page(html="<html>AAA</html>"), "http://b.com": self._page(html="<html>BBB</html>")}
 
@@ -148,7 +183,7 @@ class TestScrapeStealthPipeline:
         mock_sleep.assert_not_awaited()  # happy path: no retry backoff
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
-    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    @patch("scrape_kit.fetcher.batch.AsyncStealthySession")
     def test_normal_stealth_retries_429_then_succeeds(self, MockSession, mock_sleep):
         ok = self._page()
         cm = self._stealth_cm([self._page(status=429), self._page(status=429), ok])
@@ -164,7 +199,7 @@ class TestScrapeStealthPipeline:
         )
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
-    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    @patch("scrape_kit.fetcher.batch.AsyncStealthySession")
     def test_error_stealth_persistently_blocked_raises(self, MockSession, mock_sleep):
         MockSession.return_value = self._stealth_cm([self._page(status=503)] * 4)
         fetcher = WebFetcher()
@@ -174,7 +209,7 @@ class TestScrapeStealthPipeline:
         assert len(mock_sleep.await_args_list) == 3
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
-    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    @patch("scrape_kit.fetcher.batch.AsyncStealthySession")
     def test_error_stealth_fetch_exception_exhausts_retries(self, MockSession, mock_sleep):
         async def fetch_impl(url, **kwargs):
             raise RuntimeError("page crashed")
@@ -186,7 +221,20 @@ class TestScrapeStealthPipeline:
         assert len(mock_sleep.await_args_list) == 3  # 15 * attempt backoffs for attempts 1-3
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
-    @patch("scrape_kit.fetcher.AsyncStealthySession")
+    @patch("scrape_kit.fetcher.batch.AsyncStealthySession")
+    def test_error_stealth_mode_callback_bug_propagates(self, MockSession, mock_sleep):
+        """A user-callback exception in stealth mode surfaces instead of being summarized."""
+        MockSession.return_value = self._stealth_cm(lambda url, **kwargs: self._page())
+        fetcher = WebFetcher()
+
+        def bad_callback(url: str, html: str) -> None:
+            raise ValueError("callback bug")
+
+        with pytest.raises(ValueError, match="callback bug"):
+            fetcher._scrape_stealth(["http://a.com"], bad_callback, max_concurrency=1)
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    @patch("scrape_kit.fetcher.batch.AsyncStealthySession")
     def test_error_stealth_partial_failure_summarises_and_keeps_good_result(self, MockSession, mock_sleep):
         async def fetch_impl(url, **kwargs):
             if "bad" in url:

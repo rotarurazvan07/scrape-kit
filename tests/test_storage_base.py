@@ -242,22 +242,22 @@ class TestBaseInsert:
 # ── clear_database ────────────────────────────────────────────────────────────
 
 
-class TestClearDatabase:
-    """clear_database drops all rows but keeps schema."""
+class TestClearTable:
+    """clear_table drops all rows but keeps the schema."""
 
     def test_normal_removes_all_rows(self, populated_db):
-        populated_db.clear_database("items")
+        populated_db.clear_table("items")
         assert populated_db.fetch_rows("SELECT * FROM items") == []
 
     def test_normal_table_structure_intact_after_clear(self, populated_db):
-        populated_db.clear_database("items")
+        populated_db.clear_table("items")
         populated_db.insert("items", {"name": "fresh", "value": "new"})
         assert len(populated_db.fetch_rows("SELECT * FROM items")) == 1
 
     def test_edge_clearing_already_empty_table_is_noop(self, db):
-        db.clear_database("items")  # no rows to delete — should not raise
+        db.clear_table("items")  # no rows to delete — should not raise
         assert db.fetch_rows("SELECT * FROM items") == []
 
     def test_error_nonexistent_table_raises_storage_error(self, db):
         with pytest.raises(StorageError):
-            db.clear_database("nonexistent_table")
+            db.clear_table("nonexistent_table")

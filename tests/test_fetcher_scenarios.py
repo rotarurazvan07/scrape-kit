@@ -11,12 +11,10 @@ from conftest import (
 )
 
 import scrape_kit.fetcher as fetcher_module
-from scrape_kit.fetcher import (
-    InteractiveSession,
-    ScrapeMode,
-    WebFetcher,
-)
 from scrape_kit.fetcher import is_blocked as module_is_blocked
+from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.session import InteractiveSession
+from scrape_kit.fetcher.web_fetcher import WebFetcher
 
 pytestmark = pytest.mark.p1
 
@@ -27,7 +25,7 @@ pytestmark = pytest.mark.p1
 class TestFetcherScenarios:
     """End-to-end fetcher journeys (4th-tier test_scenario_ integration)."""
 
-    @patch("scrape_kit.fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
     def test_scenario_two_failures_then_success_on_third(self, MockFetcher):
         MockFetcher.get.side_effect = [
             make_page(status=503),
@@ -39,7 +37,7 @@ class TestFetcherScenarios:
         assert "Finally" in result
         assert MockFetcher.get.call_count == 3
 
-    @patch("scrape_kit.fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
     @patch.object(WebFetcher, "_escalate_to_browser")
     def test_scenario_retry_indicator_exhausts_and_escalates(self, mock_escalate, MockFetcher):
         mock_escalate.return_value = "<html>Solved via browser</html>"
@@ -58,7 +56,7 @@ class TestFetcherScenarios:
         fetcher.scrape(urls, callback=lambda u, h: results.append(u), mode=ScrapeMode.FAST, max_concurrency=3)
         assert sorted(results) == sorted(urls)
 
-    @patch("scrape_kit.fetcher.Fetcher")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
     def test_scenario_multiple_block_indicators_individually_detected(self, MockFetcher):
         fetcher = WebFetcher(block_indicators=["rate limited", "access denied", "captcha required"])
         assert fetcher.is_blocked("Sorry, rate limited right now") is True
@@ -75,7 +73,7 @@ class TestFetcherScenarios:
             resp = session.fetch("http://test.com", timeout=SESSION_FETCH_TIMEOUT_MS, wait_until="load")
             title = session.execute_script("return document.title")
 
-        assert resp.html_content == "<html><title>Scraped</title></html>"
+        assert resp == "<html><title>Scraped</title></html>"
         assert title == "Scraped"
         mock_page.goto.assert_called_once_with("http://test.com", wait_until="load", timeout=SESSION_FETCH_TIMEOUT_MS)
         mock_page.close.assert_called_once()
@@ -93,8 +91,8 @@ class TestFetcherScenarios:
         cfg_a = make_fetcher_config(tmp_path, retry=["first"], dirname="cfg_a")
         cfg_b = make_fetcher_config(tmp_path, retry=["second"], dirname="cfg_b")
         WebFetcher.configure(str(cfg_a))
-        first = fetcher_module._shared
+        first = fetcher_module._state._peek_shared()
         WebFetcher.configure(str(cfg_b))
-        second = fetcher_module._shared
+        second = fetcher_module._state._peek_shared()
         assert first is not second
         assert second.retry_indicators == ["second"]

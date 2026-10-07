@@ -1,5 +1,6 @@
 """InteractiveSession."""
 
+import json
 import re
 from unittest.mock import MagicMock, patch
 
@@ -15,11 +16,8 @@ from conftest import (
     make_interactive_session,
 )
 
-from scrape_kit import fetcher as fetcher_module
 from scrape_kit.errors import FetcherError
-from scrape_kit.fetcher import (
-    InteractiveSession,
-)
+from scrape_kit.fetcher.session import InteractiveSession
 
 pytestmark = pytest.mark.p0
 
@@ -43,11 +41,24 @@ class TestInteractiveSessionContextManager:
         mock_page.close.assert_called_once()
         mock_session.close.assert_called_once()
 
-    def test_edge_page_close_exception_handled_and_reraises(self):
+    def test_edge_page_close_exception_raises_but_session_still_closed(self):
         mock_session, mock_page = make_interactive_session()
         mock_page.close.side_effect = RuntimeError("browser crash")
         with pytest.raises(FetcherError), InteractiveSession(mock_session):
             pass
+        # __exit__ must close the session even when page.close() failed first.
+        mock_session.close.assert_called_once()
+
+    def test_edge_body_exception_not_masked_session_still_closed(self):
+        mock_session, mock_page = make_interactive_session()
+        with (
+            pytest.raises(ValueError, match="body boom"),
+            InteractiveSession(mock_session),
+        ):
+            raise ValueError("body boom")
+        # Cleanup always runs; the body exception is never masked.
+        mock_page.close.assert_called_once()
+        mock_session.close.assert_called_once()
 
 
 class TestInteractiveSessionFetch:
@@ -58,18 +69,18 @@ class TestInteractiveSessionFetch:
         session = InteractiveSession(mock_session)
         session.__enter__()
         result = session.fetch("http://example.com")
-        assert hasattr(result, "html_content")
-        assert result.html_content == "<html>loaded</html>"
+        assert isinstance(result, str)
+        assert result == "<html>loaded</html>"
         mock_page.goto.assert_called_once()
         # Post-rework flow (issue #3): the post-navigation settle wait runs as
         # an injected MutationObserver script — wait_for_timeout is never used.
         mock_page.wait_for_timeout.assert_not_called()
         mock_page.evaluate.assert_called_once()
 
-    def test_edge_fetch_without_enter_raises_runtime_error(self):
+    def test_edge_fetch_without_enter_raises_fetcher_error(self):
         mock_session = MagicMock()
         session = InteractiveSession(mock_session)
-        with pytest.raises(RuntimeError, match="Session not started"):
+        with pytest.raises(FetcherError, match="Session not started"):
             session.fetch("http://example.com")
 
     def test_normal_fetch_passes_timeout_and_wait_until(self):
@@ -86,12 +97,12 @@ class TestInteractiveSessionFetch:
         session = InteractiveSession(mock_session)
         session.__enter__()
         with (
-            patch.object(fetcher_module, "logger") as mock_log,
+            patch("scrape_kit.fetcher.session.logger") as mock_log,
             patch("time.time", side_effect=[0, 10, 20, 30]),
             patch("time.sleep") as mock_sleep,
         ):
             result = session.fetch("http://example.com")
-        assert result.html_content == "<html>partial</html>"
+        assert result == "<html>partial</html>"
         assert mock_page.evaluate.call_count == 3  # two retries, then the give-up attempt
         assert mock_sleep.call_count == 2
         assert mock_log.warning.call_count == 1
@@ -119,7 +130,7 @@ class TestInteractiveSessionExecuteScript:
 
     def test_edge_execute_without_enter_raises(self):
         session = InteractiveSession(MagicMock())
-        with pytest.raises(RuntimeError, match="Call fetch"):
+        with pytest.raises(FetcherError, match="Call fetch"):
             session.execute_script("1 + 1")
 
     def test_error_js_error_propagates(self):
@@ -163,8 +174,22 @@ class TestInteractiveSessionHelpers:
         assert f"var idle_ms = {CLICK_IDLE_MS};" in script
         assert f"var hard_cap_ms = {CLICK_HARD_CAP_MS};" in script
         # The script must actually locate and dispatch a click on the target.
-        assert "document.querySelector('.btn')" in script
+        # Selector is JSON-escaped, so it appears with double quotes.
+        assert 'document.querySelector(".btn")' in script
         assert "dispatchEvent(new MouseEvent('click'" in script
+
+    def test_normal_click_escapes_quotes_in_selector_and_text(self):
+        """Selector/text are JSON-escaped before splicing into the click JS."""
+        mock_session, mock_page = make_interactive_session()
+        session = self._started(mock_session, mock_page)
+        selector = 'a[href*="x"]'
+        text = "O'Brien"
+        session.click(selector, text=text)
+        script = mock_page.evaluate.call_args[0][0]
+        assert f"document.querySelectorAll({json.dumps(selector)})" in script
+        assert f"=== {json.dumps(text)}" in script
+        # Raw single-quoted splicing is gone — quotes cannot break out of the literal.
+        assert f"querySelectorAll('{selector}')" not in script
 
     def test_normal_click_hard_cap_defaults_to_six_times_idle(self):
         mock_session, mock_page = make_interactive_session()
@@ -186,7 +211,7 @@ class TestInteractiveSessionHelpers:
         session = InteractiveSession(mock_session)
         assert session.cookies == {"session": "abc"}
 
-    def test_edge_helpers_without_enter_raise_runtime(self):
+    def test_edge_helpers_without_enter_raise_fetcher_error(self):
         session = InteractiveSession(MagicMock())
         for method, args in [
             ("wait_for_selector", ("#x",)),
@@ -194,7 +219,7 @@ class TestInteractiveSessionHelpers:
             ("click", (".btn",)),
             ("wait_for_timeout", (1000,)),
         ]:
-            with pytest.raises(RuntimeError):
+            with pytest.raises(FetcherError):
                 getattr(session, method)(*args)
 
 
@@ -235,7 +260,7 @@ class TestScrollToBottom:
         script = mock_page.evaluate.call_args[0][0]
         assert "var infinite = false;" in script
 
-    def test_error_before_enter_raises_runtime(self):
+    def test_error_before_enter_raises_fetcher_error(self):
         session = InteractiveSession(MagicMock())
-        with pytest.raises(RuntimeError, match=re.escape("Call fetch() first")):
+        with pytest.raises(FetcherError, match=re.escape("Call fetch() first")):
             session.scroll_to_bottom()

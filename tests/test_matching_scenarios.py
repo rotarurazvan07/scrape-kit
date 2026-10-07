@@ -41,7 +41,7 @@ class TestMatchingScenarios:
         # "FC Barçelona" → strip diacritic → "FC Barcelona" → lowercase → "fc barcelona"
         # → synonym match → "barcelona"
         # "Barcelona" → normalize → "barcelona"
-        match, _ = eng.is_similar("FC Barçelona", "Barcelona")
+        match, _ = eng.similarity("FC Barçelona", "Barcelona")
         assert match is True
 
     def test_scenario_acronym_expands_before_similarity(self):
@@ -54,9 +54,9 @@ class TestMatchingScenarios:
             }
         )
         eng = SimilarityEngine(cfg)
-        match, _ = eng.is_similar("Manchester FC", "Manchester Football Club")
+        match, _ = eng.similarity("Manchester FC", "Manchester Football Club")
         assert match is True
-        match2, _ = eng.is_similar("Man Utd", "Man United")
+        match2, _ = eng.similarity("Man Utd", "Man United")
         assert match2 is True
 
     def test_scenario_short_prefix_rule_does_not_break_real_betis(self):
@@ -69,7 +69,7 @@ class TestMatchingScenarios:
             }
         )
         eng = SimilarityEngine(cfg)
-        match, score = eng.is_similar("Real Betis", "Betis")
+        match, score = eng.similarity("Real Betis", "Betis")
         assert match is True
         assert score > 65
 
@@ -83,11 +83,11 @@ class TestMatchingScenarios:
             }
         )
         eng = SimilarityEngine(cfg)
-        match, score = eng.is_similar("New York City", "New York Red Bulls")
+        match, score = eng.similarity("New York City", "New York Red Bulls")
         assert match is False
         assert score == pytest.approx(35.0)  # strong_mismatch_cap residual (issue #2)
 
-        match, score = eng.is_similar("Sporting CP", "Sporting Kansas City")
+        match, score = eng.similarity("Sporting CP", "Sporting Kansas City")
         assert match is False
         assert score == pytest.approx(35.0)
 
@@ -101,7 +101,7 @@ class TestMatchingScenarios:
             }
         )
         eng = SimilarityEngine(cfg)
-        match, score = eng.is_similar("Inter", "Inter Milan")
+        match, score = eng.similarity("Inter", "Inter Milan")
         assert match is True
         assert score == pytest.approx(100.0)
 
@@ -123,8 +123,8 @@ class TestMatchingScenarios:
         )
         token_eng = SimilarityEngine(cfg_token)
         ratio_eng = SimilarityEngine(cfg_ratio)
-        m_token, _ = token_eng.is_similar("Moby Dick", "Dick Moby")
-        m_ratio, _ = ratio_eng.is_similar("Moby Dick", "Dick Moby")
+        m_token, _ = token_eng.similarity("Moby Dick", "Dick Moby")
+        m_ratio, _ = ratio_eng.similarity("Moby Dick", "Dick Moby")
         assert m_token is True
         assert m_ratio is False  # character-level order mismatch lowers ratio
 
@@ -139,7 +139,7 @@ class TestMatchingScenarios:
         )
         eng = SimilarityEngine(cfg)
         # "Smith" and "Smyth" share soundex S530
-        match, score = eng.is_similar("John Smith", "John Smyth")
+        match, score = eng.similarity("John Smith", "John Smyth")
         assert match is True
         assert score > 50
 
@@ -155,5 +155,5 @@ class TestMatchingScenarios:
         """Same pair scores 86.88 — threshold alone flips the boolean result."""
         cfg = make_matching_cfg()
         cfg["threshold"] = threshold
-        match, _ = SimilarityEngine(cfg).is_similar("Liverpool FC", "Liverpool")
+        match, _ = SimilarityEngine(cfg).similarity("Liverpool FC", "Liverpool")
         assert match is expected

@@ -121,7 +121,7 @@ class TestSerializationEdgeCases:
             db.serialize_json(obj)
 
     def test_edge_deserialize_nan_returns_none(self, db):
-        """serialize_json maps NaN payloads to None."""
+        """deserialize_json maps NaN/float payloads to None."""
         nan_value = float("nan")
         result = db.deserialize_json(nan_value)
         assert result is None
@@ -189,6 +189,7 @@ class TestFlushAndCloseEdgeCases:
         try:
             with pytest.raises(StorageError, match="Fatal error during shutdown"):
                 db.flush_and_close()
+            assert mock_conn.close.called  # failed commit must still close the connection (no leak)
         finally:
             db.conn = original_conn
             db.flush_and_close()

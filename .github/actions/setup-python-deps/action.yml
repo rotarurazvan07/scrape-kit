@@ -14,10 +14,6 @@ inputs:
     description: "Cache scrapling browser binaries"
     required: false
     default: "true"
-  scrapling-version:
-    description: "Pinned scrapling version — cache key part; must stay in sync with pyproject.toml"
-    required: false
-    default: "0.4.14"
 
 runs:
   using: "composite"
@@ -42,6 +38,14 @@ runs:
           pip install $TOOLS
         fi
 
+    # scrapling pin: pyproject.toml dependencies is the single source of truth —
+    # resolved at runtime so the version can never drift across files.
+    - name: Resolve pinned scrapling version from pyproject.toml
+      shell: bash
+      run: |
+        v="$(python -c 'import tomllib; print(next(d.split("==")[1] for d in tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"] if d.startswith("scrapling[fetchers]==")))')"
+        echo "SCRAPLING_VERSION=$v" >> "$GITHUB_ENV"
+
     - name: Cache scrapling browser binaries
       if: inputs.cache-scrapling == 'true'
       uses: actions/cache@v4
@@ -49,9 +53,9 @@ runs:
         path: |
           ~/.cache/scrapling
           ~/.cache/camoufox
-        key: scrapling-${{ inputs.scrapling-version }}-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+        key: scrapling-${{ env.SCRAPLING_VERSION }}-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
         restore-keys: |
-          scrapling-${{ inputs.scrapling-version }}-${{ runner.os }}-
+          scrapling-${{ env.SCRAPLING_VERSION }}-${{ runner.os }}-
 
     - name: Install scrapling fetchers
       shell: bash

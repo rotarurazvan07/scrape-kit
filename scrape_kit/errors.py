@@ -6,7 +6,21 @@ class ScrapeKitError(Exception):
 
 
 class FetcherError(ScrapeKitError):
-    """Raised when fetching fails persistently or escalation crashes."""
+    """Raised when fetching fails persistently or escalation crashes.
+
+    Attributes:
+        url: The URL the failure relates to, when known; None otherwise.
+    """
+
+    def __init__(self, message: str, url: str | None = None) -> None:
+        """Initialize the error.
+
+        Args:
+            message: Human-readable failure description.
+            url: The URL the failure relates to, when known. Defaults to None.
+        """
+        super().__init__(message)
+        self.url = url
 
 
 class StorageError(ScrapeKitError):
@@ -15,3 +29,7 @@ class StorageError(ScrapeKitError):
 
 class SettingsError(ScrapeKitError):
     """Raised when configuration/settings files are missing or malformed."""
+
+
+class MatchingError(ScrapeKitError):
+    """Raised when SimilarityEngine receives invalid configuration."""

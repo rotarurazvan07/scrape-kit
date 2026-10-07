@@ -219,3 +219,6 @@ ruff-fix-output.txt
 .neuralmind/
 .serena/
 graphify-out/
+
+# CI auto-fix bot scratch file (written/read by CI.yml, never committed)
+autofix-files.txt

@@ -85,10 +85,15 @@ def make_fetcher_config(tmp_path, retry=(), block=(), name="scraper_config.yaml"
 @pytest.fixture(autouse=True)
 def reset_shared():
     """Reset the fetcher module-global shared instance around every test."""
-    old = fetcher_module._shared
-    fetcher_module._shared = None
+    from scrape_kit.fetcher import _state
+
+    old = _state._peek_shared()
+    fetcher_module.reset_shared()
     yield
-    fetcher_module._shared = old
+    if old is None:
+        _state.reset_shared()
+    else:
+        _state._set_shared(old)
 
 
 # ── Matching factory ───────────────────────────────────────────────────────────

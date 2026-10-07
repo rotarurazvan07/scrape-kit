@@ -49,10 +49,10 @@ class TestStorageScenarios:
         manager = BufferedStorageManager(str(tmp_path / BUFFERED_DB_NAME), ITEMS_TABLE)
 
         for i in range(50):
-            manager.insert({"id": i, "name": f"item_{i}", "value": str(i)})
+            manager.insert(ITEMS_TABLE, {"id": i, "name": f"item_{i}", "value": str(i)})
         for i in range(50):
-            assert manager.exists("name", f"item_{i}") is True
-        assert manager.exists("name", "item_50") is False
+            assert manager.exists(ITEMS_TABLE, "name", f"item_{i}") is True
+        assert manager.exists(ITEMS_TABLE, "name", "item_50") is False
 
         manager.flush()
         count = manager.fetch_rows("SELECT COUNT(*) as cnt FROM items")[0]["cnt"]
@@ -90,7 +90,7 @@ class TestStorageScenarios:
 
     def test_scenario_clear_and_reingest_fresh_data(self, populated_db):
         """Clear all rows, re-insert a completely different dataset, verify clean slate."""
-        populated_db.clear_database(ITEMS_TABLE)
+        populated_db.clear_table(ITEMS_TABLE)
         assert populated_db.fetch_rows("SELECT * FROM items") == []
 
         new_data = [("x", "10"), ("y", "20"), ("z", "30")]
