@@ -25,39 +25,20 @@ Without a version pin:
 pip install git+https://github.com/rotarurazvan07/scrape-kit.git
 ```
 
-## Quick start
+## What it does
 
-```python
-from scrape_kit import FetcherError, configure_defaults, fetch
-
-configure_defaults()
-
-try:
-    html = fetch("https://example.com")
-except FetcherError as exc:
-    print(exc.url, exc)
-else:
-    print(html[:200])
-```
-
-`configure_defaults()` sets the shared fetcher from the built-in retry and block indicators. If you skip it, the first `fetch()`, `scrape()`, `browser()`, or `is_blocked()` call creates that same default instance for you.
-
-To load indicators from YAML instead, call `configure("path/to/config")`. That reads `path/to/config/scraper_config.yaml`.
-
-## Public modules
-
-| Guide | What you use it for |
+| Capability | Guide |
 | --- | --- |
-| [Usage index](docs/index.md) | Map of every consumer guide |
-| [Fetching](docs/fetcher.md) | `configure`, `configure_defaults`, `WebFetcher`, `fetch`, `browser`, `scrape`, `is_blocked`, `reset_shared`, `InteractiveSession`, `ScrapeMode` |
-| [Matching](docs/matching.md) | `SimilarityEngine` and `similarity()` |
-| [Storage](docs/storage.md) | `BaseStorageManager`, `BufferedStorageManager`, `MergeReport` |
-| [Settings](docs/settings.md) | `SettingsManager` |
-| [Errors](docs/errors.md) | Exception hierarchy and `FetcherError.url` |
-| [Logging](docs/logging.md) | `get_logger`, `time_profiler`, `SCRAPE_KIT_LOG_LEVEL` |
-| [Local development](docs/development.md) | Editable install and pytest |
+| Fetch HTML with retries and automatic stealth-browser escalation | [Fetching](docs/fetcher.md) |
+| Drive a persistent browser session (click, scroll, Cloudflare) | [Fetching](docs/fetcher.md) |
+| Scrape URL lists in fast HTTP or stealth mode | [Fetching](docs/fetcher.md) |
+| Match noisy entity names against a known set | [Matching](docs/matching.md) |
+| Persist, buffer, and merge SQLite datasets | [Storage](docs/storage.md) |
+| Load and write a directory of YAML settings | [Settings](docs/settings.md) |
+| Catch domain failures (`ScrapeKitError` and subclasses) | [Errors](docs/errors.md) |
+| Colourised logging and function timing | [Logging](docs/logging.md) |
 
-The public surface is `scrape_kit.__all__` plus `configure()` and `configure_defaults()`. Import from `scrape_kit`.
+Usage for every public name is in the [usage guide](docs/index.md). Import from `scrape_kit`.
 
 ## License
 
