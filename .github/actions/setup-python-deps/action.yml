@@ -32,7 +32,7 @@ runs:
         TOOLS: "${{ inputs.install-tools }}"
       run: |
         pip install -e .
-        pip install pytest==8.4.2 pytest-cov==7.0.0 pytest-xdist==3.8.0 pytest-timeout==2.3.1
+        pip install pytest==9.1.1 pytest-cov==7.1.0 pytest-xdist==3.8.0 pytest-timeout==2.4.0
         if [ -n "$TOOLS" ]; then
           # shellcheck disable=SC2086 # TOOLS is a caller-controlled pinned list
           pip install $TOOLS

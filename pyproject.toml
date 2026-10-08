@@ -8,14 +8,14 @@ version = "0.2.0"
 requires-python = ">=3.11"
 dependencies = [
     "PyYAML==6.0.3",
-    "rapidfuzz==3.14.5",
-    "scrapling[fetchers]==0.4.14",  # single source of truth — CI reads this pin (setup-python-deps action)
-    "pandas==3.0.5",
+    "rapidfuzz==3.14.6",
+    "scrapling[fetchers]==0.4.15",  # single source of truth — CI reads this pin (setup-python-deps action)
+    "pandas==3.0.6",
 ]
 
 [project.optional-dependencies]
 test = [
-    "pytest>=8.4.2,<9",
+    "pytest>=9.1.1,<10",
     "pytest-cov>=7.0.0,<8",
     "pytest-xdist>=3.8.0,<4",
     "pytest-timeout>=2.3.1,<3",
