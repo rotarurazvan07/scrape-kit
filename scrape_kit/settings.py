@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any, Final
 
-import yaml  # type: ignore[import-untyped]  # PyYAML 6.0.3 ships no py.typed marker (no stubs); revisit if types-PyYAML lands
+import yaml  # PyYAML 6.0.3 has no py.typed; mypy 2.4 no longer needs import-untyped here
 
 from .errors import SettingsError
 from .logger import get_logger

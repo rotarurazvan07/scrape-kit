@@ -40,7 +40,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install ruff
-        run: pip install ruff==0.14.8
+        run: pip install ruff==0.16.10
 
       - name: ruff format — check
         id: ruff_format
@@ -192,8 +192,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_AUDIT }}
           install-tools: >-
-            bandit==1.9.2 pip-audit==2.9.0 radon==6.0.1 vulture==2.14
-            mypy==1.18.2 interrogate==1.7.0 semgrep==1.144.0
+            bandit==1.9.4 pip-audit==2.10.1 radon==6.0.1 vulture==2.16
+            mypy==2.4.0 interrogate==1.7.0 semgrep==1.180.0
 
       - name: semgrep — pattern-based security & bug detection
         id: semgrep
@@ -335,7 +335,7 @@ jobs:
             echo "## Audit (non-failing: security · complexity · types · docs)"
             echo ""
             section "mypy — static types" \
-              "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 0 @ mypy 1.18.2)" mypy-findings.txt
+              "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 0 @ mypy 2.4.0)" mypy-findings.txt
             section "bandit — security SAST" \
               "Security issues: **${{ steps.bandit.outputs.bandit_issues }}**" bandit-findings.txt
             section "semgrep — patterns" \
@@ -373,7 +373,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install auto-fix tools
-        run: pip install autoflake==2.3.1 pyupgrade==3.20.0 isort==6.0.1 ruff==0.14.8
+        run: pip install autoflake==2.4.0 pyupgrade==3.21.2 isort==9.0.2 ruff==0.16.10
 
       - name: Apply fixes
         run: |

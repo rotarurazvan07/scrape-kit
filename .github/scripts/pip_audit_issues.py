@@ -51,9 +51,13 @@ def ensure_labels() -> None:
     gh("label", "create", "P1", "--color", "d93f0b", "--description", "Priority 1", "--force")
 
 
-def issue_exists(vuln_id: str) -> bool:
-    """Return True when an open issue already mentions the advisory id."""
-    return vuln_id in gh("issue", "list", "--state", "open", "--search", vuln_id)
+def issue_exists(vuln_id: str, aliases: list[str] | None = None) -> bool:
+    """Return True when an open issue already mentions the advisory id or any alias."""
+    search_terms = [vuln_id] + (aliases or [])
+    for term in search_terms:
+        if term in gh("issue", "list", "--state", "open", "--search", term):
+            return True
+    return False
 
 
 def main(report_path: str) -> int:
@@ -79,9 +83,11 @@ def main(report_path: str) -> int:
             vid = vuln.get("id", "unknown")
             name = dep.get("name", "?")
             fixes = ", ".join(vuln.get("fix_versions") or []) or "no fix available"
-            if issue_exists(vid):
+            aliases = vuln.get("aliases")
+            if issue_exists(vid, aliases):
                 rows.append(f"| {vid} | {name} | duplicate-skipped |")
                 continue
+            link = vuln.get('url') or (vuln.get('aliases', [''])[0] if vuln.get('aliases') else 'no link')
             body = "\n".join(
                 [
                     "| Field | Value |",
@@ -91,7 +97,7 @@ def main(report_path: str) -> int:
                     f"| Installed version | {dep.get('version', '?')} |",
                     f"| Fix versions | {fixes} |",
                     f"| Description | {vuln.get('description', '')} |",
-                    f"| Link | {vuln.get('url', '')} |",
+                    f"| Link | {link} |",
                 ]
             )
             gh(
