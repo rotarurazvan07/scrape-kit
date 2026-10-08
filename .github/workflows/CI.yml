@@ -335,7 +335,7 @@ jobs:
             echo "## Audit (non-failing: security · complexity · types · docs)"
             echo ""
             section "mypy — static types" \
-              "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 0 @ mypy 1.18.2)" mypy-findings.txt
+              "Type errors: **${{ steps.mypy.outputs.mypy_errors }}** (baseline 0 @ mypy 2.4.0)" mypy-findings.txt
             section "bandit — security SAST" \
               "Security issues: **${{ steps.bandit.outputs.bandit_issues }}**" bandit-findings.txt
             section "semgrep — patterns" \

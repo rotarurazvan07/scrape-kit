@@ -61,7 +61,7 @@ def make_vuln(
         "id": vuln_id,
         "fix_versions": fix_versions if fix_versions is not None else ["1.0.1"],
         "description": "RCE",
-        "url": "https://example.com",
+        "aliases": ["CVE-2024-1234"],
     }
     vuln.update(overrides)
     return vuln
@@ -276,7 +276,7 @@ class TestMain:
         assert "| Installed version | 2.0.0 |" in body
         assert "| Fix versions | 1.0.1, 2.0.0 |" in body
         assert "| Description | RCE |" in body
-        assert "| Link | https://example.com |" in body
+        assert "| Link | CVE-2024-1234 |" in body
         assert create[create.index("--label") :] == [
             "--label",
             "security",
