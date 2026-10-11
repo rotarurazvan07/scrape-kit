@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 from scrapling.fetchers import DynamicSession, Fetcher, StealthySession
 
 from ..errors import FetcherError
-from ..logger import get_logger, _silence_scrapling_no_challenge
+from ..logger import _silence_scrapling_no_challenge, get_logger
 from ..settings import SettingsManager
 from ._state import _set_shared
 from .batch import BatchScraperMixin
