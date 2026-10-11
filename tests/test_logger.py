@@ -117,6 +117,7 @@ class TestGetLogger:
         logger = get_logger("test_logger", log_file="")
         assert len(logger.handlers) == 1
 
+
 class TestTimeProfiler:
     """time_profiler decorates with and without parens, times and re-raises."""
 
