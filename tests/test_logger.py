@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from scrape_kit.logger import ScrapeKitFormatter, get_logger, time_profiler
+from scrape_kit.logger import (
+    ScrapeKitFormatter,
+    _silence_scrapling_no_challenge,
+    get_logger,
+    time_profiler,
+)
 
 pytestmark = pytest.mark.p0
 
@@ -112,6 +117,50 @@ class TestGetLogger:
     def test_edge_empty_log_file_name_uses_only_stream_handler(self):
         logger = get_logger("test_logger", log_file="")
         assert len(logger.handlers) == 1
+
+
+class TestSilenceScraplingNoChallenge:
+    """AC-28: scrapling's no-challenge ERROR is rewritten to DEBUG."""
+
+    def test_edge_no_challenge_error_downgraded_to_debug(self):
+        scrapling = logging.getLogger("scrapling")
+        before = list(scrapling.filters)
+        try:
+            _silence_scrapling_no_challenge()
+            _silence_scrapling_no_challenge()  # idempotent
+            record = logging.LogRecord(
+                name="scrapling",
+                level=logging.ERROR,
+                pathname="stealth.py",
+                lineno=1,
+                msg="No Cloudflare challenge found.",
+                args=(),
+                exc_info=None,
+            )
+            assert all(f.filter(record) for f in scrapling.filters)
+            assert record.levelno == logging.DEBUG
+            assert record.levelname == "DEBUG"
+        finally:
+            scrapling.filters[:] = before
+
+    def test_edge_other_scrapling_errors_stay_error(self):
+        scrapling = logging.getLogger("scrapling")
+        before = list(scrapling.filters)
+        try:
+            _silence_scrapling_no_challenge()
+            record = logging.LogRecord(
+                name="scrapling",
+                level=logging.ERROR,
+                pathname="stealth.py",
+                lineno=1,
+                msg="Failed to solve the Cloudflare challenge after 3 attempts",
+                args=(),
+                exc_info=None,
+            )
+            assert all(f.filter(record) for f in scrapling.filters)
+            assert record.levelno == logging.ERROR
+        finally:
+            scrapling.filters[:] = before
 
 
 class TestTimeProfiler:

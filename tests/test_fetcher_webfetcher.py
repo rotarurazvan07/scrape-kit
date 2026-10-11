@@ -272,3 +272,51 @@ class TestEscalateToBrowser:
             pytest.raises(FetcherError, match="Escalation failed"),
         ):
             fetcher._escalate_to_browser("http://test.com", "blocked")
+
+    def test_edge_escalate_enables_cf_only_for_cf_like_trigger(self):
+        """AC-28: auto solve_cloudflare only when the escalate trigger looks like CF."""
+        fetcher = WebFetcher()
+        with patch.object(fetcher, "browser") as mock_browser:
+            session = MagicMock()
+            session.fetch.return_value = "<html>ok</html>"
+            session.__enter__ = MagicMock(return_value=session)
+            session.__exit__ = MagicMock(return_value=False)
+            mock_browser.return_value = session
+            fetcher._escalate_to_browser("http://test.com", "Just a moment")
+            mock_browser.assert_called_with(solve_cloudflare=True, headless=True)
+            fetcher._escalate_to_browser("http://test.com", "blocked")
+            mock_browser.assert_called_with(solve_cloudflare=False, headless=True)
+
+
+class TestFetchTimeoutBackoff:
+    """AC-30: curl/timeout retries use jitter and raise ERROR only on the last miss."""
+
+    @patch("scrape_kit.fetcher.web_fetcher.random.uniform", return_value=1.0)
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_timeout_then_success_no_error_log(self, MockFetcher, mock_sleep, _jitter):
+        timeout_err = Exception("Failed to perform, curl: (28) Timeout was reached")
+        MockFetcher.get.side_effect = [timeout_err, make_page("<html>late</html>")]
+        fetcher = WebFetcher()
+        with patch("scrape_kit.fetcher.web_fetcher.logger") as mock_log:
+            result = fetcher.fetch("http://slow.example.com", retries=3, backoff=5.0)
+        assert result == "<html>late</html>"
+        assert MockFetcher.get.call_count == 2
+        first_timeout = MockFetcher.get.call_args_list[0].kwargs.get("timeout")
+        second_timeout = MockFetcher.get.call_args_list[1].kwargs.get("timeout")
+        assert first_timeout is not None
+        assert second_timeout >= first_timeout
+        mock_sleep.assert_called_once()
+        mock_log.error.assert_not_called()
+        mock_log.warning.assert_called()
+
+    @patch("scrape_kit.fetcher.web_fetcher.random.uniform", return_value=1.0)
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_error_all_timeouts_error_once(self, MockFetcher, mock_sleep, _jitter):
+        MockFetcher.get.side_effect = Exception("curl: (28) Timeout was reached")
+        fetcher = WebFetcher()
+        with patch("scrape_kit.fetcher.web_fetcher.logger") as mock_log, pytest.raises(FetcherError):
+            fetcher.fetch("http://slow.example.com", retries=3, backoff=0)
+        assert MockFetcher.get.call_count == 3
+        assert mock_log.error.call_count == 1
