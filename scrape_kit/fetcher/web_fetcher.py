@@ -7,14 +7,13 @@ from typing import Any, ClassVar
 from scrapling.fetchers import DynamicSession, Fetcher, StealthySession
 
 from ..errors import FetcherError
-from ..logger import _silence_scrapling_no_challenge, get_logger
+from ..logger import get_logger
 from ..settings import SettingsManager
 from ._state import _set_shared
 from .batch import BatchScraperMixin
-from .session import InteractiveSession, _looks_like_cloudflare
+from .session import InteractiveSession
 
 logger = get_logger(__name__)
-_silence_scrapling_no_challenge()
 
 _DEFAULT_FAST_TIMEOUT = 30
 
@@ -363,7 +362,7 @@ class WebFetcher(BatchScraperMixin):
         """
         logger.info("'%s' detected on %s — escalating to browser...", blocked_by, url)
         try:
-            with self.browser(solve_cloudflare=_looks_like_cloudflare(blocked_by), headless=True) as session:
+            with self.browser(solve_cloudflare=True, headless=True) as session:
                 html = session.fetch(url, timeout=120000)
                 logger.info("Browser successfully bypassed challenge for %s", url)
                 return html

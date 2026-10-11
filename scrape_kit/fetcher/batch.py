@@ -10,7 +10,6 @@ from scrapling.fetchers import AsyncStealthySession
 
 from ..errors import FetcherError
 from ..logger import get_logger
-from .session import _looks_like_cloudflare
 
 logger = get_logger(__name__)
 
@@ -38,8 +37,6 @@ class BatchScraperMixin:
     fetch: Callable[..., str]
     is_blocked: Callable[[str], bool]
     _page_status: Callable[[Any], int]
-    retry_indicators: list[str]
-    block_indicators: list[str]
 
     def scrape(
         self,
@@ -174,10 +171,7 @@ class BatchScraperMixin:
 
         errors: list[tuple[str, Exception]] = []
 
-        # AC-28: solve CF only when configured indicators look CF-like.
-        indicators = " ".join(self.retry_indicators + self.block_indicators)
-        solve_cf = _looks_like_cloudflare(indicators)
-        async with AsyncStealthySession(max_pages=concurrency, headless=True, solve_cloudflare=solve_cf) as session:
+        async with AsyncStealthySession(max_pages=concurrency, headless=True, solve_cloudflare=True) as session:
 
             async def _worker() -> None:
                 """Consume the URL queue until empty, fetching each URL through the shared stealth session."""
