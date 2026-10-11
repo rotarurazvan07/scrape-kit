@@ -83,7 +83,6 @@ Signature: `fetch(url, stealthy_headers=False, retries=3, backoff=5.0) -> str`.
 - Exhaustion raises `FetcherError` with `url=` set.
 - Persistent retry indicators escalate to a stealth browser automatically.
 - Fast-fetch transport timeouts use jittered backoff and a longer timeout on later attempts. `ERROR` is logged only after the last attempt fails.
-- Escalation and stealth batch enable Cloudflare solving only when you pass `solve_cloudflare=True` or a retry/block indicator looks like a Cloudflare challenge. Scrapling's "No Cloudflare challenge found." line is DEBUG, not ERROR.
 
 The same signature lives on `WebFetcher.fetch()`.
 

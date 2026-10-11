@@ -273,20 +273,6 @@ class TestEscalateToBrowser:
         ):
             fetcher._escalate_to_browser("http://test.com", "blocked")
 
-    def test_edge_escalate_enables_cf_only_for_cf_like_trigger(self):
-        """AC-28: auto solve_cloudflare only when the escalate trigger looks like CF."""
-        fetcher = WebFetcher()
-        with patch.object(fetcher, "browser") as mock_browser:
-            session = MagicMock()
-            session.fetch.return_value = "<html>ok</html>"
-            session.__enter__ = MagicMock(return_value=session)
-            session.__exit__ = MagicMock(return_value=False)
-            mock_browser.return_value = session
-            fetcher._escalate_to_browser("http://test.com", "Just a moment")
-            mock_browser.assert_called_with(solve_cloudflare=True, headless=True)
-            fetcher._escalate_to_browser("http://test.com", "blocked")
-            mock_browser.assert_called_with(solve_cloudflare=False, headless=True)
-
 
 class TestFetchTimeoutBackoff:
     """AC-30: curl/timeout retries use jitter and raise ERROR only on the last miss."""

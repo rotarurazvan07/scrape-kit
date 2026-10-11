@@ -18,27 +18,12 @@ _CONTEXT_DESTROYED_HINTS = (
     "execution context was destroyed",
     "target closed",
 )
-_CF_HINTS = (
-    "cloudflare",
-    "just a moment",
-    "checking your browser",
-    "verify you are a human",
-    "cf-browser-verification",
-    "attention required",
-    "turnstile",
-)
 
 
 def _is_context_destroyed(error: BaseException) -> bool:
     """Return True when an evaluate failure was caused by a navigation race (AC-29)."""
     msg = str(error).lower()
     return any(hint in msg for hint in _CONTEXT_DESTROYED_HINTS)
-
-
-def _looks_like_cloudflare(trigger: str) -> bool:
-    """Return True when an escalate/block trigger looks like a CF challenge (AC-28)."""
-    low = trigger.lower()
-    return any(hint in low for hint in _CF_HINTS)
 
 
 class InteractiveSession:
