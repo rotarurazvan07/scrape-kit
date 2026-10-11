@@ -178,8 +178,8 @@ class TestScrapeStealthPipeline:
         fetcher._scrape_stealth(list(pages), lambda u, h: got.append((u, h)), max_concurrency=2)
         assert sorted(u for u, _ in got) == ["http://a.com", "http://b.com"]  # every URL delivered
         assert dict(got)["http://a.com"] == "<html>AAA</html>"
-        # session entered exactly once, with capped concurrency and cloudflare solving
-        MockSession.assert_called_once_with(max_pages=2, headless=True, solve_cloudflare=True)
+        # session entered exactly once; empty indicators → no auto CF (AC-28)
+        MockSession.assert_called_once_with(max_pages=2, headless=True, solve_cloudflare=False)
         mock_sleep.assert_not_awaited()  # happy path: no retry backoff
 
     @patch("asyncio.sleep", new_callable=AsyncMock)

@@ -92,6 +92,34 @@ def get_logger(
     return logger
 
 
+_NO_CF_CHALLENGE = "No Cloudflare challenge found."
+_SCRAPLING_LOGGER = "scrapling"
+
+
+class _DowngradeNoChallengeFilter(logging.Filter):
+    """Downgrade scrapling's no-challenge ERROR to DEBUG (AC-28)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Keep the record; rewrite the one known false-alarm ERROR."""
+        if record.levelno >= logging.ERROR and record.getMessage() == _NO_CF_CHALLENGE:
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
+def _silence_scrapling_no_challenge() -> None:
+    """Attach the no-challenge downgrade filter to scrapling's logger once.
+
+    Scrapling logs ``No Cloudflare challenge found.`` at ERROR whenever
+    ``solve_cloudflare=True`` hits a normal page. That is expected, not a
+    failure — keep the line at DEBUG so user logs stay clean.
+    """
+    scrapling_log = logging.getLogger(_SCRAPLING_LOGGER)
+    if any(isinstance(f, _DowngradeNoChallengeFilter) for f in scrapling_log.filters):
+        return
+    scrapling_log.addFilter(_DowngradeNoChallengeFilter())
+
+
 _MS_PER_SECOND = 1000
 
 

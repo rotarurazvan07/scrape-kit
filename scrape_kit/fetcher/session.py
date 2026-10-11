@@ -1,5 +1,6 @@
 """InteractiveSession: persistent browser page wrapper with JS execution around scrapling."""
 
+import contextlib
 import json
 import time
 from typing import Any
@@ -10,6 +11,34 @@ from ..errors import FetcherError
 from ..logger import get_logger
 
 logger = get_logger(__name__)
+
+# Navigation can swap a page's execution context mid-evaluate. That is retryable
+# settle noise (issue #29), not an application error.
+_CONTEXT_DESTROYED_HINTS = (
+    "execution context was destroyed",
+    "target closed",
+)
+_CF_HINTS = (
+    "cloudflare",
+    "just a moment",
+    "checking your browser",
+    "verify you are a human",
+    "cf-browser-verification",
+    "attention required",
+    "turnstile",
+)
+
+
+def _is_context_destroyed(error: BaseException) -> bool:
+    """Return True when an evaluate failure was caused by a navigation race (AC-29)."""
+    msg = str(error).lower()
+    return any(hint in msg for hint in _CONTEXT_DESTROYED_HINTS)
+
+
+def _looks_like_cloudflare(trigger: str) -> bool:
+    """Return True when an escalate/block trigger looks like a CF challenge (AC-28)."""
+    low = trigger.lower()
+    return any(hint in low for hint in _CF_HINTS)
 
 
 class InteractiveSession:
@@ -120,9 +149,15 @@ class InteractiveSession:
                 # exception type would only risk crashing on an unlisted one.
                 elapsed = time.time() - start_time
                 if elapsed >= max_wait:
-                    logger.warning(f"Page settle script failed after {max_wait}s, giving up: {e}")
+                    logger.warning("Page settle script failed after %ss, giving up: %s", max_wait, e)
                     break
-                logger.debug(f"Page settle script failed ({e}), retrying in 1s...")
+                # AC-29: wait for the replacement document before re-evaluating.
+                # Load wait is best-effort: the max_wait loop still bounds us.
+                if _is_context_destroyed(e):
+                    remaining_ms = max(0, int((max_wait - elapsed) * 1000))
+                    with contextlib.suppress(Exception):
+                        self.page.wait_for_load_state("load", timeout=remaining_ms)
+                logger.debug("Page settle script failed (%s), retrying in 1s...", e)
                 time.sleep(1)
         content: str = self.page.content()
         logger.debug("Fetch complete, content length: %d", len(content))
@@ -150,7 +185,9 @@ class InteractiveSession:
                 return self.page.evaluate(f"() => {{ {clean_script} }}")
             return self.page.evaluate(script)
         except Exception as e:
-            logger.error(f"Script Execution Error: {e}")
+            # AC-29: navigation races destroy the page context; callers retry.
+            if not _is_context_destroyed(e):
+                logger.error("Script Execution Error: %s", e)
             raise
 
     def wait_for_selector(self, selector: str, timeout: int = 30000, **kwargs: Any) -> None:
@@ -282,6 +319,63 @@ class InteractiveSession:
         """
         )
 
+    @staticmethod
+    def _click_js(
+        selector: str,
+        text: str | None,
+        visible_only: bool,
+        idle_ms: int,
+        hard_cap_ms: int,
+    ) -> str:
+        """Build the click+settle script. Extracted so tests can parse it (AC-27).
+
+        Args:
+            selector: CSS selector of the element(s) to click.
+            text: Optional exact textContent filter.
+            visible_only: Only click visible elements.
+            idle_ms: Milliseconds of DOM quiet before resolving.
+            hard_cap_ms: Absolute resolve deadline.
+
+        Returns:
+            JavaScript source for ``page.evaluate``.
+        """
+        # AC-27: the catch fragment must be an f-string so ``}}`` collapses to ``}``.
+        return (
+            f"""
+            (function() {{
+                return new Promise((resolve) => {{
+                    try {{
+                        var idle_ms = {idle_ms};
+                        var hard_cap_ms = {hard_cap_ms};
+
+                        function isVisible(el) {{
+                            if (!el) return false;
+                            var s = window.getComputedStyle(el);
+                            return s.display !== 'none' && s.visibility !== 'hidden'
+                                && s.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
+                        }}
+
+                        var el;
+                        if ({"true" if text else "false"}) {{
+                            el = Array.from(document.querySelectorAll({json.dumps(selector)}))
+                                .find(e => e.textContent.trim() === {json.dumps(str(text))});
+                        }} else {{
+                            el = document.querySelector({json.dumps(selector)});
+                        }}
+
+                        if (!el) {{ resolve(false); return; }}
+                        if ({"true" if visible_only else "false"} && !isVisible(el)) {{ resolve(false); return; }}
+
+                        el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
+                        """
+            + InteractiveSession._dom_idle_js(idle_ms, hard_cap_ms, resolve_true=True)
+            + """
+                    } catch(e) { resolve(false); }
+                });
+            })()
+            """
+        )
+
     def click(
         self,
         selector: str,
@@ -315,44 +409,7 @@ class InteractiveSession:
         if not self.page:
             raise FetcherError("Session has not been entered")
         hard_cap_ms = hard_cap_ms if hard_cap_ms is not None else idle_ms * 6
-        return bool(
-            self.execute_script(
-                f"""
-            (function() {{
-                return new Promise((resolve) => {{
-                    try {{
-                        var idle_ms = {idle_ms};
-                        var hard_cap_ms = {hard_cap_ms};
-
-                        function isVisible(el) {{
-                            if (!el) return false;
-                            var s = window.getComputedStyle(el);
-                            return s.display !== 'none' && s.visibility !== 'hidden'
-                                && s.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
-                        }}
-
-                        var el;
-                        if ({"true" if text else "false"}) {{
-                            el = Array.from(document.querySelectorAll({json.dumps(selector)}))
-                                .find(e => e.textContent.trim() === {json.dumps(str(text))});
-                        }} else {{
-                            el = document.querySelector({json.dumps(selector)});
-                        }}
-
-                        if (!el) {{ resolve(false); return; }}
-                        if ({"true" if visible_only else "false"} && !isVisible(el)) {{ resolve(false); return; }}
-
-                        el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true }}));
-                        """
-                + self._dom_idle_js(idle_ms, hard_cap_ms, resolve_true=True)
-                + """
-
-                    }} catch(e) {{ resolve(false); }}
-                }});
-            }})()
-            """
-            )
-        )
+        return bool(self.execute_script(self._click_js(selector, text, visible_only, idle_ms, hard_cap_ms)))
 
     def __getattr__(self, name: str) -> Any:
         """Delegate unknown attributes to the wrapped scrapling session.

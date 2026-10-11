@@ -1,18 +1,22 @@
 """WebFetcher: fast HTTP fetching with retry, block detection, and stealth-browser escalation."""
 
+import random
 import time
 from typing import Any, ClassVar
 
 from scrapling.fetchers import DynamicSession, Fetcher, StealthySession
 
 from ..errors import FetcherError
-from ..logger import get_logger
+from ..logger import get_logger, _silence_scrapling_no_challenge
 from ..settings import SettingsManager
 from ._state import _set_shared
 from .batch import BatchScraperMixin
-from .session import InteractiveSession
+from .session import InteractiveSession, _looks_like_cloudflare
 
 logger = get_logger(__name__)
+_silence_scrapling_no_challenge()
+
+_DEFAULT_FAST_TIMEOUT = 30
 
 
 class WebFetcher(BatchScraperMixin):
@@ -232,7 +236,8 @@ class WebFetcher(BatchScraperMixin):
             FetcherError: When blocking persists to the final attempt.
         """
         logger.debug("Fast fetch attempt %d/%d for %s", attempt, retries, url)
-        page = Fetcher.get(url, stealthy_headers=stealthy_headers)
+        timeout = self._fast_timeout(attempt)
+        page = Fetcher.get(url, stealthy_headers=stealthy_headers, timeout=timeout)
 
         status = self._page_status(page)
         logger.debug("Response status for %s: %d", url, status)
@@ -292,6 +297,16 @@ class WebFetcher(BatchScraperMixin):
             None,
         )
 
+    @staticmethod
+    def _fast_timeout(attempt: int) -> int:
+        """Return the curl timeout for this attempt. Later attempts wait longer (AC-30)."""
+        return _DEFAULT_FAST_TIMEOUT * attempt
+
+    @staticmethod
+    def _retry_wait(attempt: int, backoff: float) -> float:
+        """Jittered backoff: ``backoff * attempt * U(0.5, 1.5)`` (AC-30)."""
+        return backoff * attempt * random.uniform(0.5, 1.5)
+
     def _log_and_wait(self, reason: str, attempt: int, retries: int, backoff: float) -> None:
         """Log a retry reason and sleep for the backoff interval.
 
@@ -301,7 +316,7 @@ class WebFetcher(BatchScraperMixin):
             retries: Total retry attempts.
             backoff: Backoff multiplier in seconds.
         """
-        wait = backoff * attempt
+        wait = self._retry_wait(attempt, backoff)
         logger.warning("%s — retrying in %.0fs (attempt %d/%d)", reason, wait, attempt, retries)
         time.sleep(wait)
 
@@ -326,7 +341,7 @@ class WebFetcher(BatchScraperMixin):
             FetcherError: If no attempts remain.
         """
         if attempt < retries:
-            wait = backoff * attempt
+            wait = self._retry_wait(attempt, backoff)
             logger.warning("Error on %s: %s — retrying in %.0fs (attempt %d/%d)", url, error, wait, attempt, retries)
             time.sleep(wait)
         else:
@@ -348,7 +363,7 @@ class WebFetcher(BatchScraperMixin):
         """
         logger.info("'%s' detected on %s — escalating to browser...", blocked_by, url)
         try:
-            with self.browser(solve_cloudflare=True, headless=True) as session:
+            with self.browser(solve_cloudflare=_looks_like_cloudflare(blocked_by), headless=True) as session:
                 html = session.fetch(url, timeout=120000)
                 logger.info("Browser successfully bypassed challenge for %s", url)
                 return html
