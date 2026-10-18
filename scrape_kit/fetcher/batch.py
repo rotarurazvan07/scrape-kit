@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
-from typing import Any
+from typing import Any, TypeAlias
 
 from scrapling.fetchers import AsyncStealthySession
 
@@ -13,6 +13,29 @@ from ..logger import get_logger
 from .session import _looks_like_cloudflare
 
 logger = get_logger(__name__)
+
+
+class _UserCodeError(Exception):
+    """Carrier for exceptions raised by the retry hook or the user callback.
+
+    Not a ``FetcherError`` subclass: the FAST and STEALTH collectors only
+    aggregate ``FetcherError``, so this type propagates immediately out of
+    the batch dispatch instead of being reported as a fetch failure or
+    retried. The original exception stays reachable via ``__cause__``.
+    """
+
+    def __init__(self, message: str, *, url: str) -> None:
+        """Initialize the carrier with the originating URL.
+
+        Args:
+            message: Human-readable description of the user-code failure.
+            url: URL whose hook or callback raised the original exception.
+        """
+        super().__init__(message)
+        self.url = url
+
+
+RetryHook: TypeAlias = Callable[[str, str], "str | None"]
 
 
 class ScrapeMode(str, Enum):
@@ -25,6 +48,27 @@ class ScrapeMode(str, Enum):
 
     FAST = "fast"
     STEALTH = "stealth"
+
+
+def _pending_for_next_pass(pending: list[str], flagged: list[str], delivered: list[str]) -> list[str]:
+    """Rebuild the next pass URL list after a mid-retry fetch failure.
+
+    Keeps per-entry identity: duplicate URLs each keep their own retry, and a
+    failed duplicate is retried instead of being dropped by URL-string sets.
+
+    Args:
+        pending: URLs dispatched on the failed pass.
+        flagged: URLs the hook rejected on that pass.
+        delivered: URLs delivered on that pass.
+
+    Returns:
+        Flagged URLs followed by the still-unfinished pending entries.
+    """
+    unfinished = list(pending)
+    for url in delivered + flagged:
+        if url in unfinished:
+            unfinished.remove(url)
+    return flagged + unfinished
 
 
 class BatchScraperMixin:
@@ -47,6 +91,9 @@ class BatchScraperMixin:
         callback: Callable[[str, str], None],
         mode: str = ScrapeMode.FAST,
         max_concurrency: int = 1,
+        *,
+        retry_hook: RetryHook | None = None,
+        max_retries: int = 0,
     ) -> None:
         """Scrape multiple URLs using the specified mode.
 
@@ -58,8 +105,44 @@ class BatchScraperMixin:
             mode: Scraping mode - "fast" or "stealth" (ScrapeMode values).
                 Defaults to "fast" (ScrapeMode.FAST).
             max_concurrency: Maximum concurrent requests. Defaults to 1.
+            retry_hook: Optional quality gate consulted after each successful,
+                non-blocked fetch. Returning a non-empty reason string defers
+                that URL to another full retry pass; None (or any falsy value)
+                accepts the page. Hook exceptions propagate immediately.
+                Ignored when max_retries is 0.
+            max_retries: Additional full retry passes for hook-flagged URLs.
+                Defaults to 0 (no hook retries). Ignored when retry_hook is None.
 
         STEALTH uses ``asyncio.run`` and cannot be called from a running event loop.
+
+        Raises:
+            ValueError: If mode is unsupported, ``max_concurrency`` is less than 1,
+                or ``max_retries`` is less than 0.
+            RuntimeError: If STEALTH is requested from a running event loop.
+            FetcherError: If scraping encounters fetch failures.
+        """
+        # AC-01/AC-02: no hook or no retry budget keeps the legacy path intact.
+        if max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+        if retry_hook is None or max_retries <= 0:
+            self._dispatch_scrape(urls, callback, mode, max_concurrency)
+            return
+        self._scrape_with_retries(urls, callback, mode, max_concurrency, retry_hook, max_retries)
+
+    def _dispatch_scrape(
+        self,
+        urls: list[str],
+        callback: Callable[[str, str], None],
+        mode: str,
+        max_concurrency: int,
+    ) -> None:
+        """Run one full scrape pass over ``urls`` in the requested mode.
+
+        Args:
+            urls: List of URLs to scrape in this pass.
+            callback: Function to call with (url, html) for each successful fetch.
+            mode: Scraping mode - "fast" or "stealth" (ScrapeMode values).
+            max_concurrency: Maximum concurrent requests.
 
         Raises:
             ValueError: If mode is unsupported or ``max_concurrency`` is less than 1.
@@ -78,6 +161,92 @@ class BatchScraperMixin:
             self._scrape_stealth(urls, callback, max_concurrency)
         else:
             raise ValueError(f"Unsupported scrape mode: {mode}")
+
+    def _scrape_with_retries(
+        self,
+        urls: list[str],
+        callback: Callable[[str, str], None],
+        mode: str,
+        max_concurrency: int,
+        retry_hook: RetryHook,
+        max_retries: int,
+    ) -> None:
+        """Re-dispatch hook-flagged URLs through the same mode until retries run out.
+
+        Every pass re-invokes ``_dispatch_scrape``, so each existing retry layer
+        (inner fetch retries, fast second chance, stealth 4-attempt loop, browser
+        escalation) still applies. The hook is consulted only for successful,
+        non-blocked pages, before the user callback.
+
+        Args:
+            urls: URLs to scrape on the first pass.
+            callback: Function to call with (url, html) for each accepted page.
+            mode: Scraping mode preserved across every pass.
+            max_concurrency: Concurrency preserved across every pass.
+            retry_hook: Quality gate consulted before each callback.
+            max_retries: Additional passes for hook-flagged URLs.
+
+        Raises:
+            ValueError: If mode is unsupported or ``max_concurrency`` is less than 1.
+            RuntimeError: If STEALTH is requested from a running event loop.
+            FetcherError: If the final pass encounters fetch failures.
+            Exception: Hook and user-callback exceptions propagate immediately;
+                a hook or callback raising ``FetcherError`` surfaces as a
+                ``_UserCodeError`` chained from the original instead of being
+                retried or reported as a fetch failure.
+        """
+        pending = list(urls)
+        for attempt in range(1, max_retries + 2):
+            final = attempt > max_retries
+            flagged: list[str] = []
+            delivered: list[str] = []
+
+            def gated(
+                url: str,
+                html: str,
+                *,
+                final: bool = attempt > max_retries,
+                hook: RetryHook = retry_hook,
+                user_callback: Callable[[str, str], None] = callback,
+                rejected: list[str] = flagged,
+                accepted: list[str] = delivered,
+            ) -> None:
+                """Consult the hook, then either defer the URL or deliver the page."""
+                try:
+                    # CR: user-code FetcherError must escape the fetch-failure
+                    # collectors (they aggregate FetcherError only) and this
+                    # retry loop (it catches FetcherError only), so it is
+                    # re-raised as a non-FetcherError carrier.
+                    reason = hook(url, html)
+                    if reason and not final:
+                        # AC-04: a reject defers the URL and skips this callback.
+                        rejected.append(url)
+                        return
+                    if reason:
+                        # AC-08: the last pass still consults the hook but delivers anyway.
+                        logger.warning(
+                            "Retry hook rejected %s on the final pass (%s) — delivering content anyway",
+                            url,
+                            reason,
+                        )
+                    accepted.append(url)
+                    user_callback(url, html)
+                except FetcherError as exc:
+                    raise _UserCodeError(f"Hook or callback failed for {url}: {exc}", url=url) from exc
+
+            try:
+                self._dispatch_scrape(pending, gated, mode, max_concurrency)
+            except FetcherError:
+                # AC-07: a non-final failure retries every still-pending URL.
+                if final:
+                    raise
+                # CR: per-entry bookkeeping, not URL-string sets.
+                pending = _pending_for_next_pass(pending, flagged, delivered)
+                continue
+            # AC-05/AC-08: nothing flagged, or the last pass finished — stop.
+            if final or not flagged:
+                return
+            pending = flagged
 
     def _scrape_fast(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
         """Scrape URLs using fast mode with thread pool parallelism.

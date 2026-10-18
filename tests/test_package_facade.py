@@ -29,6 +29,7 @@ EXPECTED_PUBLIC_NAMES = frozenset(
         "WebFetcher",
         "InteractiveSession",
         "ScrapeMode",
+        "RetryHook",
         "fetch",
         "browser",
         "scrape",
@@ -84,7 +85,7 @@ def test_lazy_facade_contract_in_fresh_interpreter() -> None:
 
 
 def test_public_surface_matches_documented_contract() -> None:
-    """``__all__`` pins exactly the 22 documented public names."""
+    """``__all__`` pins exactly the 23 documented public names."""
     import scrape_kit
 
     assert set(scrape_kit.__all__) == EXPECTED_PUBLIC_NAMES

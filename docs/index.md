@@ -12,7 +12,7 @@ These pages document the public installable API for integrators. Import from `sc
 
 | Guide | Public names |
 | --- | --- |
-| [Fetching](fetcher.md) | `configure`, `configure_defaults`, `WebFetcher`, `fetch`, `browser`, `scrape`, `is_blocked`, `reset_shared`, `InteractiveSession`, `ScrapeMode` |
+| [Fetching](fetcher.md) | `configure`, `configure_defaults`, `WebFetcher`, `fetch`, `browser`, `scrape`, `is_blocked`, `reset_shared`, `InteractiveSession`, `ScrapeMode`, `RetryHook` |
 | [Matching](matching.md) | `SimilarityEngine` |
 | [Storage](storage.md) | `BaseStorageManager`, `BufferedStorageManager`, `MergeReport` |
 | [Settings](settings.md) | `SettingsManager` |
