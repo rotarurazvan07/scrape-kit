@@ -705,3 +705,247 @@ class TestEscalationWording:
         fetcher = WebFetcher()
         message = fetcher._blocked_status_message(URL, 429, 3)
         assert message == f"Blocked with status 429 on {URL} after 3 attempts (rate limited)"
+
+
+# ── status_retries: budgets, Retry-After generality, escalation, cooldown ─────
+
+
+class TestStatusRetryBudgets:
+    """A configured budget overrides the call-time retries argument per status."""
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_configured_budget_overrides_call_time(self, mock_fetcher, mock_sleep):
+        """AC-03: 429: 5 with retries=3 gives 6 total attempts for 429."""
+        mock_fetcher.get.return_value = _page_with_retry_after(429, None)
+        fetcher = WebFetcher(status_retries={429: 5})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"), pytest.raises(FetcherError, match="after 6 attempts"):
+            fetcher.fetch(URL, retries=3, backoff=0.0)
+        assert mock_fetcher.get.call_count == 6
+        assert mock_sleep.call_count == 5
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_explicit_zero_delivers_body(self, mock_fetcher, mock_sleep):
+        """AC-04: budget 0 delivers the body immediately with no retry or wait."""
+        mock_fetcher.get.return_value = make_page("<html>unavailable</html>", status=503)
+        fetcher = WebFetcher(status_retries={503: 0})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            result = fetcher.fetch(URL, retries=3, backoff=0.0)
+        assert result == "<html>unavailable</html>"
+        assert mock_fetcher.get.call_count == 1
+        assert mock_sleep.call_count == 0
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_new_code_retries_then_raises_generic_message(self, mock_fetcher, mock_sleep):
+        """AC-05/AC-15: a new code retries then raises the generic message shape."""
+        mock_fetcher.get.return_value = _page_with_retry_after(500, None)
+        fetcher = WebFetcher(status_retries={500: 2})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"), pytest.raises(FetcherError) as excinfo:
+            fetcher.fetch(URL, retries=3, backoff=0.0)
+        assert mock_fetcher.get.call_count == 3
+        assert str(excinfo.value) == f"Blocked with status 500 on {URL} after 3 attempts"
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_unlisted_non_default_code_delivered(self, mock_fetcher, mock_sleep):
+        """AC-06: an unlisted non-default status behaves exactly like 200."""
+        mock_fetcher.get.return_value = make_page("<html>server error</html>", status=500)
+        fetcher = WebFetcher(status_retries={429: 5})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            result = fetcher.fetch(URL, retries=3, backoff=0.0)
+        assert result == "<html>server error</html>"
+        assert mock_fetcher.get.call_count == 1
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_transport_errors_keep_call_time_budget(self, mock_fetcher, mock_sleep):
+        """AC-03: a configured budget never changes the transport-exception budget."""
+        mock_fetcher.get.side_effect = OSError("connection reset")
+        fetcher = WebFetcher(status_retries={429: 5})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"), pytest.raises(FetcherError):
+            fetcher.fetch(URL, retries=3, backoff=0.0)
+        assert mock_fetcher.get.call_count == 3
+
+
+class TestStatusRetryAfterGenerality:
+    """Retry-After applies to every retryable status, not only 429."""
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_non_429_header_drives_wait(self, mock_fetcher, mock_sleep):
+        """AC-07: a configured 503 honors its Retry-After header."""
+        mock_fetcher.get.side_effect = [_page_with_retry_after(503, "30"), make_page("<html>ok</html>")]
+        fetcher = WebFetcher(status_retries={503: 3})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher.fetch(URL, retries=3, backoff=5.0)
+        mock_sleep.assert_called_once_with(30.0)
+
+    @patch("scrape_kit.fetcher.web_fetcher.random.uniform", return_value=1.0)
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_edge_non_429_absent_header_uses_jitter(self, mock_fetcher, mock_sleep, _jitter):
+        """AC-07: without a header the existing jittered wait still applies."""
+        mock_fetcher.get.side_effect = [_page_with_retry_after(503, None), make_page("<html>ok</html>")]
+        fetcher = WebFetcher(status_retries={503: 3})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher.fetch(URL, retries=3, backoff=5.0)
+        mock_sleep.assert_called_once_with(5.0)
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_new_code_header_drives_wait(self, mock_fetcher, mock_sleep):
+        """AC-05/AC-07: a newly configured code also honors Retry-After."""
+        mock_fetcher.get.side_effect = [_page_with_retry_after(500, "45"), make_page("<html>ok</html>")]
+        fetcher = WebFetcher(status_retries={500: 2})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher.fetch(URL, retries=3, backoff=5.0)
+        mock_sleep.assert_called_once_with(45.0)
+
+
+class TestStatusRetryEscalation:
+    """The escalation gate follows the same configured map."""
+
+    def _browser_session(self, html, status):
+        """Mock browser context manager exposing a cached navigation status."""
+        browser_session = MagicMock()
+        browser_session.fetch.return_value = html
+        browser_session._last_response_status.return_value = status
+        browser_session._last_retry_after.return_value = None
+        browser_session.__enter__ = MagicMock(return_value=browser_session)
+        browser_session.__exit__ = MagicMock(return_value=False)
+        return browser_session
+
+    def test_normal_configured_code_not_delivered(self):
+        """AC-10: a configured retryable code is never a successful bypass."""
+        fetcher = WebFetcher(status_retries={500: 2})
+        browser_session = self._browser_session("<html>error</html>", 500)
+        with (
+            patch.object(fetcher, "browser", return_value=browser_session),
+            pytest.raises(FetcherError, match="Blocked with status 500"),
+        ):
+            fetcher._escalate_to_browser(URL, "just a moment")
+
+    def test_normal_explicit_zero_delivers(self):
+        """AC-10: an explicit 0 delivers that status on the browser path."""
+        fetcher = WebFetcher(status_retries={429: 0})
+        browser_session = self._browser_session("<html>slow</html>", 429)
+        with patch.object(fetcher, "browser", return_value=browser_session), patch("scrape_kit.fetcher.web_fetcher.logger"):
+            assert fetcher._escalate_to_browser(URL, "just a moment") == "<html>slow</html>"
+
+    def test_normal_unconfigured_code_delivered(self):
+        """AC-10: an unconfigured non-default status still delivers."""
+        fetcher = WebFetcher(status_retries={429: 5})
+        browser_session = self._browser_session("<html>error</html>", 500)
+        with patch.object(fetcher, "browser", return_value=browser_session):
+            assert fetcher._escalate_to_browser(URL, "just a moment") == "<html>error</html>"
+
+    def test_normal_absent_key_403_still_delivered(self):
+        """AC-09: with no configuration a 403 body is still delivered as before."""
+        fetcher = WebFetcher()
+        browser_session = self._browser_session("<html>forbidden</html>", 403)
+        with patch.object(fetcher, "browser", return_value=browser_session):
+            assert fetcher._escalate_to_browser(URL, "just a moment") == "<html>forbidden</html>"
+
+    def test_normal_absent_key_429_still_blocked(self):
+        """AC-09: with no configuration 429 is still never delivered."""
+        fetcher = WebFetcher()
+        browser_session = self._browser_session("<html>rate limited</html>", 429)
+        with patch.object(fetcher, "browser", return_value=browser_session), pytest.raises(FetcherError, match="rate limited"):
+            fetcher._escalate_to_browser(URL, "just a moment")
+
+    def test_normal_absent_status_delivered(self):
+        """AC-09: a navigation with no usable status still delivers its body."""
+        fetcher = WebFetcher(status_retries={429: 5})
+        browser_session = self._browser_session("<html>unknown</html>", None)
+        with patch.object(fetcher, "browser", return_value=browser_session):
+            assert fetcher._escalate_to_browser(URL, "just a moment") == "<html>unknown</html>"
+
+
+class TestStatusRetryCooldown:
+    """The batch cooldown follows the configured retryable set."""
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_configured_non_429_records_signal(self, mock_fetcher, mock_sleep):
+        """AC-08: a configured 503 records the cooldown observation too."""
+        mock_fetcher.get.side_effect = [_page_with_retry_after(503, "30"), make_page("<html>ok</html>")]
+        fetcher = WebFetcher(status_retries={503: 3})
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher.fetch(URL, retries=3, backoff=5.0)
+        signal = fetcher._take_rate_limit_signal()
+        assert signal is not None
+        assert signal.url == URL
+        assert signal.retry_after == 30.0
+
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_edge_unconfigured_code_records_no_signal(self, mock_fetcher, mock_sleep):
+        """AC-08: an unlisted status never registers a cooldown observation."""
+        mock_fetcher.get.return_value = make_page("<html>server error</html>", status=500)
+        fetcher = WebFetcher()
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher.fetch(URL, retries=3, backoff=0.0)
+        assert fetcher._take_rate_limit_signal() is None
+
+    def test_normal_stealth_registration_follows_config(self):
+        """AC-08: the stealth path registers the cooldown for a configured 503."""
+        fetcher = WebFetcher(status_retries={503: 3})
+        page = _page_with_retry_after(503, "20")
+        cooldown = _BatchCooldown(default_wait=10.0, max_wait=300.0)
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher._register_stealth_rate_limit(URL, page, 503, cooldown)
+        assert cooldown.remaining() > 15
+
+    def test_edge_stealth_ignores_unconfigured_status(self):
+        """AC-08: an unconfigured status never starts the stealth cooldown."""
+        fetcher = WebFetcher()
+        page = _page_with_retry_after(500, "20")
+        cooldown = _BatchCooldown(default_wait=10.0, max_wait=300.0)
+        fetcher._register_stealth_rate_limit(URL, page, 500, cooldown)
+        assert cooldown.remaining() == 0.0
+
+    def test_edge_stealth_zero_budget_opts_out(self):
+        """CR patch: an explicit 0 budget never starts the stealth cooldown."""
+        fetcher = WebFetcher(status_retries={503: 0})
+        page = _page_with_retry_after(503, "20")
+        cooldown = _BatchCooldown(default_wait=10.0, max_wait=300.0)
+        fetcher._register_stealth_rate_limit(URL, page, 503, cooldown)
+        assert cooldown.remaining() == 0.0
+
+    def test_normal_stealth_null_budget_keeps_observation(self):
+        """CR patch: a listed-but-None default code keeps observing (Deviation 2)."""
+        fetcher = WebFetcher(status_retries={503: None})
+        page = _page_with_retry_after(503, "20")
+        cooldown = _BatchCooldown(default_wait=10.0, max_wait=300.0)
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher._register_stealth_rate_limit(URL, page, 503, cooldown)
+        assert cooldown.remaining() > 15
+
+
+class TestStatusRetryBackwardCompat:
+    """With the key absent the behavior is byte-identical to before."""
+
+    @patch("scrape_kit.fetcher.web_fetcher.random.uniform", return_value=1.0)
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_absent_key_503_exhaustion_message_unchanged(self, mock_fetcher, mock_sleep, _jitter):
+        """AC-15: the 503 exhaustion message is byte-identical to the baseline."""
+        mock_fetcher.get.return_value = _page_with_retry_after(503, "30")
+        fetcher = WebFetcher()
+        with patch("scrape_kit.fetcher.web_fetcher.logger"), pytest.raises(FetcherError) as excinfo:
+            fetcher.fetch(URL, retries=2, backoff=5.0)
+        assert str(excinfo.value) == f"Blocked with status 503 on {URL} after 2 attempts"
+        mock_sleep.assert_called_once_with(5.0)
+
+    @patch("scrape_kit.fetcher.web_fetcher.random.uniform", return_value=1.0)
+    @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
+    @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
+    def test_normal_absent_key_503_ignores_retry_after(self, mock_fetcher, mock_sleep, _jitter):
+        """AC-01/AC-07: without configuration 503 never reads Retry-After."""
+        mock_fetcher.get.side_effect = [_page_with_retry_after(503, "30"), make_page("<html>ok</html>")]
+        fetcher = WebFetcher()
+        with patch("scrape_kit.fetcher.web_fetcher.logger"):
+            fetcher.fetch(URL, retries=3, backoff=5.0)
+        mock_sleep.assert_called_once_with(5.0)

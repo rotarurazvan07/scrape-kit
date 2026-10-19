@@ -208,6 +208,33 @@ Batch `scrape()`:
 - No URL is dropped, duplicated, or silently swallowed because of a cooldown. A rate-limited URL still reaches your callback or still shows up in the usual `FetcherError` summary.
 - With no `429` anywhere, nothing changes: no cooldown is registered and no extra waiting happens.
 
+### Per-status retry budgets
+
+By default `403`, `429`, and `503` are retried with whatever `retries=` you pass. Add a `status_retries` map to set a budget per status, and that budget replaces the call-time argument for that status only.
+
+```yaml
+retry_indicators:
+  - "Just a moment"
+  - "403 Forbidden"
+block_indicators:
+  - "cf-browser-verification"
+  - "Access Denied"
+status_retries:
+  429: 5
+  503: 3
+  403: 0
+```
+
+Configured values merge over the defaults, so listing `429: 5` leaves `403` and `503` at their default behavior. Values are integers or `null`; status keys are integers (numeric strings are accepted). Anything else raises `SettingsError` from `configure()`.
+
+- A positive count is the number of retries for that status, so `429: 5` allows six attempts even when `retries=3`.
+- `0` opts a status out of retrying: its response body is delivered instead of retried, and on the browser path it is not treated as a failed bypass.
+- `Retry-After` is honored for every listed status, not only `429`, and an unlisted status keeps the previous behavior exactly.
+- The batch cooldown also applies to listed statuses, so a configured `503` throttles the pool like a `429`.
+- On the browser path, a listed status with a budget above `0` is never delivered as a successful bypass; `0` delivers it. Unlisted non-default statuses keep the previous behavior.
+
+Without the key, behavior, messages, and logs are identical to previous releases.
+
 ## Explicit WebFetcher
 
 ```python

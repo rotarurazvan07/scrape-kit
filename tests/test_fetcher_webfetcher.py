@@ -306,3 +306,99 @@ class TestFetchTimeoutBackoff:
             fetcher.fetch("http://slow.example.com", retries=3, backoff=0)
         assert MockFetcher.get.call_count == 3
         assert mock_log.error.call_count == 1
+
+
+# ── status_retries: gate membership and budgets (story: fetcher-status-retry-config) ──
+
+
+class TestStatusRetryGate:
+    """status_retries replaces the hard-coded blocked-status sets."""
+
+    def test_normal_default_gate_matches_legacy_set(self):
+        """AC-01: without configuration the gate is exactly 403/429/503."""
+        fetcher = WebFetcher()
+        assert fetcher._is_retryable_status(403) is True
+        assert fetcher._is_retryable_status(429) is True
+        assert fetcher._is_retryable_status(503) is True
+        assert fetcher._is_retryable_status(500) is False
+        assert fetcher._is_retryable_status(200) is False
+
+    def test_normal_default_map_is_three_none_entries(self):
+        """AC-01: the resolved default map holds None budgets for the legacy codes."""
+        fetcher = WebFetcher()
+        assert fetcher.status_retries == {403: None, 429: None, 503: None}
+
+    def test_normal_explicit_zero_removes_code_from_gate(self):
+        """AC-04: budget 0 opts that status out of retrying entirely."""
+        fetcher = WebFetcher(status_retries={503: 0})
+        assert fetcher._is_retryable_status(503) is False
+        assert fetcher._is_retryable_status(403) is True
+        assert fetcher._is_retryable_status(429) is True
+
+    def test_normal_new_code_joins_gate(self):
+        """AC-05: a configured code joins the gate, defaults keep their entry."""
+        fetcher = WebFetcher(status_retries={500: 2})
+        assert fetcher._is_retryable_status(500) is True
+        assert fetcher._is_retryable_status(429) is True
+        assert fetcher.status_retries == {403: None, 429: None, 503: None, 500: 2}
+
+    def test_normal_unlisted_non_default_code_not_retryable(self):
+        """AC-06: a non-default code absent from the map is never retried."""
+        fetcher = WebFetcher(status_retries={429: 5})
+        assert fetcher._is_retryable_status(500) is False
+
+    def test_normal_budget_overrides_call_time_for_that_code(self):
+        """AC-03: an explicit budget wins over the call-time retries argument."""
+        fetcher = WebFetcher(status_retries={429: 5})
+        # 5 configured retries means 6 total attempts vs. the call-time 3.
+        assert fetcher._status_budget(429, 3) == 6
+
+    def test_normal_none_entry_inherits_call_time_budget(self):
+        """AC-01/AC-03: a None entry inherits the call-time retries argument."""
+        fetcher = WebFetcher()
+        assert fetcher._status_budget(429, 3) == 3
+        assert fetcher._status_budget(403, 4) == 4
+
+    def test_normal_unlisted_code_inherits_call_time_budget(self):
+        """AC-03: unlisted codes keep the call-time budget unchanged."""
+        fetcher = WebFetcher(status_retries={429: 5})
+        assert fetcher._status_budget(500, 3) == 3
+
+    def test_normal_escalation_gate_defaults_to_429_503(self):
+        """AC-09: the browser gate keeps 429/503 and still delivers 403."""
+        fetcher = WebFetcher()
+        assert fetcher._escalation_blocked(429) is True
+        assert fetcher._escalation_blocked(503) is True
+        assert fetcher._escalation_blocked(403) is False
+
+    def test_normal_escalation_gate_gains_configured_code(self):
+        """AC-10: a configured retryable status is never delivered as a bypass."""
+        fetcher = WebFetcher(status_retries={500: 2})
+        assert fetcher._escalation_blocked(500) is True
+        assert fetcher._escalation_blocked(429) is True
+
+    def test_normal_escalation_gate_drops_explicit_zero(self):
+        """AC-10: an explicit 0 delivers that status on the browser path."""
+        fetcher = WebFetcher(status_retries={429: 0})
+        assert fetcher._escalation_blocked(429) is False
+
+    def test_normal_escalation_gate_keeps_none_entry_membership(self):
+        """AC-10: naming a code with null cannot un-gate it."""
+        fetcher = WebFetcher(status_retries={"429": None})
+        assert fetcher.status_retries == {403: None, 429: None, 503: None}
+        assert fetcher._escalation_blocked(429) is True
+
+    def test_normal_keyword_only_param_with_positional_compat(self):
+        """AC-03: the two positional parameters keep working; status_retries is keyword-only."""
+        fetcher = WebFetcher(["retry_me"], ["blocked"])
+        assert fetcher.retry_indicators == ["retry_me"]
+        assert fetcher.block_indicators == ["blocked"]
+        configured = WebFetcher(status_retries={429: 2})
+        assert configured.status_retries[429] == 2
+
+    def test_normal_instance_map_is_a_copy(self):
+        """AC-02: two instances never share one mutable map."""
+        first = WebFetcher(status_retries={429: 2})
+        second = WebFetcher()
+        first.status_retries[429] = 9
+        assert second.status_retries[429] is None

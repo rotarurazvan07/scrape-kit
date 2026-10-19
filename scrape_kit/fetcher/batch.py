@@ -148,6 +148,8 @@ class BatchScraperMixin:
     is_blocked: Callable[[str], bool]
     _page_status: Callable[[Any], int]
     _take_rate_limit_signal: Callable[[], Any]
+    _configured_status_retries: dict[int, int | None]
+    _is_retryable_status: Callable[[int], bool]
 
     def scrape(
         self,
@@ -570,10 +572,11 @@ class BatchScraperMixin:
         status: int,
         cooldown: _BatchCooldown | None,
     ) -> None:
-        """Register the shared cooldown when a stealth fetch is rate limited.
+        """Register the shared cooldown when a stealth fetch hits a watched status.
 
         Satisfies: AC-09/AC-10 - the stealth path already holds the response
-        page, so its Retry-After value is read directly.
+        page, so its Retry-After value is read directly. The watched set is
+        legacy 429 plus every status the consumer explicitly configured.
 
         Args:
             url: The URL that received the blocked status.
@@ -581,7 +584,9 @@ class BatchScraperMixin:
             status: The blocked status code of the response.
             cooldown: Shared per-batch cooldown, or None to skip registration.
         """
-        if cooldown is None or status != 429:
+        # AC-04: an explicitly-0 budget opts a status out of every retry path, so it must not throttle siblings either.
+        observed = status == 429 or (status in self._configured_status_retries and self._is_retryable_status(status))
+        if cooldown is None or not observed:
             return
         cooldown.register(time.monotonic(), _retry_after_seconds(page))
         logger.warning("Rate limited by %s - batch cooldown %.0fs", url, cooldown.remaining())
