@@ -13,7 +13,7 @@ Requires Python 3.11+.
 ## Install
 
 ```bash
-pip install git+https://github.com/rotarurazvan07/scrape-kit.git@v0.2.2
+pip install git+https://github.com/rotarurazvan07/scrape-kit.git@v0.3.0
 scrapling install
 ```
 
