@@ -5,7 +5,7 @@ from typing import Any
 
 from . import _state
 from ._state import reset_shared
-from .batch import ScrapeMode
+from .batch import RetryHook, ScrapeMode
 from .session import InteractiveSession
 from .web_fetcher import WebFetcher
 
@@ -93,6 +93,9 @@ def scrape(
     callback: Callable[[str, str], None],
     mode: str = ScrapeMode.FAST,
     max_concurrency: int = 1,
+    *,
+    retry_hook: RetryHook | None = None,
+    max_retries: int = 0,
 ) -> None:
     """Scrape multiple URLs via the shared WebFetcher instance.
 
@@ -101,21 +104,34 @@ def scrape(
         callback: Function to call with (url, html) for each successful fetch.
         mode: Scraping mode - "fast" or "stealth" (ScrapeMode values). Defaults to "fast".
         max_concurrency: Maximum concurrent requests. Defaults to 1.
+        retry_hook: Optional quality gate consulted after each successful fetch.
+            Returning a reason string defers that URL to another retry pass.
+            Ignored when max_retries is 0.
+        max_retries: Additional retry passes for hook-flagged URLs. Defaults to 0.
 
     STEALTH uses ``asyncio.run`` and cannot be called from a running event loop.
 
     Raises:
-        ValueError: If mode is unsupported or ``max_concurrency`` is less than 1.
+        ValueError: If mode is unsupported, ``max_concurrency`` is less than 1, or
+            ``max_retries`` is less than 0.
         RuntimeError: If STEALTH is requested from a running event loop.
         FetcherError: If scraping encounters fetch failures.
     """
-    _get_shared().scrape(urls, callback, mode=mode, max_concurrency=max_concurrency)
+    _get_shared().scrape(
+        urls,
+        callback,
+        mode=mode,
+        max_concurrency=max_concurrency,
+        retry_hook=retry_hook,
+        max_retries=max_retries,
+    )
 
 
 __all__ = [
     "WebFetcher",
     "InteractiveSession",
     "ScrapeMode",
+    "RetryHook",
     "fetch",
     "is_blocked",
     "browser",

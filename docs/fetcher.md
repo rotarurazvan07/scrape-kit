@@ -8,6 +8,7 @@ Import from `scrape_kit`:
 from scrape_kit import (
     FetcherError,
     InteractiveSession,
+    RetryHook,
     ScrapeMode,
     WebFetcher,
     browser,
@@ -149,14 +150,44 @@ scrape(
 )
 ```
 
-Signature: `scrape(urls, callback, mode=ScrapeMode.FAST, max_concurrency=1)`.
+Signature: `scrape(urls, callback, mode=ScrapeMode.FAST, max_concurrency=1, *, retry_hook=None, max_retries=0)`.
 
 `ScrapeMode` is a `str` Enum: `FAST = "fast"`, `STEALTH = "stealth"`. Raw strings and enum members are interchangeable.
 
 - The callback receives `(url, html)` for each successful fetch. Callback exceptions propagate immediately.
-- `max_concurrency < 1` or an unknown mode raises `ValueError`.
+- `max_concurrency < 1`, `max_retries < 0`, or an unknown mode raises `ValueError`.
 - `STEALTH` uses `asyncio.run` and cannot run from an already-running event loop (`RuntimeError`).
 - Fetch failures raise `FetcherError`.
+
+### Reject pages by content
+
+Pass `retry_hook` to veto a page on content grounds, and `max_retries` to give the rejected URL another full pass. The hook receives `(url, html)` and returns a non-empty reason string to reject, or `None` to accept.
+
+```python
+from scrape_kit import RetryHook, ScrapeMode, configure_defaults, scrape
+
+
+def quality_gate(url: str, html: str) -> str | None:
+    return "no-listing-table" if "<table" not in html else None
+
+
+hook: RetryHook = quality_gate
+
+configure_defaults()
+scrape(
+    ["https://example.com/listings"],
+    on_page,
+    mode=ScrapeMode.FAST,
+    max_retries=2,
+    retry_hook=hook,
+)
+```
+
+- The hook runs only after a fetch succeeds and the page is not blocked, and always before your callback.
+- A rejected URL is fetched again through the same mode and `max_concurrency`, with its callback skipped for that pass. A URL still rejected on the last pass is delivered once with a `WARNING` log naming the URL and reason. Best effort: if the last pass also has fetch failures, the batch raises `FetcherError` as usual.
+- Without a hook, or with `max_retries=0`, behavior is unchanged.
+- Hook exceptions propagate immediately — including when the hook raises `FetcherError`. They are never retried and never reported as fetch failures.
+- `max_retries` adds passes on top of every built-in retry layer, so a rejected page can cost up to `max_retries + 1` full passes.
 
 ## Explicit WebFetcher
 
