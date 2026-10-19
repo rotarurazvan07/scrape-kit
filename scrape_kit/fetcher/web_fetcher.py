@@ -12,7 +12,7 @@ from ..logger import get_logger
 from ..settings import SettingsManager
 from ._state import _set_shared
 from .batch import BatchScraperMixin
-from .session import _retry_after_seconds, InteractiveSession
+from .session import InteractiveSession, _retry_after_seconds
 
 logger = get_logger(__name__)
 
