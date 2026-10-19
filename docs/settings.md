@@ -54,6 +54,25 @@ Both `write(name, data, *, subpath=None)` and `delete(name, *, subpath=None)` ac
 
 `configure()` in the [fetcher guide](fetcher.md) uses this same loader to read `scraper_config.yaml`.
 
+## Per-status retry budgets
+
+`scraper_config.yaml` may also carry a `status_retries` map, which sets an HTTP-status-specific retry budget used by the fetcher.
+
+```yaml
+status_retries:
+  429: 5
+  503: 3
+  403: 0
+```
+
+- Keys are HTTP status codes; integers and numeric strings are accepted.
+- Values are a non-negative integer or `null`. An integer is that status's retry count, which replaces the call-time `retries` argument for that status only; `null` inherits the call-time argument.
+- Configured entries merge over the built-in defaults (`403`, `429`, `503`), so listing one status never removes another's behavior.
+- `0` opts a status out of retrying, and its response body is delivered instead of retried.
+- Invalid keys or values raise `SettingsError` when `configure()` reads the file.
+
+See the [fetcher guide](fetcher.md#per-status-retry-budgets) for how the budgets affect waits, the batch cooldown, and the browser path.
+
 ## Related guides
 
 - [Fetching](fetcher.md) for `configure()`.

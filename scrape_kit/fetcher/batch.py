@@ -1,6 +1,8 @@
 """Batch scraping strategies (fast thread pool / stealth async) and the ScrapeMode enum."""
 
 import asyncio
+import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
@@ -10,8 +12,72 @@ from scrapling.fetchers import AsyncStealthySession
 
 from ..errors import FetcherError
 from ..logger import get_logger
+from .session import _retry_after_seconds
 
 logger = get_logger(__name__)
+
+# Per-batch 429 cooldown bounds (AC-10): a bounded wait can never hang a run,
+# and the cap applies to hostile or absurd Retry-After values.
+_DEFAULT_COOLDOWN_SECONDS = 10.0
+_MAX_COOLDOWN_SECONDS = 300.0
+
+
+class _BatchCooldown:
+    """Per-``scrape()``-call cooldown shared by FAST threads and STEALTH coroutines.
+
+    Satisfies: AC-09/AC-10/AC-11 — one monotonic deadline behind one lock;
+    every worker waits the remaining time before issuing its next request, the
+    wait is bounded by the cap, the deadline never shrinks, and the state is
+    per-call so concurrent independent batches never throttle each other.
+    """
+
+    def __init__(self, default_wait: float = _DEFAULT_COOLDOWN_SECONDS, max_wait: float = _MAX_COOLDOWN_SECONDS) -> None:
+        """Initialize an empty cooldown with bounded waits.
+
+        Args:
+            default_wait: Delay applied when a 429 advertises no usable delay.
+            max_wait: Hard cap for any registered deadline.
+        """
+        self._default_wait = default_wait
+        self._max_wait = max_wait
+        self._lock = threading.Lock()
+        self._deadline = 0.0
+
+    def register(self, now: float, retry_after: float | None = None) -> None:
+        """Register a 429 cooldown deadline, never shortening an existing one.
+
+        Satisfies: AC-04/AC-09/AC-10 — uses the advertised Retry-After when
+        present, the bounded default otherwise, and caps the result.
+
+        Args:
+            now: Current monotonic time in seconds.
+            retry_after: The bounded advertised delay, or None for the default.
+        """
+        wait = self._default_wait if retry_after is None else retry_after
+        deadline = now + min(max(0.0, wait), self._max_wait)
+        with self._lock:
+            self._deadline = max(self._deadline, deadline)
+
+    def remaining(self) -> float:
+        """Return the remaining cooldown time in seconds.
+
+        Returns:
+            Seconds left before the deadline, or 0.0 when no cooldown is active.
+        """
+        with self._lock:
+            return max(0.0, self._deadline - time.monotonic())
+
+    def wait_if_needed(self) -> None:
+        """Sleep out the remaining cooldown on the calling FAST worker thread."""
+        remaining = self.remaining()
+        if remaining > 0:
+            time.sleep(remaining)
+
+    async def wait_if_needed_async(self) -> None:
+        """Await the remaining cooldown on a STEALTH coroutine."""
+        remaining = self.remaining()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
 
 class _UserCodeError(Exception):
@@ -81,6 +147,9 @@ class BatchScraperMixin:
     fetch: Callable[..., str]
     is_blocked: Callable[[str], bool]
     _page_status: Callable[[Any], int]
+    _take_rate_limit_signal: Callable[[], Any]
+    _configured_status_retries: dict[int, int | None]
+    _is_retryable_status: Callable[[int], bool]
 
     def scrape(
         self,
@@ -121,10 +190,16 @@ class BatchScraperMixin:
         # AC-01/AC-02: no hook or no retry budget keeps the legacy path intact.
         if max_retries < 0:
             raise ValueError("max_retries must be >= 0")
+        # AC-10/AC-11: one cooldown primitive per scrape() call, shared by
+        # every worker and every retry pass of this batch only.
+        cooldown = _BatchCooldown()
+        # AC-13: 429 observations older than this call must never throttle it
+        # (a single-URL fetch() leaves its observation in the shared slot).
+        batch_started = time.monotonic()
         if retry_hook is None or max_retries <= 0:
-            self._dispatch_scrape(urls, callback, mode, max_concurrency)
+            self._dispatch_scrape(urls, callback, mode, max_concurrency, cooldown, batch_started)
             return
-        self._scrape_with_retries(urls, callback, mode, max_concurrency, retry_hook, max_retries)
+        self._scrape_with_retries(urls, callback, mode, max_concurrency, retry_hook, max_retries, cooldown, batch_started)
 
     def _dispatch_scrape(
         self,
@@ -132,6 +207,8 @@ class BatchScraperMixin:
         callback: Callable[[str, str], None],
         mode: str,
         max_concurrency: int,
+        cooldown: _BatchCooldown | None = None,
+        batch_started: float | None = None,
     ) -> None:
         """Run one full scrape pass over ``urls`` in the requested mode.
 
@@ -140,6 +217,11 @@ class BatchScraperMixin:
             callback: Function to call with (url, html) for each successful fetch.
             mode: Scraping mode - "fast" or "stealth" (ScrapeMode values).
             max_concurrency: Maximum concurrent requests.
+            cooldown: Shared per-batch 429 cooldown. Defaults to None, which
+                preserves the legacy behavior of private callers that pass none.
+            batch_started: Monotonic start of the owning scrape() call, used to
+                ignore 429 observations that predate this batch. None disables
+                the age check (legacy private callers).
 
         Raises:
             ValueError: If mode is unsupported or ``max_concurrency`` is less than 1.
@@ -152,10 +234,10 @@ class BatchScraperMixin:
             raise ValueError("max_concurrency must be >= 1")
         if mode == ScrapeMode.FAST:
             logger.info("Batch scrape FAST %d URLs concurrency=%d", len(urls), max_concurrency)
-            self._scrape_fast(urls, callback, max_concurrency)
+            self._scrape_fast(urls, callback, max_concurrency, cooldown, batch_started)
         elif mode == ScrapeMode.STEALTH:
             logger.info("Batch scrape STEALTH %d URLs concurrency=%d", len(urls), max_concurrency)
-            self._scrape_stealth(urls, callback, max_concurrency)
+            self._scrape_stealth(urls, callback, max_concurrency, cooldown)
         else:
             raise ValueError(f"Unsupported scrape mode: {mode}")
 
@@ -167,6 +249,8 @@ class BatchScraperMixin:
         max_concurrency: int,
         retry_hook: RetryHook,
         max_retries: int,
+        cooldown: _BatchCooldown | None = None,
+        batch_started: float | None = None,
     ) -> None:
         """Re-dispatch hook-flagged URLs through the same mode until retries run out.
 
@@ -232,7 +316,9 @@ class BatchScraperMixin:
                     raise _UserCodeError(f"Hook or callback failed for {url}: {exc}", url=url) from exc
 
             try:
-                self._dispatch_scrape(pending, gated, mode, max_concurrency)
+                # AC-09/AC-11: the same per-call cooldown is shared by every
+                # retry pass, so hook retries cannot bypass the 429 pause.
+                self._dispatch_scrape(pending, gated, mode, max_concurrency, cooldown, batch_started)
             except FetcherError:
                 # AC-07: a non-final failure retries every still-pending URL.
                 if final:
@@ -245,20 +331,31 @@ class BatchScraperMixin:
                 return
             pending = flagged
 
-    def _scrape_fast(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+    def _scrape_fast(
+        self,
+        urls: list[str],
+        callback: Callable[[str, str], None],
+        max_concurrency: int,
+        cooldown: _BatchCooldown | None = None,
+        batch_started: float | None = None,
+    ) -> None:
         """Scrape URLs using fast mode with thread pool parallelism.
 
         Args:
             urls: List of URLs to scrape.
             callback: Function to call with (url, html) for each successful fetch.
             max_concurrency: Maximum number of concurrent threads.
+            cooldown: Shared per-batch 429 cooldown. Defaults to None, which
+                preserves the legacy behavior of private callers that pass none.
+            batch_started: Monotonic start of the owning scrape() call, so a
+                worker ignores 429 observations that predate this batch.
 
         Raises:
             FetcherError: If any fetches fail.
         """
         errors: list[tuple[str, Exception]] = []
         with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
-            futures = [pool.submit(self._fetch_one_fast, url, callback) for url in urls]
+            futures = [pool.submit(self._fetch_one_fast, url, callback, cooldown, batch_started) for url in urls]
             for future in futures:
                 try:  # nosec PERF203
                     future.result()
@@ -270,21 +367,35 @@ class BatchScraperMixin:
             summary = ", ".join(f"{url}: {err}" for url, err in errors[:5])
             raise FetcherError(f"Fast scrape had {len(errors)} failures. Sample: {summary}")
 
-    def _fetch_one_fast(self, url: str, callback: Callable[[str, str], None]) -> None:
+    def _fetch_one_fast(
+        self,
+        url: str,
+        callback: Callable[[str, str], None],
+        cooldown: _BatchCooldown | None = None,
+        batch_started: float | None = None,
+    ) -> None:
         """Fetch a single URL in fast mode with retry logic.
 
         Args:
             url: The URL to fetch.
             callback: Function to call with (url, html) on success. Callback
                 exceptions propagate to the caller, not into the retry loop.
+            cooldown: Shared per-batch 429 cooldown. Defaults to None, which
+                preserves the legacy behavior of private callers that pass none.
+            batch_started: Monotonic start of the owning scrape() call, so a
+                stale observation from a single-URL fetch() cannot throttle here.
 
         Raises:
             FetcherError: If fetching fails or remains blocked.
         """
         last_error: Exception | None = None
         for stealthy_headers in (False, True):
+            # AC-09: honor a cooldown registered by any worker of this batch.
+            if cooldown is not None:
+                cooldown.wait_if_needed()
             try:
                 html = self.fetch(url, stealthy_headers=stealthy_headers)
+                self._register_fast_rate_limit(url, cooldown, batch_started)
                 if self.is_blocked(html):
                     continue
             except Exception as exc:
@@ -292,6 +403,7 @@ class BatchScraperMixin:
                 # error or FetcherError from retry exhaustion) is retried
                 # once with stealthy headers; breadth is the boundary
                 # contract. Only final exhaustion converts to FetcherError.
+                self._register_fast_rate_limit(url, cooldown, batch_started)
                 last_error = exc
                 continue
             # Callback runs unguarded: user-callback bugs must not be retried
@@ -304,24 +416,62 @@ class BatchScraperMixin:
 
         raise FetcherError(f"Fast scrape remained blocked for {url}", url=url)
 
-    def _scrape_stealth(self, urls: list[str], callback: Callable[[str, str], None], max_concurrency: int) -> None:
+    def _register_fast_rate_limit(self, url: str, cooldown: _BatchCooldown | None, batch_started: float | None = None) -> None:
+        """Consume a recorded 429 observation and register the batch cooldown.
+
+        Satisfies: AC-09/AC-10 - the fast path cannot see the response object
+        (``fetch`` returns HTML), so the attempt loop records the observation
+        and this method turns it into a shared, bounded, logged cooldown.
+        Satisfies: AC-13 - an observation older than the owning scrape() call is
+        ignored, so a 429 left behind by a single-URL fetch() cannot throttle a
+        later unrelated batch.
+
+        Args:
+            url: The URL whose fetch just completed, for the log message.
+            cooldown: Shared per-batch cooldown, or None to skip registration.
+            batch_started: Monotonic start of the owning scrape() call. None
+                disables the age check (legacy private callers).
+        """
+        if cooldown is None:
+            return
+        signal = self._take_rate_limit_signal()
+        if signal is None:
+            return
+        if batch_started is not None:
+            observed_at = getattr(signal, "observed_at", None)
+            if isinstance(observed_at, (int, float)) and observed_at < batch_started:
+                # AC-13: stale observation from a non-batch call, not this batch.
+                return
+        cooldown.register(time.monotonic(), signal.retry_after)
+        logger.warning("Rate limited by %s - batch cooldown %.0fs", signal.url, cooldown.remaining())
+
+    def _scrape_stealth(
+        self,
+        urls: list[str],
+        callback: Callable[[str, str], None],
+        max_concurrency: int,
+        cooldown: _BatchCooldown | None = None,
+    ) -> None:
         """Scrape URLs using stealth mode with async concurrency.
 
         Args:
             urls: List of URLs to scrape.
             callback: Function to call with (url, html) for each successful fetch.
             max_concurrency: Maximum number of concurrent async operations.
+            cooldown: Shared per-batch 429 cooldown. Defaults to None, which
+                preserves the legacy behavior of private callers that pass none.
 
         Raises:
             FetcherError: If any fetches fail.
         """
-        asyncio.run(self._async_stealth_loop(urls, callback, max_concurrency))
+        asyncio.run(self._async_stealth_loop(urls, callback, max_concurrency, cooldown))
 
     async def _async_stealth_loop(
         self,
         urls: list[str],
         callback: Callable[[str, str], None],
         max_concurrency: int,
+        cooldown: _BatchCooldown | None = None,
     ) -> None:
         """Async worker loop for stealth mode scraping.
 
@@ -329,6 +479,8 @@ class BatchScraperMixin:
             urls: List of URLs to scrape.
             callback: Function to call with (url, html) for each successful fetch.
             max_concurrency: Maximum number of concurrent workers.
+            cooldown: Shared per-batch 429 cooldown. Defaults to None, which
+                preserves the legacy behavior of private callers that pass none.
 
         Raises:
             FetcherError: If any fetches fail.
@@ -350,7 +502,7 @@ class BatchScraperMixin:
                     except asyncio.QueueEmpty:
                         return
                     try:
-                        await self._fetch_one_stealth(url, session, callback)
+                        await self._fetch_one_stealth(url, session, callback, cooldown)
                     except FetcherError as exc:
                         errors.append((exc.url or url, exc))
 
@@ -368,6 +520,7 @@ class BatchScraperMixin:
         url: str,
         session: Any,
         callback: Callable[[str, str], None],
+        cooldown: _BatchCooldown | None = None,
     ) -> None:
         """Fetch a single URL in stealth mode with retry logic.
 
@@ -376,17 +529,24 @@ class BatchScraperMixin:
             session: The AsyncStealthySession to use.
             callback: Function to call with (url, html) on success. Callback
                 exceptions propagate to the worker, not into the retry loop.
+            cooldown: Shared per-batch 429 cooldown. Defaults to None, which
+                preserves the legacy behavior of private callers that pass none.
 
         Raises:
             FetcherError: If fetching fails after retries or stays blocked.
         """
         loop = asyncio.get_running_loop()
         for attempt in range(1, 5):
+            # AC-09: workers honor a cooldown registered by any sibling worker.
+            if cooldown is not None:
+                await cooldown.wait_if_needed_async()
             try:
                 page = await session.fetch(url, disable_resources=False, network_idle=True, timeout=90000)
                 status = self._page_status(page)
                 html = page.html_content
                 if status in (429, 503) or self.is_blocked(html):
+                    # AC-09: a 429 registers the shared cooldown for siblings.
+                    self._register_stealth_rate_limit(url, page, status, cooldown)
                     if attempt < 4:
                         await asyncio.sleep(30 * attempt)
                         continue
@@ -398,8 +558,35 @@ class BatchScraperMixin:
                     await asyncio.sleep(15 * attempt)
                 else:
                     raise FetcherError(f"Stealth fetch failed after 4 retries: {e}", url=url) from e
+
             else:
                 # Callback runs unguarded: user-callback bugs must not be retried
                 # or misreported as fetch failures.
                 await loop.run_in_executor(None, callback, url, html)
                 return
+
+    def _register_stealth_rate_limit(
+        self,
+        url: str,
+        page: Any,
+        status: int,
+        cooldown: _BatchCooldown | None,
+    ) -> None:
+        """Register the shared cooldown when a stealth fetch hits a watched status.
+
+        Satisfies: AC-09/AC-10 - the stealth path already holds the response
+        page, so its Retry-After value is read directly. The watched set is
+        legacy 429 plus every status the consumer explicitly configured.
+
+        Args:
+            url: The URL that received the blocked status.
+            page: The stealth response page to read Retry-After from.
+            status: The blocked status code of the response.
+            cooldown: Shared per-batch cooldown, or None to skip registration.
+        """
+        # AC-04: an explicitly-0 budget opts a status out of every retry path, so it must not throttle siblings either.
+        observed = status == 429 or (status in self._configured_status_retries and self._is_retryable_status(status))
+        if cooldown is None or not observed:
+            return
+        cooldown.register(time.monotonic(), _retry_after_seconds(page))
+        logger.warning("Rate limited by %s - batch cooldown %.0fs", url, cooldown.remaining())

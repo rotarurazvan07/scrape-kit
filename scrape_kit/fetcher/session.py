@@ -1,8 +1,10 @@
 """InteractiveSession: persistent browser page wrapper with JS execution around scrapling."""
 
 import contextlib
+import email.utils
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from scrapling.fetchers import DynamicSession, StealthySession
@@ -24,6 +26,76 @@ def _is_context_destroyed(error: BaseException) -> bool:
     """Return True when an evaluate failure was caused by a navigation race (AC-29)."""
     msg = str(error).lower()
     return any(hint in msg for hint in _CONTEXT_DESTROYED_HINTS)
+
+
+# HTTP status/header seam for rate-limit interception. Attributes and header
+# names are tolerant: a mocked or exotic page must degrade to "unknown".
+_STATUS_ATTRS = ("status", "status_code")
+_RETRY_AFTER_HEADER = "Retry-After"
+_MAX_RETRY_AFTER_SECONDS = 300.0
+
+
+def _response_status(response: Any) -> int | None:
+    """Return the HTTP status of a navigation response, preferring ``status``.
+
+    Args:
+        response: The object returned by a navigation call, or a test double.
+
+    Returns:
+        The status as an int, or None when the response exposes neither
+        ``status`` nor ``status_code`` (non-HTTP navigation, exotic double).
+    """
+    for attr in _STATUS_ATTRS:
+        value = getattr(response, attr, None)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    """Return the bounded ``Retry-After`` delay advertised by a response.
+
+    Accepts the seconds form and the HTTP-date form and caps the result, so a
+    hostile or absurd value cannot hang a run. Returns None when the header is
+    absent, unparsable, or the response exposes no usable headers.
+
+    Args:
+        response: The navigation response, or a test double, to inspect.
+
+    Returns:
+        The delay in seconds, or None when no usable value is present.
+    """
+    headers = getattr(response, "headers", None)
+    if not isinstance(headers, dict):
+        return None
+    raw = headers.get(_RETRY_AFTER_HEADER)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    try:
+        seconds = float(text)
+    except ValueError:
+        seconds = -1.0
+    if seconds >= 0:
+        return min(seconds, _MAX_RETRY_AFTER_SECONDS)
+    try:
+        deadline = email.utils.parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return None
+    if deadline is None:
+        return None
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    delay = (deadline - datetime.now(timezone.utc)).total_seconds()
+    # A non-positive delay is an expired advertisement: no usable value, so the
+    # caller falls back to the jittered wait instead of sleeping zero.
+    if delay <= 0:
+        return None
+    return min(delay, _MAX_RETRY_AFTER_SECONDS)
 
 
 class InteractiveSession:
@@ -48,6 +120,9 @@ class InteractiveSession:
         """
         self.session = session
         self.page: Any = None
+        # Cached navigation response so the HTTP status survives the HTML-only
+        # fetch() contract (rate-limit interception, AC-01).
+        self._last_response: Any = None
         logger.debug("InteractiveSession initialized with %s", type(session).__name__)
 
     def __enter__(self) -> "InteractiveSession":
@@ -113,7 +188,11 @@ class InteractiveSession:
         if not self.page:
             raise FetcherError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
         logger.info("Browser fetching: %s (timeout=%dms)", url, timeout)
-        self.page.goto(url, wait_until=wait_until, timeout=timeout)
+        # AC-01: keep the navigation response so its HTTP status survives the
+        # HTML-only fetch() contract. Reset first so a failed navigation can
+        # never report the previous page's status.
+        self._last_response = None
+        self._last_response = self.page.goto(url, wait_until=wait_until, timeout=timeout)
         logger.debug("Waiting for site to settle ...")
         max_wait = 30  # maximum seconds to keep trying
         start_time = time.time()
@@ -147,6 +226,26 @@ class InteractiveSession:
         content: str = self.page.content()
         logger.debug("Fetch complete, content length: %d", len(content))
         return content
+
+    def _last_response_status(self) -> int | None:
+        """Return the HTTP status of the most recent successful navigation.
+
+        Satisfies: AC-01 (the status survives the HTML-only fetch contract).
+
+        Returns:
+            The navigation status, or None when no navigation completed or the
+            response exposes no usable status attribute.
+        """
+        return _response_status(self._last_response)
+
+    def _last_retry_after(self) -> float | None:
+        """Return the bounded ``Retry-After`` delay of the last navigation.
+
+        Returns:
+            The delay in seconds, or None when the last response advertised no
+            usable value.
+        """
+        return _retry_after_seconds(self._last_response)
 
     def execute_script(self, script: str) -> Any:
         """Execute JavaScript in the page context.

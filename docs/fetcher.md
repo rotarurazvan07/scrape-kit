@@ -189,6 +189,52 @@ scrape(
 - Hook exceptions propagate immediately — including when the hook raises `FetcherError`. They are never retried and never reported as fetch failures.
 - `max_retries` adds passes on top of every built-in retry layer, so a rejected page can cost up to `max_retries + 1` full passes.
 
+## Rate limiting
+
+When a host answers `429 Too Many Requests`, scrape-kit slows down instead of hammering it.
+
+Single-URL `fetch()`:
+
+- A `429` retry waits for the server's `Retry-After` value when the response carries one. Both forms are accepted: a number of seconds and an HTTP date. The value is capped, so an absurd header cannot stall your run.
+- A missing, unparsable, or already-expired `Retry-After` falls back to the same jittered backoff used for every other retry. `503` and `403` never read `Retry-After`; they keep the existing backoff behavior.
+- Attempt counts are unchanged everywhere: rate limiting changes how long a retry waits and how the failure is labeled, never how many attempts are made.
+- When the retries run out, the raised `FetcherError` message keeps its usual shape and adds a `(rate limited)` label for `429`, so you can tell rate limiting apart from a generic block. Other statuses keep their exact previous wording.
+- Browser escalation never hands you a rate-limited body: if the escalated navigation comes back `429` or `503`, the body is discarded and `FetcherError` is raised with `url=` set instead.
+
+Batch `scrape()`:
+
+- A `429` observed by any worker starts one cooldown for that `scrape()` call. Every worker in the same batch waits out the remaining time before its next request, so concurrent threads or coroutines cannot multiply the request rate against a host that already said stop.
+- The cooldown is bounded, logged once per event with the URL and the wait, and scoped to the single `scrape()` call: independent concurrent calls never throttle each other.
+- No URL is dropped, duplicated, or silently swallowed because of a cooldown. A rate-limited URL still reaches your callback or still shows up in the usual `FetcherError` summary.
+- With no `429` anywhere, nothing changes: no cooldown is registered and no extra waiting happens.
+
+### Per-status retry budgets
+
+By default `403`, `429`, and `503` are retried with whatever `retries=` you pass. Add a `status_retries` map to set a budget per status, and that budget replaces the call-time argument for that status only.
+
+```yaml
+retry_indicators:
+  - "Just a moment"
+  - "403 Forbidden"
+block_indicators:
+  - "cf-browser-verification"
+  - "Access Denied"
+status_retries:
+  429: 5
+  503: 3
+  403: 0
+```
+
+Configured values merge over the defaults, so listing `429: 5` leaves `403` and `503` at their default behavior. Values are integers or `null`; status keys are integers (numeric strings are accepted). Anything else raises `SettingsError` from `configure()`.
+
+- A positive count is the number of retries for that status, so `429: 5` allows six attempts even when `retries=3`.
+- `0` opts a status out of retrying: its response body is delivered instead of retried, and on the browser path it is not treated as a failed bypass.
+- `Retry-After` is honored for every listed status, not only `429`, and an unlisted status keeps the previous behavior exactly.
+- The batch cooldown also applies to listed statuses, so a configured `503` throttles the pool like a `429`.
+- On the browser path, a listed status with a budget above `0` is never delivered as a successful bypass; `0` delivers it. Unlisted non-default statuses keep the previous behavior.
+
+Without the key, behavior, messages, and logs are identical to previous releases.
+
 ## Explicit WebFetcher
 
 ```python
