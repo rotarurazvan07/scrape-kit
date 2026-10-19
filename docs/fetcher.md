@@ -189,6 +189,25 @@ scrape(
 - Hook exceptions propagate immediately — including when the hook raises `FetcherError`. They are never retried and never reported as fetch failures.
 - `max_retries` adds passes on top of every built-in retry layer, so a rejected page can cost up to `max_retries + 1` full passes.
 
+## Rate limiting
+
+When a host answers `429 Too Many Requests`, scrape-kit slows down instead of hammering it.
+
+Single-URL `fetch()`:
+
+- A `429` retry waits for the server's `Retry-After` value when the response carries one. Both forms are accepted: a number of seconds and an HTTP date. The value is capped, so an absurd header cannot stall your run.
+- A missing, unparsable, or already-expired `Retry-After` falls back to the same jittered backoff used for every other retry. `503` and `403` never read `Retry-After`; they keep the existing backoff behavior.
+- Attempt counts are unchanged everywhere: rate limiting changes how long a retry waits and how the failure is labeled, never how many attempts are made.
+- When the retries run out, the raised `FetcherError` message keeps its usual shape and adds a `(rate limited)` label for `429`, so you can tell rate limiting apart from a generic block. Other statuses keep their exact previous wording.
+- Browser escalation never hands you a rate-limited body: if the escalated navigation comes back `429` or `503`, the body is discarded and `FetcherError` is raised with `url=` set instead.
+
+Batch `scrape()`:
+
+- A `429` observed by any worker starts one cooldown for that `scrape()` call. Every worker in the same batch waits out the remaining time before its next request, so concurrent threads or coroutines cannot multiply the request rate against a host that already said stop.
+- The cooldown is bounded, logged once per event with the URL and the wait, and scoped to the single `scrape()` call: independent concurrent calls never throttle each other.
+- No URL is dropped, duplicated, or silently swallowed because of a cooldown. A rate-limited URL still reaches your callback or still shows up in the usual `FetcherError` summary.
+- With no `429` anywhere, nothing changes: no cooldown is registered and no extra waiting happens.
+
 ## Explicit WebFetcher
 
 ```python

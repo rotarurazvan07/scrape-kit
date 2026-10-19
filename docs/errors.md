@@ -17,7 +17,7 @@ from scrape_kit import (
 | Exception | Raised when |
 | --- | --- |
 | `ScrapeKitError` | Base type for the library. |
-| `FetcherError` | A fetch fails after retries or browser escalation, or an `InteractiveSession` is used before it is entered. |
+| `FetcherError` | A fetch fails after retries or browser escalation (including exhaustion while a host keeps answering `429`), or an `InteractiveSession` is used before it is entered. |
 | `StorageError` | SQLite or buffer work fails. |
 | `SettingsError` | YAML is malformed, unreadable, or a settings path is invalid. |
 | `MatchingError` | `SimilarityEngine` receives empty or invalid configuration. |
@@ -40,6 +40,8 @@ except FetcherError as exc:
 ```
 
 Session-state errors (session not started, `fetch()` not called yet) may leave `url` as `None`.
+
+When retries run out against a host that keeps answering `429`, the `FetcherError` message keeps its usual shape and ends with a `(rate limited)` label, so rate limiting can be told apart from a generic block.
 
 ## Related guides
 

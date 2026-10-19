@@ -1,6 +1,7 @@
 """WebFetcher: fast HTTP fetching with retry, block detection, and stealth-browser escalation."""
 
 import random
+import threading
 import time
 from typing import Any, ClassVar
 
@@ -11,11 +12,38 @@ from ..logger import get_logger
 from ..settings import SettingsManager
 from ._state import _set_shared
 from .batch import BatchScraperMixin
-from .session import InteractiveSession
+from .session import _retry_after_seconds, InteractiveSession
 
 logger = get_logger(__name__)
 
 _DEFAULT_FAST_TIMEOUT = 30
+# Statuses that mean "stop hammering this host" rather than "try the browser".
+_RATE_LIMIT_STATUSES = (429,)
+# Browser-path statuses that must never be delivered as a successful bypass.
+_ESCALATION_BLOCKED_STATUSES = (429, 503)
+
+
+class _RateLimit:
+    """Private record of one observed 429, consumed by the batch layer.
+
+    Attributes:
+        url: The URL that was rate limited.
+        retry_after: The bounded delay advertised by the response, if any.
+        observed_at: Monotonic timestamp of the observation, used by the batch
+            layer to ignore observations that predate the current batch.
+    """
+
+    def __init__(self, url: str, retry_after: float | None, observed_at: float) -> None:
+        """Store which URL was rate limited, its delay, and when it was seen.
+
+        Args:
+            url: The URL that received the 429 response.
+            retry_after: The bounded Retry-After delay, or None when absent.
+            observed_at: Monotonic time at which the 429 was observed.
+        """
+        self.url = url
+        self.retry_after = retry_after
+        self.observed_at = observed_at
 
 
 class WebFetcher(BatchScraperMixin):
@@ -81,6 +109,36 @@ class WebFetcher(BatchScraperMixin):
         """
         self.retry_indicators = retry_indicators if retry_indicators is not None else []
         self.block_indicators = block_indicators if block_indicators is not None else []
+        # Private 429 observation slot: the fast path cannot see the response
+        # object (fetch returns HTML), so the attempt loop records the signal
+        # here for the batch cooldown layer to consume (AC-09).
+        self._rate_limit_signal: _RateLimit | None = None
+        self._rate_limit_lock = threading.Lock()
+
+    def _note_rate_limit(self, url: str, retry_after: float | None) -> None:
+        """Record a 429 observation for the batch cooldown layer.
+
+        Satisfies: AC-09 (FAST workers learn about a 429 through this slot).
+
+        Args:
+            url: The URL that received the 429 response.
+            retry_after: The bounded advertised delay, or None when absent.
+        """
+        with self._rate_limit_lock:
+            # AC-13: stamp the observation so a batch can ignore signals that
+            # predate it (a single-URL fetch() leaves the slot populated).
+            self._rate_limit_signal = _RateLimit(url, retry_after, time.monotonic())
+
+    def _take_rate_limit_signal(self) -> _RateLimit | None:
+        """Consume and clear the recorded 429 observation, if any.
+
+        Returns:
+            The recorded :class:`_RateLimit`, or None when no 429 was observed.
+        """
+        with self._rate_limit_lock:
+            signal = self._rate_limit_signal
+            self._rate_limit_signal = None
+            return signal
 
     # ── Class-level factory: load from YAML ───────────────────────────────────
 
@@ -242,9 +300,14 @@ class WebFetcher(BatchScraperMixin):
         logger.debug("Response status for %s: %d", url, status)
 
         if self._is_blocked_status(status):
+            # AC-04/AC-09: on 429 only, honor Retry-After for this attempt's
+            # wait and record the observation for the batch cooldown layer.
+            retry_after = _retry_after_seconds(page) if status in _RATE_LIMIT_STATUSES else None
+            if status in _RATE_LIMIT_STATUSES:
+                self._note_rate_limit(url, retry_after)
             if attempt >= retries:
-                raise FetcherError(f"Blocked with status {status} on {url} after {retries} attempts", url=url)
-            self._log_and_wait(f"Status {status} on {url}", attempt, retries, backoff)
+                raise FetcherError(self._blocked_status_message(url, status, retries), url=url)
+            self._log_and_wait(f"Status {status} on {url}", attempt, retries, backoff, wait=retry_after)
             return None
 
         html: str = page.html_content
@@ -282,6 +345,30 @@ class WebFetcher(BatchScraperMixin):
         """
         return status in (403, 429, 503)
 
+    @staticmethod
+    def _blocked_status_message(url: str, status: int, attempts: int | None = None) -> str:
+        """Return the exhaustion message for a blocked status.
+
+        Satisfies: AC-07 — 429 exhaustion keeps the legacy wording and adds a
+        rate-limiting label; every other status is byte-identical to before.
+
+        Args:
+            url: The URL that stayed blocked.
+            status: The final blocked status code.
+            attempts: The number of attempts that were made, or None to omit
+                the attempt clause (used by the single-navigation browser path,
+                where "after 1 attempts" would be wrong).
+
+        Returns:
+            The FetcherError message text.
+        """
+        base = f"Blocked with status {status} on {url}"
+        if attempts is not None:
+            base = f"{base} after {attempts} attempts"
+        if status == 429:
+            return f"{base} (rate limited)"
+        return base
+
     def _check_retry_indicators(self, html: str) -> str | None:
         """Check retry indicators. Returns the matched indicator or None.
 
@@ -306,18 +393,31 @@ class WebFetcher(BatchScraperMixin):
         """Jittered backoff: ``backoff * attempt * U(0.5, 1.5)`` (AC-30)."""
         return backoff * attempt * random.uniform(0.5, 1.5)
 
-    def _log_and_wait(self, reason: str, attempt: int, retries: int, backoff: float) -> None:
-        """Log a retry reason and sleep for the backoff interval.
+    def _log_and_wait(
+        self,
+        reason: str,
+        attempt: int,
+        retries: int,
+        backoff: float,
+        wait: float | None = None,
+    ) -> None:
+        """Log a retry reason and sleep for the wait interval.
+
+        Satisfies: AC-04/AC-06 — a server-advertised ``wait`` (Retry-After,
+        already capped) replaces the jittered backoff for that attempt; every
+        other case keeps the existing :meth:`_retry_wait` jitter. One wait
+        implementation, no second sleep helper.
 
         Args:
             reason: Human-readable reason for the retry (already formatted).
             attempt: Current attempt number (1-based).
             retries: Total retry attempts.
             backoff: Backoff multiplier in seconds.
+            wait: Explicit delay to sleep, or None to use the jittered backoff.
         """
-        wait = self._retry_wait(attempt, backoff)
-        logger.warning("%s — retrying in %.0fs (attempt %d/%d)", reason, wait, attempt, retries)
-        time.sleep(wait)
+        delay = self._retry_wait(attempt, backoff) if wait is None else wait
+        logger.warning("%s — retrying in %.0fs (attempt %d/%d)", reason, delay, attempt, retries)
+        time.sleep(delay)
 
     def _handle_fetch_error(
         self,
@@ -361,14 +461,24 @@ class WebFetcher(BatchScraperMixin):
             FetcherError: If browser escalation fails.
         """
         logger.info("'%s' detected on %s — escalating to browser...", blocked_by, url)
+        html = ""
         try:
             with self.browser(solve_cloudflare=True, headless=True) as session:
                 html = session.fetch(url, timeout=120000)
-                logger.info("Browser successfully bypassed challenge for %s", url)
-                return html
+                # AC-01/AC-02: the browser path must not lose the HTTP status.
+                status = session._last_response_status()
+                retry_after = session._last_retry_after()
         except Exception as browser_e:
             logger.error("Browser escalation failed for %s: %s", url, browser_e)
             raise FetcherError(f"Escalation failed: {browser_e}", url=url) from browser_e
+        # AC-02: 429/503 bodies are never delivered as a successful bypass.
+        if status in _ESCALATION_BLOCKED_STATUSES:
+            hint = f" Retry-After: {retry_after:.0f}s" if retry_after and status == 429 else ""
+            logger.warning("Browser hit status %d on %s.%s", status, url, hint)
+            # AC-02: single-navigation browser path omits the attempt clause.
+            raise FetcherError(self._blocked_status_message(url, status), url=url)
+        logger.info("Browser successfully bypassed challenge for %s", url)
+        return html
 
     def is_blocked(self, html: str) -> bool:
         """Check if the HTML content indicates blocking.
