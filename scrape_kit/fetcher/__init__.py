@@ -39,18 +39,11 @@ def _get_shared() -> WebFetcher:
 def fetch(url: str, stealthy_headers: bool = False, retries: int = 3, backoff: float = 5.0) -> str:
     """Fetch a URL via the shared WebFetcher instance.
 
-    Args:
-        url: The URL to fetch.
-        stealthy_headers: Whether to use stealthy headers. Defaults to False.
-        retries: Number of retry attempts. Defaults to 3.
-        backoff: Backoff multiplier in seconds. Defaults to 5.0.
-
-    Returns:
-        The HTML content as a string.
-
-    Raises:
-        ValueError: If retries is less than 1.
-        FetcherError: If fetching fails after all retries.
+    Thin proxy that passes its arguments straight through, so the full
+    contract (escalation behaviour, ``ValueError`` for ``retries < 1`` and
+    ``FetcherError`` after all retries) lives in
+    :meth:`WebFetcher.fetch <scrape_kit.fetcher.web_fetcher.WebFetcher.fetch>`
+    and applies unchanged here.
     """
     return _get_shared().fetch(url, stealthy_headers=stealthy_headers, retries=retries, backoff=backoff)
 
@@ -76,11 +69,10 @@ def browser(
 ) -> InteractiveSession:
     """Open an interactive browser session via the shared WebFetcher instance.
 
-    Args:
-        headless: Whether to run in headless mode. Defaults to True.
-        solve_cloudflare: Enable Cloudflare challenge solving. Defaults to False.
-        interactive: Enable interactive features. Defaults to True.
-        **kwargs: Additional arguments passed to the Scrapling session.
+    Thin proxy that passes its arguments straight through, so the full
+    contract (session options, accepted ``**kwargs`` and raised errors) lives
+    in :meth:`WebFetcher.browser <scrape_kit.fetcher.web_fetcher.WebFetcher.browser>`
+    and applies unchanged here.
 
     Returns:
         An InteractiveSession instance.
@@ -99,23 +91,13 @@ def scrape(
 ) -> None:
     """Scrape multiple URLs via the shared WebFetcher instance.
 
-    Args:
-        urls: List of URLs to scrape.
-        callback: Function to call with (url, html) for each successful fetch.
-        mode: Scraping mode - "fast" or "stealth" (ScrapeMode values). Defaults to "fast".
-        max_concurrency: Maximum concurrent requests. Defaults to 1.
-        retry_hook: Optional quality gate consulted after each successful fetch.
-            Returning a reason string defers that URL to another retry pass.
-            Ignored when max_retries is 0.
-        max_retries: Additional retry passes for hook-flagged URLs. Defaults to 0.
-
-    STEALTH uses ``asyncio.run`` and cannot be called from a running event loop.
-
-    Raises:
-        ValueError: If mode is unsupported, ``max_concurrency`` is less than 1, or
-            ``max_retries`` is less than 0.
-        RuntimeError: If STEALTH is requested from a running event loop.
-        FetcherError: If scraping encounters fetch failures.
+    Thin proxy that passes its arguments straight through, so the full
+    contract (mode values, concurrency semantics, the optional
+    ``retry_hook`` quality gate with ``max_retries``, the ``asyncio.run``
+    restriction on STEALTH and raised errors) lives in
+    :meth:`BatchScraperMixin.scrape
+    <scrape_kit.fetcher.batch.BatchScraperMixin.scrape>` and applies
+    unchanged here.
     """
     _get_shared().scrape(
         urls,
