@@ -1,4 +1,4 @@
-"""BaseStorageManager chunk merging (issue #10 split)."""
+"""BaseStorageManager chunk merging."""
 
 import sqlite3
 from unittest.mock import MagicMock

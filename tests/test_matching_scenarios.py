@@ -85,7 +85,7 @@ class TestMatchingScenarios:
         eng = SimilarityEngine(cfg)
         match, score = eng.similarity("New York City", "New York Red Bulls")
         assert match is False
-        assert score == pytest.approx(35.0)  # strong_mismatch_cap residual (issue #2)
+        assert score == pytest.approx(35.0)  # strong_mismatch_cap residual
 
         match, score = eng.similarity("Sporting CP", "Sporting Kansas City")
         assert match is False

@@ -16,7 +16,7 @@ from .session import _retry_after_seconds
 
 logger = get_logger(__name__)
 
-# Per-batch 429 cooldown bounds (AC-10): a bounded wait can never hang a run,
+# Per-batch 429 cooldown bounds: a bounded wait can never hang a run,
 # and the cap applies to hostile or absurd Retry-After values.
 _DEFAULT_COOLDOWN_SECONDS = 10.0
 _MAX_COOLDOWN_SECONDS = 300.0
@@ -25,7 +25,7 @@ _MAX_COOLDOWN_SECONDS = 300.0
 class _BatchCooldown:
     """Per-``scrape()``-call cooldown shared by FAST threads and STEALTH coroutines.
 
-    Satisfies: AC-09/AC-10/AC-11 — one monotonic deadline behind one lock;
+    Satisfies: the cooldown keeps one monotonic deadline behind one lock;
     every worker waits the remaining time before issuing its next request, the
     wait is bounded by the cap, the deadline never shrinks, and the state is
     per-call so concurrent independent batches never throttle each other.
@@ -46,7 +46,7 @@ class _BatchCooldown:
     def register(self, now: float, retry_after: float | None = None) -> None:
         """Register a 429 cooldown deadline, never shortening an existing one.
 
-        Satisfies: AC-04/AC-09/AC-10 — uses the advertised Retry-After when
+        Satisfies: this method uses the advertised Retry-After when
         present, the bounded default otherwise, and caps the result.
 
         Args:
@@ -187,13 +187,13 @@ class BatchScraperMixin:
             RuntimeError: If STEALTH is requested from a running event loop.
             FetcherError: If scraping encounters fetch failures.
         """
-        # AC-01/AC-02: no hook or no retry budget keeps the legacy path intact.
+        # No hook or no retry budget keeps the legacy path intact.
         if max_retries < 0:
             raise ValueError("max_retries must be >= 0")
-        # AC-10/AC-11: one cooldown primitive per scrape() call, shared by
+        # One cooldown primitive per scrape() call, shared by
         # every worker and every retry pass of this batch only.
         cooldown = _BatchCooldown()
-        # AC-13: 429 observations older than this call must never throttle it
+        # 429 observations older than this call must never throttle it
         # (a single-URL fetch() leaves its observation in the shared slot).
         batch_started = time.monotonic()
         if retry_hook is None or max_retries <= 0:
@@ -294,17 +294,17 @@ class BatchScraperMixin:
             ) -> None:
                 """Consult the hook, then either defer the URL or deliver the page."""
                 try:
-                    # CR: user-code FetcherError must escape the fetch-failure
+                    # User-code FetcherError must escape the fetch-failure
                     # collectors (they aggregate FetcherError only) and this
                     # retry loop (it catches FetcherError only), so it is
                     # re-raised as a non-FetcherError carrier.
                     reason = hook(url, html)
                     if reason and not final:
-                        # AC-04: a reject defers the URL and skips this callback.
+                        # A reject defers the URL and skips this callback.
                         rejected.append(url)
                         return
                     if reason:
-                        # AC-08: the last pass still consults the hook but delivers anyway.
+                        # The last pass still consults the hook but delivers anyway.
                         logger.warning(
                             "Retry hook rejected %s on the final pass (%s) — delivering content anyway",
                             url,
@@ -316,17 +316,17 @@ class BatchScraperMixin:
                     raise _UserCodeError(f"Hook or callback failed for {url}: {exc}", url=url) from exc
 
             try:
-                # AC-09/AC-11: the same per-call cooldown is shared by every
+                # The same per-call cooldown is shared by every
                 # retry pass, so hook retries cannot bypass the 429 pause.
                 self._dispatch_scrape(pending, gated, mode, max_concurrency, cooldown, batch_started)
             except FetcherError:
-                # AC-07: a non-final failure retries every still-pending URL.
+                # A non-final failure retries every still-pending URL.
                 if final:
                     raise
-                # CR: per-entry bookkeeping, not URL-string sets.
+                # Per-entry bookkeeping, not URL-string sets.
                 pending = _pending_for_next_pass(pending, flagged, delivered)
                 continue
-            # AC-05/AC-08: nothing flagged, or the last pass finished — stop.
+            # Nothing flagged, or the last pass finished — stop.
             if final or not flagged:
                 return
             pending = flagged
@@ -390,7 +390,7 @@ class BatchScraperMixin:
         """
         last_error: Exception | None = None
         for stealthy_headers in (False, True):
-            # AC-09: honor a cooldown registered by any worker of this batch.
+            # Honor a cooldown registered by any worker of this batch.
             if cooldown is not None:
                 cooldown.wait_if_needed()
             try:
@@ -419,10 +419,10 @@ class BatchScraperMixin:
     def _register_fast_rate_limit(self, url: str, cooldown: _BatchCooldown | None, batch_started: float | None = None) -> None:
         """Consume a recorded 429 observation and register the batch cooldown.
 
-        Satisfies: AC-09/AC-10 - the fast path cannot see the response object
+        Satisfies: the fast path cannot see the response object
         (``fetch`` returns HTML), so the attempt loop records the observation
         and this method turns it into a shared, bounded, logged cooldown.
-        Satisfies: AC-13 - an observation older than the owning scrape() call is
+        Satisfies: an observation older than the owning scrape() call is
         ignored, so a 429 left behind by a single-URL fetch() cannot throttle a
         later unrelated batch.
 
@@ -440,7 +440,7 @@ class BatchScraperMixin:
         if batch_started is not None:
             observed_at = getattr(signal, "observed_at", None)
             if isinstance(observed_at, (int, float)) and observed_at < batch_started:
-                # AC-13: stale observation from a non-batch call, not this batch.
+                # Stale observation from a non-batch call, not this batch.
                 return
         cooldown.register(time.monotonic(), signal.retry_after)
         logger.warning("Rate limited by %s - batch cooldown %.0fs", signal.url, cooldown.remaining())
@@ -537,7 +537,7 @@ class BatchScraperMixin:
         """
         loop = asyncio.get_running_loop()
         for attempt in range(1, 5):
-            # AC-09: workers honor a cooldown registered by any sibling worker.
+            # Workers honor a cooldown registered by any sibling worker.
             if cooldown is not None:
                 await cooldown.wait_if_needed_async()
             try:
@@ -545,7 +545,7 @@ class BatchScraperMixin:
                 status = self._page_status(page)
                 html = page.html_content
                 if status in (429, 503) or self.is_blocked(html):
-                    # AC-09: a 429 registers the shared cooldown for siblings.
+                    # A 429 registers the shared cooldown for siblings.
                     self._register_stealth_rate_limit(url, page, status, cooldown)
                     if attempt < 4:
                         await asyncio.sleep(30 * attempt)
@@ -574,7 +574,7 @@ class BatchScraperMixin:
     ) -> None:
         """Register the shared cooldown when a stealth fetch hits a watched status.
 
-        Satisfies: AC-09/AC-10 - the stealth path already holds the response
+        Satisfies: the stealth path already holds the response
         page, so its Retry-After value is read directly. The watched set is
         legacy 429 plus every status the consumer explicitly configured.
 
@@ -584,7 +584,7 @@ class BatchScraperMixin:
             status: The blocked status code of the response.
             cooldown: Shared per-batch cooldown, or None to skip registration.
         """
-        # AC-04: an explicitly-0 budget opts a status out of every retry path, so it must not throttle siblings either.
+        # An explicitly-0 budget opts a status out of every retry path, so it must not throttle siblings either.
         observed = status == 429 or (status in self._configured_status_retries and self._is_retryable_status(status))
         if cooldown is None or not observed:
             return

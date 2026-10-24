@@ -1,4 +1,4 @@
-"""BufferedStorageManager (issue #10 split) — converged explicit-table API."""
+"""BufferedStorageManager — converged explicit-table API."""
 
 import os
 import sqlite3

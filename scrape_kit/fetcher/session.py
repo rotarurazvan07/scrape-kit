@@ -15,7 +15,7 @@ from ..logger import get_logger
 logger = get_logger(__name__)
 
 # Navigation can swap a page's execution context mid-evaluate. That is retryable
-# settle noise (issue #29), not an application error.
+# settle noise from a navigation race, not an application error.
 _CONTEXT_DESTROYED_HINTS = (
     "execution context was destroyed",
     "target closed",
@@ -23,7 +23,7 @@ _CONTEXT_DESTROYED_HINTS = (
 
 
 def _is_context_destroyed(error: BaseException) -> bool:
-    """Return True when an evaluate failure was caused by a navigation race (AC-29)."""
+    """Return True when an evaluate failure was caused by a navigation race."""
     msg = str(error).lower()
     return any(hint in msg for hint in _CONTEXT_DESTROYED_HINTS)
 
@@ -121,7 +121,7 @@ class InteractiveSession:
         self.session = session
         self.page: Any = None
         # Cached navigation response so the HTTP status survives the HTML-only
-        # fetch() contract (rate-limit interception, AC-01).
+        # fetch() contract (rate-limit interception).
         self._last_response: Any = None
         logger.debug("InteractiveSession initialized with %s", type(session).__name__)
 
@@ -188,7 +188,7 @@ class InteractiveSession:
         if not self.page:
             raise FetcherError("Session not started. Use 'with WebFetcher.browser(...) as session:'")
         logger.info("Browser fetching: %s (timeout=%dms)", url, timeout)
-        # AC-01: keep the navigation response so its HTTP status survives the
+        # Keep the navigation response so its HTTP status survives the
         # HTML-only fetch() contract. Reset first so a failed navigation can
         # never report the previous page's status.
         self._last_response = None
@@ -215,7 +215,7 @@ class InteractiveSession:
                 if elapsed >= max_wait:
                     logger.warning("Page settle script failed after %ss, giving up: %s", max_wait, e)
                     break
-                # AC-29: wait for the replacement document before re-evaluating.
+                # Wait for the replacement document before re-evaluating.
                 # Load wait is best-effort: the max_wait loop still bounds us.
                 if _is_context_destroyed(e):
                     remaining_ms = max(0, int((max_wait - elapsed) * 1000))
@@ -230,7 +230,7 @@ class InteractiveSession:
     def _last_response_status(self) -> int | None:
         """Return the HTTP status of the most recent successful navigation.
 
-        Satisfies: AC-01 (the status survives the HTML-only fetch contract).
+        Satisfies: the status survives the HTML-only fetch contract.
 
         Returns:
             The navigation status, or None when no navigation completed or the
@@ -269,7 +269,7 @@ class InteractiveSession:
                 return self.page.evaluate(f"() => {{ {clean_script} }}")
             return self.page.evaluate(script)
         except Exception as e:
-            # AC-29: navigation races destroy the page context; callers retry.
+            # Navigation races destroy the page context; callers retry.
             if not _is_context_destroyed(e):
                 logger.error("Script Execution Error: %s", e)
             raise
@@ -411,7 +411,7 @@ class InteractiveSession:
         idle_ms: int,
         hard_cap_ms: int,
     ) -> str:
-        """Build the click+settle script. Extracted so tests can parse it (AC-27).
+        """Build the click+settle script. Extracted so tests can parse it.
 
         Args:
             selector: CSS selector of the element(s) to click.
@@ -423,7 +423,7 @@ class InteractiveSession:
         Returns:
             JavaScript source for ``page.evaluate``.
         """
-        # AC-27: the catch fragment must be an f-string so ``}}`` collapses to ``}``.
+        # The catch fragment must be an f-string so ``}}`` collapses to ``}``.
         return (
             f"""
             (function() {{

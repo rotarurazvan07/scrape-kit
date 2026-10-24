@@ -52,7 +52,7 @@ class TestInit:
             SimilarityEngine({})
 
     def test_normal_missing_weights_defaults_silently(self):
-        # Post-rework contract (issue #2): missing weights silently fall back
+        # Post-rework contract: missing weights silently fall back
         # to the documented defaults instead of raising.
         eng = SimilarityEngine({"threshold": 70})
         assert eng.token_weight == pytest.approx(0.40)
@@ -154,7 +154,7 @@ class TestHybridMatch:
         assert score > 0
 
     def test_edge_no_shared_token_capped_residual(self, engine):
-        # Post-rework contract (issue #2): disjoint strong tokens leave a small
+        # Post-rework contract: disjoint strong tokens leave a small
         # residual under strong_mismatch_cap=35 (documented 28.57), not zero.
         score = engine.hybrid_match("apple pie", "orange juice")
         assert score == pytest.approx(28.57, abs=0.01)
@@ -173,7 +173,7 @@ class TestHybridMatch:
         assert isinstance(score, float)
 
     def test_error_none_input_raises(self, engine):
-        # Post-rework contract (issue #2): designed ValueError raised up front,
+        # Post-rework contract: designed ValueError raised up front,
         # not an accidental TypeError from the cache-key computation.
         with pytest.raises(ValueError, match="hybrid_match expects two strings"):
             engine.hybrid_match(None, "test")
@@ -231,7 +231,7 @@ class TestSimilarity:
         assert s1 == pytest.approx(s2)
 
     def test_error_none_raises(self, engine):
-        # Post-rework contract (issue #2): ValueError raised before the
+        # Post-rework contract: ValueError raised before the
         # order-independent cache-key computation at the top of similarity.
         with pytest.raises(ValueError, match="similarity expects two strings"):
             engine.similarity(None, "test")
@@ -242,7 +242,7 @@ class TestSimilarity:
 
 
 class TestBoundaryMatrix:
-    """Designed boundary partitions: empty, whitespace, single-token, unicode, typo-phonetic (#8)."""
+    """Designed boundary partitions: empty, whitespace, single-token, unicode, typo-phonetic."""
 
     @pytest.mark.parametrize(
         ("left", "right"),
