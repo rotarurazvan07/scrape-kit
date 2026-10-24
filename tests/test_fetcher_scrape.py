@@ -147,7 +147,7 @@ class TestScrapeStealth:
 
 
 class TestScrapeStealthPipeline:
-    """Stealth batch pipeline: async queue workers, per-URL fetch, retry escalation, callback delivery (#7)."""
+    """Stealth batch pipeline: async queue workers, per-URL fetch, retry escalation, and callback delivery."""
 
     @staticmethod
     def _page(status=200, html="<html>stealthed</html>"):

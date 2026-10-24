@@ -16,7 +16,7 @@ pytestmark = pytest.mark.p0
 
 @pytest.fixture(autouse=True)
 def restore_logger_state():
-    """Snapshot/restore the process-global 'test_logger' logger around every test (#16)."""
+    """Snapshot/restore the process-global 'test_logger' logger around every test."""
     target = logging.getLogger("test_logger")
     level, handlers, propagate = target.level, list(target.handlers), target.propagate
     yield

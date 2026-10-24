@@ -1,4 +1,4 @@
-"""Cross-manager integration scenarios (issue #10 split)."""
+"""Cross-manager integration scenarios."""
 
 import sqlite3
 import threading

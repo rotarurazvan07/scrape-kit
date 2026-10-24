@@ -1,4 +1,4 @@
-"""Settings integration scenarios + edge cases (issue #10 split)."""
+"""Settings integration scenarios and edge cases."""
 
 import threading
 from pathlib import Path

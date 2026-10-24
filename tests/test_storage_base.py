@@ -1,4 +1,4 @@
-"""BaseStorageManager queries + CRUD (issue #10 split)."""
+"""BaseStorageManager queries and CRUD."""
 
 import pandas as pd
 import pytest

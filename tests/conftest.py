@@ -1,9 +1,9 @@
-"""Shared fixture layer for the scrape-kit test suite (issue #9).
+"""Shared fixture layer for the scrape-kit test suite.
 
 Promotes the per-file helpers into one source of truth: factories
 (make_page, make_interactive_session, make_fetcher_config, make_matching_cfg,
 make_cfg, create_items_schema, make_chunk), fixtures (reset_shared, engine, db,
-populated_db, buffered_db) and the named constants from issue #14. Test
+populated_db, buffered_db) and the named shared constants. Test
 modules import helpers directly from this conftest (same-directory import
 under pytest's default import mode).
 """
@@ -21,7 +21,7 @@ import scrape_kit.fetcher as fetcher_module
 from scrape_kit.matching import SimilarityEngine
 from scrape_kit.storage import BaseStorageManager, BufferedStorageManager
 
-# ── Named constants (issue #14 — magic literals → names) ──────────────────────
+# ── Named constants (magic literals → names) ──────────────────────────────────
 
 CLICK_IDLE_MS = 2000
 CLICK_HARD_CAP_MS = 15000
@@ -45,7 +45,7 @@ BUFFERED_DB_NAME = "buf.db"
 
 
 def pytest_configure(config):
-    """Register priority markers (issue #13) — conftest-only, no pytest.ini."""
+    """Register priority markers — conftest-only, no pytest.ini."""
     config.addinivalue_line("markers", "smoke: core public-flow journeys — the <1 min pre-commit subset")
     config.addinivalue_line("markers", "p0: highest-priority fast paths (core contract)")
     config.addinivalue_line("markers", "p1: integration scenarios and concurrency behaviour")
@@ -74,7 +74,7 @@ def make_interactive_session(html: str = "<html>page</html>", eval_return=None):
 
 
 def make_fetcher_config(tmp_path, retry=(), block=(), name="scraper_config.yaml", dirname="config") -> Path:
-    """Write a scraper-config YAML and return its directory path (issue #9)."""
+    """Write a scraper-config YAML and return its directory path."""
     cfg_dir = tmp_path / dirname
     cfg_dir.mkdir(parents=True, exist_ok=True)
     payload = {"retry_indicators": list(retry), "block_indicators": list(block)}
@@ -119,7 +119,7 @@ RICH_CONFIG = {
 
 
 def make_matching_cfg(**overrides) -> dict:
-    """Fresh deep copy of RICH_CONFIG with overrides applied (issue #9)."""
+    """Fresh deep copy of RICH_CONFIG with overrides applied."""
     cfg = copy.deepcopy(RICH_CONFIG)
     cfg.update(overrides)
     return cfg
@@ -148,7 +148,7 @@ def make_cfg(tmp_path, structure: dict) -> Path:
 
 
 def create_items_schema(conn, table: str = ITEMS_TABLE) -> None:
-    """Create the canonical items table (issue #14 — one DDL, not four variants)."""
+    """Create the canonical items table — one DDL, not four variants."""
     conn.execute(f"CREATE TABLE IF NOT EXISTS {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, value TEXT)")
 
 

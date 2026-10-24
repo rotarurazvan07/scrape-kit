@@ -27,7 +27,7 @@ _DEFAULT_ESCALATION_BLOCKED: Final[frozenset[int]] = frozenset({429, 503})
 def _parse_status_retry_entry(key: Any, value: Any) -> tuple[int, int | None]:
     """Validate one ``status_retries`` entry and return it typed.
 
-    Satisfies: AC-12 — a malformed key or budget is rejected at configure()
+    Satisfies: a malformed key or budget is rejected at configure()
     time, consistent with the YAML-is-broken contract.
 
     Args:
@@ -47,7 +47,7 @@ def _parse_status_retry_entry(key: Any, value: Any) -> tuple[int, int | None]:
         status = int(key)
     except ValueError as e:
         raise SettingsError(f"status_retries key {key!r} is not an HTTP status code") from e
-    # AC-12: only real HTTP status codes are accepted, so a typo'd or absurd key
+    # Only real HTTP status codes are accepted, so a typo'd or absurd key
     # cannot become a retryable pseudo-status that changes fetch behavior.
     if not 100 <= status <= 599:
         raise SettingsError(f"status_retries key {key!r} is not an HTTP status code")
@@ -59,7 +59,7 @@ def _parse_status_retry_entry(key: Any, value: Any) -> tuple[int, int | None]:
 def _parse_status_retries(raw: Any) -> dict[int, int | None]:
     """Validate a raw ``status_retries`` mapping and return it keyed by int.
 
-    Satisfies: AC-12 — malformed configuration is rejected at configure() time,
+    Satisfies: malformed configuration is rejected at configure() time,
     consistent with the YAML-is-broken contract.
 
     Args:
@@ -82,7 +82,7 @@ def _parse_status_retries(raw: Any) -> dict[int, int | None]:
 def _merge_status_retries(parsed: dict[int, int | None]) -> dict[int, int | None]:
     """Merge a validated status map over the class defaults.
 
-    Satisfies: AC-02 — the knob is additive: unlisted default codes keep their
+    Satisfies: the knob is additive: unlisted default codes keep their
     default entry, so configuring one code never removes another's behavior.
 
     Args:
@@ -189,22 +189,22 @@ class WebFetcher(BatchScraperMixin):
         """
         self.retry_indicators = retry_indicators if retry_indicators is not None else []
         self.block_indicators = block_indicators if block_indicators is not None else []
-        # Per-status retry budgets (AC-01/02/03/04): never alias the class default.
+        # Per-status retry budgets: never alias the class default.
         parsed: dict[int, int | None] = _parse_status_retries(status_retries)
         self.status_retries = _merge_status_retries(parsed)
-        # AC-02/AC-07: the codes the consumer explicitly configured, kept apart
+        # The codes the consumer explicitly configured, kept apart
         # from the merged map so a default entry is never mistaken for intent.
         self._configured_status_retries = parsed
         # Private status observation slot: the fast path cannot see the response
         # object (fetch returns HTML), so the attempt loop records the signal
-        # here for the batch cooldown layer to consume (AC-09).
+        # Here for the batch cooldown layer to consume.
         self._rate_limit_signal: _RateLimit | None = None
         self._rate_limit_lock = threading.Lock()
 
     def _is_retryable_status(self, status: int) -> bool:
         """Return whether a status code is retried instead of delivered.
 
-        Satisfies: AC-01/AC-04/AC-05/AC-06 — with no configuration the gate is
+        Satisfies: with no configuration the gate is
         exactly the legacy (403, 429, 503) set; an explicit 0 removes a code,
         an explicit positive budget adds one, and an unlisted non-default code
         is never gated.
@@ -217,15 +217,15 @@ class WebFetcher(BatchScraperMixin):
         """
         entry = self.status_retries.get(status)
         if entry is None:
-            # AC-01: a None entry is retryable only when it is a default member.
+            # A None entry is retryable only when it is a default member.
             return status in _DEFAULT_STATUS_RETRIES
-        # AC-04/AC-05: an explicit budget decides membership outright.
+        # An explicit budget decides membership outright.
         return entry > 0
 
     def _status_budget(self, status: int, retries: int) -> int:
         """Return the total attempt budget for a status on the fast path.
 
-        Satisfies: AC-01/AC-03 — a configured budget overrides the call-time
+        Satisfies: a configured budget overrides the call-time
         ``retries`` argument for that status; a None entry and an unlisted code
         inherit it unchanged.
 
@@ -237,14 +237,14 @@ class WebFetcher(BatchScraperMixin):
             The total number of attempts allowed for this status.
         """
         entry = self.status_retries.get(status)
-        # AC-03: a configured count is a number of retries beyond the first
+        # A configured count is a number of retries beyond the first
         # attempt, so the budget is one attempt higher.
         return retries if entry is None else entry + 1
 
     def _attempt_limit(self, retries: int) -> int:
         """Return the outer attempt bound that admits every configured budget.
 
-        Satisfies: AC-03 — a configured budget can exceed the call-time
+        Satisfies: a configured budget can exceed the call-time
         ``retries`` argument, so the loop must be able to reach it. Transport
         errors and content-indicator retries keep raising at ``retries``
         unchanged, so an unconfigured fetcher behaves exactly as before.
@@ -261,7 +261,7 @@ class WebFetcher(BatchScraperMixin):
     def _escalation_blocked(self, status: int) -> bool:
         """Return whether a browser status must never be delivered as success.
 
-        Satisfies: AC-09/AC-10 — the gate is exactly (429, 503) when nothing is
+        Satisfies: the gate is exactly (429, 503) when nothing is
         configured, gains every code with an explicit positive budget, and loses
         any code whose budget is explicitly 0. A listed-but-None code keeps its
         default membership, so naming a code cannot un-gate it.
@@ -280,14 +280,14 @@ class WebFetcher(BatchScraperMixin):
     def _note_rate_limit(self, url: str, retry_after: float | None) -> None:
         """Record a 429 observation for the batch cooldown layer.
 
-        Satisfies: AC-09 (FAST workers learn about a 429 through this slot).
+        Satisfies: FAST workers learn about a 429 through this slot.
 
         Args:
             url: The URL that received the 429 response.
             retry_after: The bounded advertised delay, or None when absent.
         """
         with self._rate_limit_lock:
-            # AC-13: stamp the observation so a batch can ignore signals that
+            # Stamp the observation so a batch can ignore signals that
             # predate it (a single-URL fetch() leaves the slot populated).
             self._rate_limit_signal = _RateLimit(url, retry_after, time.monotonic())
 
@@ -348,7 +348,7 @@ class WebFetcher(BatchScraperMixin):
             retry = list(cls._DEFAULT_RETRY)  # copy: never alias the class-level list
         if block is None:
             block = list(cls._DEFAULT_BLOCK)
-        # AC-12: a malformed map is rejected here, like any other broken YAML.
+        # A malformed map is rejected here, like any other broken YAML.
         status_retries = _parse_status_retries(cfg.get("status_retries"))
 
         instance = cls(retry_indicators=retry, block_indicators=block, status_retries=status_retries)
@@ -358,7 +358,7 @@ class WebFetcher(BatchScraperMixin):
             len(retry),
             len(block),
         )
-        # AC-11: the map adds exactly one line; the two above stay unchanged.
+        # The map adds exactly one line; the two above stay unchanged.
         if "status_retries" in cfg:
             logger.info("Configured status retries for %d statuses", len(status_retries))
 
@@ -419,7 +419,7 @@ class WebFetcher(BatchScraperMixin):
         if retries < 1:
             raise ValueError("retries must be >= 1")
 
-        # AC-03: the loop bound admits a configured per-status budget; transport
+        # The loop bound admits a configured per-status budget; transport
         # and indicator retries still raise at the call-time ``retries``.
         limit = self._attempt_limit(retries)
         for attempt in range(1, limit + 1):
@@ -470,11 +470,11 @@ class WebFetcher(BatchScraperMixin):
         logger.debug("Response status for %s: %d", url, status)
 
         if self._is_retryable_status(status):
-            # AC-03/AC-07: a configured budget overrides the call-time retries for
+            # A configured budget overrides the call-time retries for
             # this status; Retry-After and the batch cooldown observation apply to
             # every status that will actually be retried (429, or configured).
             budget = self._status_budget(status, retries)
-            # AC-02/AC-07: the observation set is legacy 429 plus every code the
+            # The observation set is legacy 429 plus every code the
             # consumer explicitly configured, so an absent key never makes 403 or
             # 503 read Retry-After or start the batch cooldown.
             observes = status == 429 or status in self._configured_status_retries
@@ -514,7 +514,7 @@ class WebFetcher(BatchScraperMixin):
     def _blocked_status_message(url: str, status: int, attempts: int | None = None) -> str:
         """Return the exhaustion message for a blocked status.
 
-        Satisfies: AC-07 — 429 exhaustion keeps the legacy wording and adds a
+        Satisfies: 429 exhaustion keeps the legacy wording and adds a
         rate-limiting label; every other status is byte-identical to before.
 
         Args:
@@ -550,12 +550,12 @@ class WebFetcher(BatchScraperMixin):
 
     @staticmethod
     def _fast_timeout(attempt: int) -> int:
-        """Return the curl timeout for this attempt. Later attempts wait longer (AC-30)."""
+        """Return the curl timeout for this attempt. Later attempts wait longer."""
         return _DEFAULT_FAST_TIMEOUT * attempt
 
     @staticmethod
     def _retry_wait(attempt: int, backoff: float) -> float:
-        """Jittered backoff: ``backoff * attempt * U(0.5, 1.5)`` (AC-30)."""
+        """Jittered backoff: ``backoff * attempt * U(0.5, 1.5)``."""
         return backoff * attempt * random.uniform(0.5, 1.5)
 
     def _log_and_wait(
@@ -568,7 +568,7 @@ class WebFetcher(BatchScraperMixin):
     ) -> None:
         """Log a retry reason and sleep for the wait interval.
 
-        Satisfies: AC-04/AC-06 — a server-advertised ``wait`` (Retry-After,
+        Satisfies: a server-advertised ``wait`` (Retry-After,
         already capped) replaces the jittered backoff for that attempt; every
         other case keeps the existing :meth:`_retry_wait` jitter. One wait
         implementation, no second sleep helper.
@@ -630,20 +630,20 @@ class WebFetcher(BatchScraperMixin):
         try:
             with self.browser(solve_cloudflare=True, headless=True) as session:
                 html = session.fetch(url, timeout=120000)
-                # AC-01/AC-02: the browser path must not lose the HTTP status.
+                # The browser path must not lose the HTTP status.
                 status = session._last_response_status()
                 retry_after = session._last_retry_after()
         except Exception as browser_e:
             logger.error("Browser escalation failed for %s: %s", url, browser_e)
             raise FetcherError(f"Escalation failed: {browser_e}", url=url) from browser_e
-        # AC-09/AC-10: the gate is (429, 503) by default and follows the
+        # The gate is (429, 503) by default and follows the
         # configured status_retries map when one is set. A status of None
         # (no usable navigation response) is delivered exactly as before.
         if status is not None and self._escalation_blocked(status):
             hinted = status == 429 or status in self._configured_status_retries
             hint = f" Retry-After: {retry_after:.0f}s" if retry_after and hinted else ""
             logger.warning("Browser hit status %d on %s.%s", status, url, hint)
-            # AC-02: single-navigation browser path omits the attempt clause.
+            # Single-navigation browser path omits the attempt clause.
             raise FetcherError(self._blocked_status_message(url, status), url=url)
         logger.info("Browser successfully bypassed challenge for %s", url)
         return html

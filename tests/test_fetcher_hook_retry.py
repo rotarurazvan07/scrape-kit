@@ -72,7 +72,7 @@ def _stealth_cm(fetch_impl):
     return cm
 
 
-# ── no-hook path (AC-02) ──────────────────────────────────────────────────────
+# ── No-hook path ──────────────────────────────────────────────────────
 
 
 class TestNoHookPathUnchanged:
@@ -136,16 +136,16 @@ class TestHookVerdicts:
         with (
             caplog.at_level(logging.WARNING, logger="scrape_kit.fetcher.batch"),
             patch.object(fetcher, "fetch", fetch_mock),
-            # AC-07: the permanently failing URL raises on the final pass only.
+            # The permanently failing URL raises on the final pass only.
             pytest.raises(FetcherError, match="Fast scrape had 1 failures"),
         ):
             fetcher.scrape([A, GHOST], callback=lambda url, html: None, retry_hook=hook, max_retries=1)
         urls = [c.args[0] for c in fetch_mock.call_args_list]
-        # AC-04: the deferred URL is re-fetched on the second pass.
+        # The deferred URL is re-fetched on the second pass.
         assert urls.count(A) == 2
-        # AC-07: the failing URL is retried on both passes (twice per fast pass).
+        # The failing URL is retried on both passes (twice per fast pass).
         assert urls.count(GHOST) == 4
-        # AC-08: the deferred URL reaches the hook on both passes.
+        # The deferred URL reaches the hook on both passes.
         assert [reason for _, reason in hook.calls] == ["reason-a", "reason-a"]
         assert any(record.levelno == logging.WARNING for record in caplog.records)
 
@@ -276,7 +276,7 @@ class TestGuardsAndConcurrency:
                 max_retries=1,
                 max_concurrency=4,
             )
-        # AC-10: every URL is delivered exactly once — accepted URLs on pass 1,
+        # Every URL is delivered exactly once — accepted URLs on pass 1,
         # deferred URLs on the final pass with a warning.
         assert len(delivered) == 4
         assert delivered.count(B) == 1
@@ -355,7 +355,7 @@ class TestProxyForwarding:
         assert scrape_kit.RetryHook is fetcher_module.RetryHook
 
 
-# ── AC-09: existing retry layers still apply ──────────────────────────────────
+# ── Existing retry layers still apply ──────────────────────────────────
 
 
 class TestExistingLayersStillApply:
@@ -434,7 +434,7 @@ class TestExistingLayersStillApply:
         assert [c.args[0] for c in hook.call_args_list] == [A]
 
 
-# ── CR regressions: user-code FetcherError, duplicates, guard parity ──────────
+# ── Regression guards: user-code FetcherError, duplicate handling, guard parity ─
 
 
 class TestUserCodeFailureContract:

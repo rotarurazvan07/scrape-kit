@@ -112,7 +112,7 @@ class TestCaching:
 
 
 class TestAcronymPositions:
-    """Acronym keys fire at prefix, suffix and interior positions (#8)."""
+    """Acronym keys fire at prefix, suffix and interior positions."""
 
     def test_normal_suffix_position_replaced(self):
         assert normalize("Foo LTD", {}, {" ltd": "limited"}) == "foo limited"

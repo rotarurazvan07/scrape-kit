@@ -190,7 +190,7 @@ class TestSharedStateContract:
         assert shared.retry_indicators == list(WebFetcher._DEFAULT_RETRY)
 
 
-# ── status_retries configuration (story: fetcher-status-retry-config) ─────────
+# ── status_retries configuration ────────────────────────────────────────────────
 
 
 def _write_scraper_config(tmp_path, *, retry=(), block=(), status_retries=None, name="scraper_config.yaml", dirname="config"):
@@ -208,78 +208,78 @@ class TestStatusRetriesConfig:
     """configure() parses, merges, and validates the status_retries map."""
 
     def test_normal_absent_key_uses_class_defaults(self, tmp_path):
-        """AC-01: without the key the resolved map is the three-code default."""
+        """Without the key the resolved map is the three-code default."""
         cfg_dir = _write_scraper_config(tmp_path)
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.status_retries == {403: None, 429: None, 503: None}
 
     def test_normal_merges_over_defaults(self, tmp_path):
-        """AC-02: a listed code merges over the defaults, others keep None."""
+        """A listed code merges over the defaults, others keep None."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={429: 5})
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.status_retries == {403: None, 429: 5, 503: None}
 
     def test_normal_explicit_zero_keeps_other_entries(self, tmp_path):
-        """AC-02/AC-04: an explicit 0 is opt-out for one code only."""
+        """An explicit 0 is opt-out for one code only."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={503: 0, 429: 2})
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.status_retries == {403: None, 429: 2, 503: 0}
 
     def test_normal_new_code_added(self, tmp_path):
-        """AC-05: a new code is added alongside the defaults."""
+        """A new code is added alongside the defaults."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={500: 2})
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.status_retries == {403: None, 429: None, 503: None, 500: 2}
 
     def test_normal_string_key_parsed_to_int(self, tmp_path):
-        """AC-12: a numeric string key parses to its integer status."""
+        """A numeric string key parses to its integer status."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={"429": 3})
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.status_retries[429] == 3
 
     def test_normal_explicit_null_keeps_default_entry(self, tmp_path):
-        """AC-01: listing a code with null resolves to the default entry."""
+        """Listing a code with null resolves to the default entry."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={"429": None})
         instance = WebFetcher.configure(str(cfg_dir), set_shared=False)
         assert instance.status_retries == {403: None, 429: None, 503: None}
 
     def test_error_negative_value_raises_settings_error(self, tmp_path):
-        """AC-12: a negative budget is rejected at configure() time."""
+        """A negative budget is rejected at configure() time."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={429: -1})
         with pytest.raises(SettingsError):
             WebFetcher.configure(str(cfg_dir), set_shared=False)
 
     def test_error_non_int_value_raises_settings_error(self, tmp_path):
-        """AC-12: a non-int budget is rejected at configure() time."""
+        """A non-int budget is rejected at configure() time."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={429: "many"})
         with pytest.raises(SettingsError):
             WebFetcher.configure(str(cfg_dir), set_shared=False)
 
     def test_error_numeric_string_value_raises_settings_error(self, tmp_path):
-        """AC-12: values must be ints or null, not numeric strings."""
+        """Values must be ints or null, not numeric strings."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={429: "5"})
         with pytest.raises(SettingsError):
             WebFetcher.configure(str(cfg_dir), set_shared=False)
 
     def test_error_non_int_key_raises_settings_error(self, tmp_path):
-        """AC-12: a non-integer status key is rejected at configure() time."""
+        """A non-integer status key is rejected at configure() time."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={"soon": 3})
         with pytest.raises(SettingsError):
             WebFetcher.configure(str(cfg_dir), set_shared=False)
 
     def test_error_non_mapping_value_raises_settings_error(self, tmp_path):
-        """AC-12: a list value is rejected at configure() time."""
+        """A list value is rejected at configure() time."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries=[429, 503])
         with pytest.raises(SettingsError):
             WebFetcher.configure(str(cfg_dir), set_shared=False)
 
     def test_normal_configure_defaults_passes_default_map(self):
-        """AC-01: the zero-config path resolves to the same default map."""
+        """The zero-config path resolves to the same default map."""
         instance = WebFetcher.configure_defaults(set_shared=False)
         assert instance.status_retries == {403: None, 429: None, 503: None}
 
     def test_normal_absent_key_keeps_log_lines_unchanged(self, tmp_path):
-        """AC-11: the two configure() log lines stay byte-identical without the key."""
+        """The two configure() log lines stay byte-identical without the key."""
         cfg_dir = _write_scraper_config(tmp_path, retry=["r"], block=["b"])
         with patch("scrape_kit.fetcher.web_fetcher.logger") as mock_log:
             WebFetcher.configure(str(cfg_dir), set_shared=False)
@@ -288,7 +288,7 @@ class TestStatusRetriesConfig:
         assert args[0] == "WebFetcher configured from '%s' (%d retry / %d block indicators)"
 
     def test_normal_present_key_adds_one_log_line(self, tmp_path):
-        """AC-11: a configured map adds exactly one log line naming the count."""
+        """A configured map adds exactly one log line naming the count."""
         cfg_dir = _write_scraper_config(tmp_path, retry=["r"], block=["b"], status_retries={429: 5, 500: 2})
         with patch("scrape_kit.fetcher.web_fetcher.logger") as mock_log:
             WebFetcher.configure(str(cfg_dir), set_shared=False)
@@ -300,25 +300,25 @@ class TestStatusRetriesConfig:
         assert 2 in [arg for arg in second[1:] if isinstance(arg, int)]
 
     def test_error_float_status_key_raises_settings_error(self, tmp_path):
-        """AC-12: a non-integer status key type is rejected at configure() time."""
+        """A non-integer status key type is rejected at configure() time."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={429.5: 2})
         with pytest.raises(SettingsError):
             WebFetcher.configure(str(cfg_dir), set_shared=False)
 
     def test_error_out_of_range_status_key_raises_settings_error(self):
-        """CR patch: a key that parses as an int but is not an HTTP status is rejected."""
+        """A key that parses as an int but is not an HTTP status is rejected."""
         for status in (-1, 0, 42, 999999):
             with pytest.raises(SettingsError):
                 WebFetcher(status_retries={status: 5})
 
     def test_error_out_of_range_status_key_raises_at_configure(self, tmp_path):
-        """CR patch: the configure() path rejects non-HTTP keys too."""
+        """The configure() path rejects non-HTTP keys too."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={-1: 5})
         with pytest.raises(SettingsError):
             WebFetcher.configure(str(cfg_dir), set_shared=False)
 
     def test_edge_valid_boundary_statuses_accepted(self):
-        """CR patch: 100 and 599 are real HTTP statuses and stay accepted."""
+        """100 and 599 are real HTTP statuses and stay accepted."""
         fetcher = WebFetcher(status_retries={100: 1, 599: 0})
         assert fetcher.status_retries[100] == 1
         assert fetcher.status_retries[599] == 0

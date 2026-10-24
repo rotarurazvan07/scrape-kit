@@ -25,7 +25,7 @@ _CONTEXT_DESTROYED = "Execution context was destroyed"
 
 
 def _skip_try_block(src: str, try_at: int) -> None:
-    """Assert the try at ``try_at`` is followed by catch/finally. AC-27."""
+    """Assert the try at ``try_at`` is followed by catch/finally."""
     j = try_at + 3
     while j < len(src) and src[j].isspace():
         j += 1
@@ -49,7 +49,7 @@ def _skip_try_block(src: str, try_at: int) -> None:
 
 
 def _js_try_has_handler(src: str) -> None:
-    """Assert braces balance and every try has a same-depth catch/finally. AC-27."""
+    """Assert braces balance and every try has a same-depth catch/finally."""
     stripped = re.sub(r'"([^"\\]|\\.)*"', '""', src)
     stripped = re.sub(r"'([^'\\]|\\.)*'", "''", stripped)
     stack: list[str] = []
@@ -123,7 +123,7 @@ class TestInteractiveSessionFetch:
         assert isinstance(result, str)
         assert result == "<html>loaded</html>"
         mock_page.goto.assert_called_once()
-        # Post-rework flow (issue #3): the post-navigation settle wait runs as
+        # Current flow: the post-navigation settle wait runs as
         # an injected MutationObserver script — wait_for_timeout is never used.
         mock_page.wait_for_timeout.assert_not_called()
         mock_page.evaluate.assert_called_once()
@@ -160,7 +160,7 @@ class TestInteractiveSessionFetch:
         assert "giving up" in str(mock_log.warning.call_args)
 
     def test_error_destroyed_context_retries_after_load(self):
-        """AC-29: destroyed execution context waits for load, then retries; no ERROR."""
+        """Destroyed execution context waits for load, then retries; no ERROR."""
         mock_session, mock_page = make_interactive_session("<html>ok</html>")
         mock_page.evaluate.side_effect = [Exception(_CONTEXT_DESTROYED), None]
         session = InteractiveSession(mock_session)
@@ -206,7 +206,7 @@ class TestInteractiveSessionExecuteScript:
             session.execute_script("undeclared_var()")
 
     def test_error_destroyed_context_does_not_error_log(self):
-        """AC-29: navigation race is retryable settle noise, not an ERROR."""
+        """Navigation race is retryable settle noise, not an ERROR."""
         mock_session, mock_page = make_interactive_session()
         mock_page.evaluate.side_effect = Exception(_CONTEXT_DESTROYED)
         session = InteractiveSession(mock_session)
@@ -241,7 +241,7 @@ class TestInteractiveSessionHelpers:
         session = self._started(mock_session, mock_page)
         # hard_cap ≠ 6×idle (the default) — proves the explicit override is honored.
         session.click(".btn", idle_ms=CLICK_IDLE_MS, hard_cap_ms=CLICK_HARD_CAP_MS)
-        # Post-rework contract (issue #3): click() injects a MutationObserver
+        # Current contract: click() injects a MutationObserver
         # settle script through page.evaluate — page.click is never used.
         mock_page.click.assert_not_called()
         script = mock_page.evaluate.call_args[0][0]
@@ -274,7 +274,7 @@ class TestInteractiveSessionHelpers:
         assert f"var hard_cap_ms = {CLICK_HARD_CAP_DEFAULT_MS};" in script  # default = 6 × idle_ms
 
     def test_normal_click_js_parses_selector_and_quoted_text(self):
-        """AC-27: generated click JS is syntactically valid (try has catch)."""
+        """Generated click JS is syntactically valid (try has catch)."""
         selector_only = InteractiveSession._click_js(".btn", None, False, CLICK_IDLE_MS, CLICK_HARD_CAP_MS)
         quoted = InteractiveSession._click_js('a[href*="x"]', "O'Brien", False, CLICK_IDLE_MS, CLICK_HARD_CAP_MS)
         _js_try_has_handler(selector_only)
@@ -307,7 +307,7 @@ class TestInteractiveSessionHelpers:
 
 
 class TestScrollToBottom:
-    """scroll_to_bottom embeds its scroll-loop JS and guards on session start (#7)."""
+    """scroll_to_bottom embeds its scroll-loop JS and guards on session start."""
 
     def test_normal_embeds_scroll_loop_js(self):
         mock_session, mock_page = make_interactive_session()

@@ -1,4 +1,4 @@
-"""BaseStorageManager connection lifecycle (issue #10 split)."""
+"""BaseStorageManager connection lifecycle."""
 
 import os
 import sqlite3
