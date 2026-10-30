@@ -191,8 +191,6 @@ jobs:
       - uses: ./.github/actions/setup-python-deps
         with:
           python-version: ${{ env.PYTHON_AUDIT }}
-          # setuptools is installed into the audited ambient environment, not just the
-          # isolated build environment, so pip-audit cannot pick up the runner's copy.
           install-tools: >-
             bandit==1.9.4 pip-audit==2.10.1 radon==6.0.1 vulture==2.16
             mypy==2.4.0 interrogate==1.7.0 semgrep==1.180.0
