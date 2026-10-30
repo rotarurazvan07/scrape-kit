@@ -1,5 +1,10 @@
 [build-system]
-requires = ["setuptools>=83.0.0"]
+# Floor covers two advisories: PYSEC-2026-3447 / CVE-2026-59890 (sdist MANIFEST.in
+# exclusion bypass via Unicode NFD/NFC normalization on case-insensitive macOS
+# filesystems) is fixed in 83.0.0, and GHSA-xmj3-9gf7-h52w (Windows legacy
+# install_as_egg namespace-package path escape) is fixed in 84.1.0 — one 84.1.0
+# floor satisfies both.
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [project]

@@ -27,10 +27,14 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install project and pip-audit
+      - name: Install project, pip-audit, and patched setuptools
         run: |
           pip install -e .
-          pip install pip-audit==2.10.1
+          # The editable install runs under PEP 517 build isolation, so the declared
+          # build-system floor is resolved in a throw-away environment that is later
+          # discarded. pip-audit scans this ambient interpreter, so the backend must be
+          # upgraded here as well or the audit keeps seeing the runner's bundled copy.
+          pip install pip-audit==2.10.1 "setuptools>=84.1.0"
 
       - name: Run pip-audit
         run: pip-audit --format json --output pip-audit-report.json || true
