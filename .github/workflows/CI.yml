@@ -194,6 +194,7 @@ jobs:
           install-tools: >-
             bandit==1.9.4 pip-audit==2.10.1 radon==6.0.1 vulture==2.16
             mypy==2.4.0 interrogate==1.7.0 semgrep==1.180.0
+            setuptools>=84.1.0
 
       - name: semgrep — pattern-based security & bug detection
         id: semgrep
