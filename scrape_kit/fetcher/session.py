@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from scrapling.fetchers import DynamicSession, StealthySession
+from scrapling.fetchers import StealthySession
 
 from ..errors import FetcherError
 from ..logger import get_logger
@@ -112,11 +112,11 @@ class InteractiveSession:
     ``except ScrapeKitError`` covers every domain failure.
     """
 
-    def __init__(self, session: DynamicSession | StealthySession) -> None:
+    def __init__(self, session: StealthySession) -> None:
         """Initialize an interactive session with a Scrapling session.
 
         Args:
-            session: A Scrapling DynamicSession or StealthySession instance.
+            session: A Scrapling StealthySession instance.
         """
         self.session = session
         self.page: Any = None

@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Any, ClassVar, Final
 
-from scrapling.fetchers import DynamicSession, Fetcher, StealthySession
+from scrapling.fetchers import Fetcher, StealthySession
 
 from ..errors import FetcherError, SettingsError
 from ..logger import get_logger
@@ -692,10 +692,7 @@ class WebFetcher(BatchScraperMixin):
         low_mem_flags = {"--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"}
         kwargs["args"] = list(set(kwargs.get("args", [])) | low_mem_flags)
 
-        session: DynamicSession | StealthySession
-        if solve_cloudflare:
-            session = StealthySession(headless=headless, solve_cloudflare=True, **kwargs)
-        else:
-            session = DynamicSession(headless=headless, **kwargs)
+        session: StealthySession
+        session = StealthySession(headless=headless, solve_cloudflare=solve_cloudflare, **kwargs)
 
         return InteractiveSession(session)
