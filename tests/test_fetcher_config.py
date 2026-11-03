@@ -145,8 +145,8 @@ class TestModuleProxies:
         assert module_is_blocked("<html>BLOCKED</html>") is True
         assert module_is_blocked("<html>clean</html>") is False
 
-    @patch("scrape_kit.fetcher.web_fetcher.DynamicSession")
-    def test_normal_module_browser_delegates_to_shared(self, MockDynamic):
+    @patch("scrape_kit.fetcher.web_fetcher.StealthySession")
+    def test_normal_module_browser_delegates_to_shared(self, MockStealthy):
         fetcher = WebFetcher()
         fetcher_module._state._set_shared(fetcher)
         session = module_browser()

@@ -207,12 +207,14 @@ class TestFetch:
 class TestBrowser:
     """WebFetcher.browser returns the right session type per stealth flag."""
 
-    @patch("scrape_kit.fetcher.web_fetcher.DynamicSession")
-    def test_normal_returns_dynamic_session_by_default(self, MockDynamic):
+    @patch("scrape_kit.fetcher.web_fetcher.StealthySession")
+    def test_normal_returns_stealthy_session_by_default(self, MockStealthy):
         fetcher = WebFetcher()
         session = fetcher.browser()
         assert isinstance(session, InteractiveSession)
-        assert session.session is MockDynamic.return_value
+        assert session.session is MockStealthy.return_value
+        call_kwargs = MockStealthy.call_args[1]
+        assert call_kwargs.get("solve_cloudflare") is False
 
     @patch("scrape_kit.fetcher.web_fetcher.StealthySession")
     def test_normal_solve_cloudflare_uses_stealthy_session(self, MockStealthy):
@@ -223,18 +225,18 @@ class TestBrowser:
         call_kwargs = MockStealthy.call_args[1]
         assert call_kwargs.get("solve_cloudflare") is True
 
-    @patch("scrape_kit.fetcher.web_fetcher.DynamicSession")
-    def test_normal_headless_flag_forwarded(self, MockDynamic):
+    @patch("scrape_kit.fetcher.web_fetcher.StealthySession")
+    def test_normal_headless_flag_forwarded(self, MockStealthy):
         fetcher = WebFetcher()
         fetcher.browser(headless=False)
-        call_kwargs = MockDynamic.call_args[1]
+        call_kwargs = MockStealthy.call_args[1]
         assert call_kwargs.get("headless") is False
 
-    @patch("scrape_kit.fetcher.web_fetcher.DynamicSession")
-    def test_edge_extra_kwargs_forwarded_to_session(self, MockDynamic):
+    @patch("scrape_kit.fetcher.web_fetcher.StealthySession")
+    def test_edge_extra_kwargs_forwarded_to_session(self, MockStealthy):
         fetcher = WebFetcher()
         fetcher.browser(custom_flag=True)
-        call_kwargs = MockDynamic.call_args[1]
+        call_kwargs = MockStealthy.call_args[1]
         assert call_kwargs.get("custom_flag") is True
 
 
