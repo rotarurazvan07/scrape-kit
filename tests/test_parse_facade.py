@@ -2,12 +2,12 @@
 
 import pytest
 
-from scrape_kit.parse import (
-    Selector,
-    ParseError,
-)
 from scrape_kit import parse as parse_module
 from scrape_kit.errors import FetcherError
+from scrape_kit.parse import (
+    ParseError,
+    Selector,
+)
 
 pytestmark = pytest.mark.p0
 

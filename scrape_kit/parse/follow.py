@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..errors import FetcherError
 
@@ -11,8 +11,8 @@ _logger = logging.getLogger(__name__)
 
 
 def _to_response(
-    response_or_html: Union[Any, str, bytes],
-    base_url: Optional[str],
+    response_or_html: Any | str | bytes,
+    base_url: str | None,
 ) -> Any:
     """Return a scrapling Response, building one from raw HTML when needed.
 
@@ -93,8 +93,8 @@ def _validate_link_args(css_or_xpath: str, selector_type: str) -> None:
 
 
 def _create_follow_selector(
-    response_or_html: Union[Any, str, bytes],
-    base_url: Optional[str],
+    response_or_html: Any | str | bytes,
+    base_url: str | None,
 ) -> tuple[Any, str, Any]:
     """Create scrapling Selector and base URL for link extraction.
 
@@ -109,7 +109,7 @@ def _create_follow_selector(
     return sel, base, response
 
 
-def _extract_href_from_element(el: Any) -> Optional[str]:
+def _extract_href_from_element(el: Any) -> str | None:
     """Extract href attribute from an element, returning None on failure."""
     try:
         return el.attrib.get("href")  # type: ignore[no-any-return]
@@ -118,11 +118,11 @@ def _extract_href_from_element(el: Any) -> Optional[str]:
 
 
 def follow_links(
-    response_or_html: Union[Any, str, bytes],
+    response_or_html: Any | str | bytes,
     css_or_xpath: str,
-    base_url: Optional[str] = None,
+    base_url: str | None = None,
     selector_type: str = "auto",
-) -> List[str]:
+) -> list[str]:
     """Extract and normalize links from a response or HTML using CSS/XPath.
 
     Returns absolute URLs ready for fetching.
@@ -146,7 +146,7 @@ def follow_links(
         sel, base, response = _create_follow_selector(response_or_html, base_url)
         elements = _dispatch_selector(sel, css_or_xpath, selector_type)
 
-        urls: List[str] = []
+        urls: list[str] = []
         for el in elements:
             href = _extract_href_from_element(el)
             if href:
@@ -164,7 +164,7 @@ def _build_link_dict(
     response: Any,
     el: Any,
     href: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a link metadata dict from an element."""
     return {
         "url": response.urljoin(href),
@@ -174,11 +174,11 @@ def _build_link_dict(
 
 
 def extract_links(
-    response_or_html: Union[Any, str, bytes],
+    response_or_html: Any | str | bytes,
     css_or_xpath: str,
-    base_url: Optional[str] = None,
+    base_url: str | None = None,
     selector_type: str = "auto",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Extract links with metadata (url, text, attributes).
 
     Args:
@@ -200,7 +200,7 @@ def extract_links(
         sel, base, response = _create_follow_selector(response_or_html, base_url)
         elements = _dispatch_selector(sel, css_or_xpath, selector_type)
 
-        links: List[Dict[str, Any]] = []
+        links: list[dict[str, Any]] = []
         failed_count = 0
         for el in elements:
             try:

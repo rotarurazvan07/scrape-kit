@@ -2,8 +2,8 @@
 
 import pytest
 
-from scrape_kit.parse import follow_links, extract_links
 from scrape_kit.errors import FetcherError
+from scrape_kit.parse import extract_links, follow_links
 
 pytestmark = pytest.mark.p0
 

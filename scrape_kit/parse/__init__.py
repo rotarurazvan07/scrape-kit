@@ -22,11 +22,10 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
+from ..errors import FetcherError
 from .adaptive import adaptive_select, relocate
 from .follow import extract_links, follow_links
 from .selector import Selector, Selectors
-
-from ..errors import FetcherError
 
 ParseError = FetcherError  # alias for consumer convenience
 
@@ -42,11 +41,11 @@ __all__ = [
 
 
 def parse(
-    html: Union[str, bytes],
+    html: str | bytes,
     url: str = "",
     encoding: str = "utf-8",
     adaptive: bool = False,
-    adaptive_domain: Optional[str] = None,
+    adaptive_domain: str | None = None,
 ) -> Selector:
     """Create a Selector from HTML content.
 

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
-
-from .selector import Selectors
+from typing import Any
 
 from ..errors import FetcherError
+from .selector import Selectors
 
 
 def _validate_relocate_args(
@@ -24,10 +23,10 @@ def _validate_relocate_args(
 
 
 def _create_adaptive_selector(
-    html: Union[str, bytes],
+    html: str | bytes,
     url: str,
-    adaptive_domain: Optional[str],
-    storage_args: Optional[Dict[str, Any]],
+    adaptive_domain: str | None,
+    storage_args: dict[str, Any] | None,
 ) -> Any:
     """Create a scrapling Selector with adaptive configuration."""
     from scrapling.parser import Selector as ScraplingSelector
@@ -58,12 +57,12 @@ def _perform_relocation(
 
 
 def adaptive_select(
-    html: Union[str, bytes],
+    html: str | bytes,
     url: str,
     selector: str,
     auto_save: bool = False,
-    adaptive_domain: Optional[str] = None,
-    storage_args: Optional[Dict[str, Any]] = None,
+    adaptive_domain: str | None = None,
+    storage_args: dict[str, Any] | None = None,
 ) -> Selectors:
     """Run a selector with adaptive relocation enabled.
 
@@ -107,11 +106,11 @@ def adaptive_select(
 
 
 def relocate(
-    html: Union[str, bytes],
+    html: str | bytes,
     url: str,
     identifier: str,
-    adaptive_domain: Optional[str] = None,
-    storage_args: Optional[Dict[str, Any]] = None,
+    adaptive_domain: str | None = None,
+    storage_args: dict[str, Any] | None = None,
     percentage: int = 40,
 ) -> Selectors:
     """Relocate a previously saved element on a new page version.

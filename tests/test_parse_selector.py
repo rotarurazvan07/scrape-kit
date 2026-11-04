@@ -202,5 +202,5 @@ class TestGuards:
         assert isinstance(Selector.last, property)
 
     def test_normal_markdown_without_rag_extra_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError, match="scrapling\[rag\] extra"):
+        with pytest.raises(NotImplementedError, match=r"scrapling\[rag\] extra"):
             Selector(HTML, url="https://example.com").markdown()

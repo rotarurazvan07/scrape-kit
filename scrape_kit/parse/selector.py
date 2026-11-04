@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator, List, Optional, Pattern, Union
+from collections.abc import Callable, Iterator
+from re import Pattern
+from typing import Any
 
 from ..errors import FetcherError
 
@@ -17,11 +19,11 @@ class Selector:
 
     def __init__(
         self,
-        html: Union[str, bytes],
+        html: str | bytes,
         url: str = "",
         encoding: str = "utf-8",
         adaptive: bool = False,
-        adaptive_domain: Optional[str] = None,
+        adaptive_domain: str | None = None,
     ) -> None:
         """Create a selector from HTML content.
 
@@ -62,7 +64,7 @@ class Selector:
         return self._url
 
     @property
-    def first(self) -> "Selector":
+    def first(self) -> Selector:
         """Return the first matched element as a Selector.
 
         Note: Scrapling's Selector does not expose ``first``/``last``; this
@@ -81,7 +83,7 @@ class Selector:
             raise FetcherError("first failed", url=self._url) from e
 
     @property
-    def last(self) -> "Selector":
+    def last(self) -> Selector:
         """Return the last matched element as a Selector.
 
         Note: Scrapling's Selector does not expose ``first``/``last``; this
@@ -129,7 +131,7 @@ class Selector:
         adaptive: bool = False,
         auto_save: bool = False,
         percentage: int = 40,
-    ) -> "Selectors":
+    ) -> Selectors:
         """Select elements with a CSS selector.
 
         Args:
@@ -168,7 +170,7 @@ class Selector:
         adaptive: bool = False,
         auto_save: bool = False,
         percentage: int = 40,
-    ) -> "Selectors":
+    ) -> Selectors:
         """Select elements with an XPath selector.
 
         Args:
@@ -208,7 +210,7 @@ class Selector:
         partial: bool = False,
         case_sensitive: bool = False,
         clean_match: bool = True,
-    ) -> Union["Selector", "Selectors"]:
+    ) -> Selector | Selectors:
         """Find elements whose text matches ``text``.
 
         Args:
@@ -235,11 +237,11 @@ class Selector:
 
     def find_by_regex(
         self,
-        query: Union[str, Pattern[str]],
+        query: str | Pattern[str],
         first_match: bool = True,
         case_sensitive: bool = False,
         clean_match: bool = True,
-    ) -> Union["Selector", "Selectors"]:
+    ) -> Selector | Selectors:
         """Find elements matching a regular expression.
 
         Args:
@@ -266,9 +268,9 @@ class Selector:
     def find_similar(
         self,
         similarity_threshold: float = 0.2,
-        ignore_attributes: Union[List[str], tuple[str, ...]] = ("href", "src"),
+        ignore_attributes: list[str] | tuple[str, ...] = ("href", "src"),
         match_text: bool = False,
-    ) -> "Selectors":
+    ) -> Selectors:
         """Find elements structurally similar to the first matched element.
 
         Args:
@@ -302,7 +304,7 @@ class Selector:
         except Exception as e:
             raise FetcherError("get failed", url=self._url) from e
 
-    def getall(self) -> List[str]:
+    def getall(self) -> list[str]:
         """Return the text of all matched elements.
 
         Returns:
@@ -316,7 +318,7 @@ class Selector:
         except Exception as e:
             raise FetcherError("getall failed", url=self._url) from e
 
-    def re(self, regex: Union[str, Pattern[str]], **kwargs: Any) -> List[str]:
+    def re(self, regex: str | Pattern[str], **kwargs: Any) -> list[str]:
         """Apply a regex to the matched element text.
 
         Args:
@@ -334,7 +336,7 @@ class Selector:
         except Exception as e:
             raise FetcherError(f"re failed: {regex}", url=self._url) from e
 
-    def re_first(self, regex: Union[str, Pattern[str]], default: Any = None, **kwargs: Any) -> Any:
+    def re_first(self, regex: str | Pattern[str], default: Any = None, **kwargs: Any) -> Any:
         """Apply a regex and return the first result.
 
         Args:
@@ -369,7 +371,7 @@ class Selector:
         except Exception as e:
             raise FetcherError(f"adaptive save failed: {identifier}", url=self._url) from e
 
-    def retrieve(self, identifier: str) -> Optional[dict[str, Any]]:
+    def retrieve(self, identifier: str) -> dict[str, Any] | None:
         """Return a previously saved element fingerprint.
 
         Args:
@@ -392,7 +394,7 @@ class Selector:
         element: Any,
         percentage: int = 40,
         selector_type: bool = False,
-    ) -> "Selectors":
+    ) -> Selectors:
         """Relocate a saved element in the current document.
 
         Args:
@@ -469,7 +471,7 @@ class Selector:
             raise FetcherError("html_content property failed", url=self._url) from e
 
     @classmethod
-    def _wrap_single(cls, selector: Any, url: str) -> "Selector":
+    def _wrap_single(cls, selector: Any, url: str) -> Selector:
         """Return a Selector for a single scrapling selector without re-parsing.
 
         Args:
@@ -515,7 +517,7 @@ class Selectors:
         """Return the number of matched elements."""
         return len(self._selectors)
 
-    def __getitem__(self, idx: Union[int, slice]) -> Any:
+    def __getitem__(self, idx: int | slice) -> Any:
         """Return the element or slice at ``idx``.
 
         Args:
@@ -549,7 +551,7 @@ class Selectors:
         except Exception as e:
             raise FetcherError("list get failed", url=self._url) from e
 
-    def getall(self) -> List[str]:
+    def getall(self) -> list[str]:
         """Return the text of every matched element.
 
         Returns:
@@ -571,7 +573,7 @@ class Selectors:
         """Return the last matched element as a Selector."""
         return Selector._wrap_single(self._selectors.last, self._url)
 
-    def re(self, regex: Union[str, Pattern[str]], **kwargs: Any) -> List[str]:
+    def re(self, regex: str | Pattern[str], **kwargs: Any) -> list[str]:
         """Apply a regex across all matched elements.
 
         Args:
@@ -589,7 +591,7 @@ class Selectors:
         except Exception as e:
             raise FetcherError(f"list re failed: {regex}", url=self._url) from e
 
-    def re_first(self, regex: Union[str, Pattern[str]], default: Any = None, **kwargs: Any) -> Any:
+    def re_first(self, regex: str | Pattern[str], default: Any = None, **kwargs: Any) -> Any:
         """Apply a regex across all matches and return the first result.
 
         Args:
@@ -608,7 +610,7 @@ class Selectors:
         except Exception as e:
             raise FetcherError(f"list re_first failed: {regex}", url=self._url) from e
 
-    def extract(self) -> List[str]:
+    def extract(self) -> list[str]:
         """Return the raw HTML of all matched elements.
 
         Returns:
@@ -636,7 +638,7 @@ class Selectors:
         except Exception as e:
             raise FetcherError("list extract_first failed", url=self._url) from e
 
-    def css(self, selector: str) -> "Selectors":
+    def css(self, selector: str) -> Selectors:
         """Select descendants of the matched elements with a CSS selector.
 
         Args:
@@ -653,7 +655,7 @@ class Selectors:
         except Exception as e:
             raise FetcherError(f"list css failed: {selector}", url=self._url) from e
 
-    def xpath(self, selector: str) -> "Selectors":
+    def xpath(self, selector: str) -> Selectors:
         """Select descendants of the matched elements with XPath.
 
         Args:
@@ -670,7 +672,7 @@ class Selectors:
         except Exception as e:
             raise FetcherError(f"list xpath failed: {selector}", url=self._url) from e
 
-    def filter(self, predicate: Callable[[Selector], bool]) -> "Selectors":
+    def filter(self, predicate: Callable[[Selector], bool]) -> Selectors:
         """Filter elements by a predicate function.
 
         Args:
