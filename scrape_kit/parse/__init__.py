@@ -20,8 +20,6 @@ Example:
 
 from __future__ import annotations
 
-from typing import Optional, Union
-
 from ..errors import FetcherError
 from .adaptive import adaptive_select, relocate
 from .follow import extract_links, follow_links
