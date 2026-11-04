@@ -14,6 +14,17 @@ import sys
 
 EXPECTED_PUBLIC_NAMES = frozenset(
     {
+<<<<<<< Updated upstream
+=======
+        # parse
+        "Selector",
+        "Selectors",
+        "adaptive_select",
+        "relocate",
+        "follow_links",
+        "extract_links",
+        "ParseError",
+>>>>>>> Stashed changes
         # errors
         "ScrapeKitError",
         "FetcherError",
