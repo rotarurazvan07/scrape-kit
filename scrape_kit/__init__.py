@@ -62,6 +62,14 @@ __all__ = [
     # Configure helpers
     "configure",
     "configure_defaults",
+    # Parse
+    "Selector",
+    "Selectors",
+    "adaptive_select",
+    "relocate",
+    "follow_links",
+    "extract_links",
+    "ParseError",
     # Matching
     "SimilarityEngine",
     # Errors
@@ -90,6 +98,13 @@ _LAZY_IMPORTS: dict[str, str] = {
     "BaseStorageManager": "storage",
     "BufferedStorageManager": "storage",
     "MergeReport": "storage",
+    "Selector": "parse",
+    "Selectors": "parse",
+    "adaptive_select": "parse",
+    "relocate": "parse",
+    "follow_links": "parse",
+    "extract_links": "parse",
+    "ParseError": "parse",
 }
 
 
