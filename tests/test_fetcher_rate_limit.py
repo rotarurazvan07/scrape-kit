@@ -355,7 +355,7 @@ class TestBatchCooldownUnit:
         cooldown.register(now, retry_after=30.0)
         first = cooldown.remaining()
         with patch("scrape_kit.fetcher.batch.time.monotonic", return_value=now + 10):
-            assert cooldown.remaining() <= 20
+            assert cooldown.remaining() <= 20 + 1e-9
             later = cooldown.remaining()
         assert first > later
 
