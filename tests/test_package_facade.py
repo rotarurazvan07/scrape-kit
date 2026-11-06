@@ -38,6 +38,7 @@ EXPECTED_PUBLIC_NAMES = frozenset(
         "InteractiveSession",
         "ScrapeMode",
         "RetryHook",
+        "ProxyRotator",
         "fetch",
         "browser",
         "scrape",

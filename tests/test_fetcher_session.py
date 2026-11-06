@@ -347,3 +347,63 @@ class TestScrollToBottom:
         session = InteractiveSession(MagicMock())
         with pytest.raises(FetcherError, match=re.escape("Call fetch() first")):
             session.scroll_to_bottom()
+
+
+class TestInteractiveSessionDelegation:
+    """InteractiveSession delegates save_state, load_state, network via __getattr__."""
+
+    def test_normal_save_state_delegates_to_underlying_session(self):
+        """save_state(path) delegates to the underlying StealthySession."""
+        mock_session = MagicMock()
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        session.save_state("/tmp/state.json")
+        mock_session.save_state.assert_called_once_with("/tmp/state.json")
+
+    def test_normal_load_state_delegates_to_underlying_session(self):
+        """load_state(path) delegates to the underlying StealthySession."""
+        mock_session = MagicMock()
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        session.load_state("/tmp/state.json")
+        mock_session.load_state.assert_called_once_with("/tmp/state.json")
+
+    def test_normal_network_delegates_when_record_requests_enabled(self):
+        """network attribute delegates to NetworkRecorder when record_requests=True."""
+        mock_session = MagicMock()
+        mock_network = MagicMock()
+        mock_session.network = mock_network
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        assert session.network is mock_network
+
+    def test_edge_delegation_before_enter_no_page_needed_for_attr_lookup(self):
+        """Delegation via __getattr__ works before __enter__ (no page needed for attr lookup)."""
+        mock_session = MagicMock()
+        mock_session.cookies = {"test": "value"}
+        session = InteractiveSession(mock_session)
+        # __getattr__ should work before __enter__ for attributes that exist on session
+        assert session.cookies == {"test": "value"}
+        # But save_state/load_state/network should also be accessible
+        mock_session.save_state = MagicMock()
+        session.save_state("/tmp/state.json")
+        mock_session.save_state.assert_called_once_with("/tmp/state.json")
+
+    def test_edge_network_none_when_record_requests_disabled(self):
+        """network attribute returns None when record_requests=False."""
+        mock_session = MagicMock()
+        mock_session.network = None
+        session = InteractiveSession(mock_session)
+        session.__enter__()
+        assert session.network is None
+
+    def test_error_delegation_missing_attribute_raises_attribute_error(self):
+        """Delegation raises AttributeError for attributes absent from the wrapped session."""
+        # A spec'd mock only exposes the listed attributes, so an unlisted
+        # one raises AttributeError instead of being auto-created. ``__enter__``
+        # needs ``context.new_page``, so both are on the spec.
+        mock_session = MagicMock(spec=["start", "close", "context"])
+        session = InteractiveSession(mock_session)
+        session.page = MagicMock()
+        with pytest.raises(AttributeError):
+            _ = session.nonexistent_attribute

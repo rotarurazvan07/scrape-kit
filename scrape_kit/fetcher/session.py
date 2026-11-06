@@ -110,6 +110,28 @@ class InteractiveSession:
     The session must be started via the ``with`` statement (or ``__enter__``)
     before any page interaction; state violations raise FetcherError, so a single
     ``except ScrapeKitError`` covers every domain failure.
+
+    Delegated methods (via ``__getattr__``):
+
+        save_state(path: str) -> None
+            Persist the browser session state (cookies, localStorage, credentials)
+            to the given file path.
+
+            Security: Serializes full browser state including sensitive data.
+            Handle the output file with appropriate access controls.
+
+        load_state(path: str) -> None
+            Restore a previously saved browser session state from the given file path.
+
+            Security: Loads browser profile including cookies, localStorage, and credentials.
+            Only load state from trusted sources.
+
+        network: NetworkRecorder
+            Available when ``record_requests=True`` is passed to ``browser()``.
+            Provides ``search()`` method to query captured network requests.
+
+            Security: Captures Authorization headers, cookies, and PII in network traffic.
+            Only enable ``record_requests`` when necessary and handle captured data securely.
     """
 
     def __init__(self, session: StealthySession) -> None:
@@ -503,5 +525,11 @@ class InteractiveSession:
 
         Returns:
             The attribute value from the wrapped session.
+
+        Raises:
+            AttributeError: If the attribute is not found on the wrapped session.
         """
-        return getattr(self.session, name)
+        try:
+            return getattr(self.session, name)
+        except AttributeError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from None

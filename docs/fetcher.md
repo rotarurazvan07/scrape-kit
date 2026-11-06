@@ -8,6 +8,7 @@ Import from `scrape_kit`:
 from scrape_kit import (
     FetcherError,
     InteractiveSession,
+    ProxyRotator,
     RetryHook,
     ScrapeMode,
     WebFetcher,
@@ -118,6 +119,22 @@ with browser(headless=True, solve_cloudflare=False, interactive=True) as session
 
 Do not construct `InteractiveSession` yourself. Obtain it from `browser()` or `WebFetcher.browser()`.
 
+### Browser session keyword arguments
+
+The following keyword arguments are passed through to Scrapling's `StealthySession`:
+
+| Keyword | Type | Description |
+| --- | --- | --- |
+| `record_requests` | `bool` | Enable network request recording. When `True`, `session.network.search()` becomes available. |
+| `max_recorded_requests` | `int` | Maximum requests to record (>=1). Default: 1000. |
+| `pierce_shadow` | `bool` | Include open Shadow DOM content in response HTML. Default: `False`. |
+| `block_ads` | `bool` | Block ~3,500 known ad/tracking domains. Default: `False`. |
+| `dns_over_https` | `bool` | Route DNS through Cloudflare DoH. Default: `False`. |
+| `blocked_domains` | `set[str]` or `list[str]` | Set of domains to block (subdomains matched). Accepts set or list (YAML sequences become lists). |
+| `user_data_dir` | `str` | Path to User Data Directory for session persistence. Default: temporary directory. |
+| `extra_flags` | `list[str]` | Additional browser launch flags. Low-memory flags (`--disable-dev-shm-usage`, `--disable-gpu`, `--no-sandbox`, `--disable-setuid-sandbox`) are added by default. |
+| `proxy_rotator` | `ProxyRotator` | ProxyRotator instance for proxy rotation. |
+
 ### InteractiveSession methods
 
 | Method | What it does |
@@ -129,8 +146,17 @@ Do not construct `InteractiveSession` yourself. Obtain it from `browser()` or `W
 | `wait_for_timeout(ms, **kwargs)` | Pause for `ms` milliseconds. |
 | `scroll_to_bottom(infinite=True, idle_ms=10000, cycle_delay_ms=None)` | Scroll until content stops growing. |
 | `click(selector, text=None, visible_only=False, idle_ms=5000, hard_cap_ms=None)` | Click a selector (optionally by exact text). Returns `True` on a settled click, `False` if nothing matched or the script failed. |
+| `save_state(path)` | Persist browser session state (cookies, localStorage, credentials) to file. |
+| `load_state(path)` | Restore browser session state from file. |
+| `network.search(query)` | Query captured network requests (available when `record_requests=True`). |
 
 Call `fetch()` on the session before the other page methods. `click()` raises `FetcherError` if you have not entered the session.
+
+### Security considerations
+
+- **Network recording** (`record_requests=True`): Captures Authorization headers, cookies, and PII in network traffic. Only enable when necessary and handle captured data securely.
+- **User data directory** (`user_data_dir`): Persists browser profile including cookies, localStorage, and credentials. Use appropriate file permissions and only load state from trusted sources.
+- **State persistence** (`save_state()` / `load_state()`): Serializes full browser state including sensitive data. The output file contains credentials and should be protected with appropriate access controls.
 
 ## Scrape many URLs
 

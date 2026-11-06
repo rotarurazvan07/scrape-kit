@@ -8,6 +8,7 @@ from ._state import reset_shared
 from .batch import RetryHook, ScrapeMode
 from .session import InteractiveSession
 from .web_fetcher import WebFetcher
+from scrapling.fetchers import ProxyRotator
 
 # Shared-instance state lives in the ._state leaf (no import cycles, no `global`).
 
@@ -114,6 +115,7 @@ __all__ = [
     "InteractiveSession",
     "ScrapeMode",
     "RetryHook",
+    "ProxyRotator",
     "fetch",
     "is_blocked",
     "browser",
