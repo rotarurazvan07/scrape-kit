@@ -3,12 +3,13 @@
 from collections.abc import Callable
 from typing import Any
 
+from scrapling.fetchers import ProxyRotator
+
 from . import _state
 from ._state import reset_shared
 from .batch import RetryHook, ScrapeMode
 from .session import InteractiveSession
 from .web_fetcher import WebFetcher
-from scrapling.fetchers import ProxyRotator
 
 # Shared-instance state lives in the ._state leaf (no import cycles, no `global`).
 

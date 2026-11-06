@@ -164,8 +164,8 @@ class TestProxyRotatorError:
 
     def test_error_proxy_rotator_imported_from_correct_module(self):
         """ProxyRotator is imported from scrape_kit.fetcher (re-exported)."""
-        from scrape_kit.fetcher import ProxyRotator as FetcherProxyRotator
         from scrape_kit import ProxyRotator as PackageProxyRotator
+        from scrape_kit.fetcher import ProxyRotator as FetcherProxyRotator
 
         assert FetcherProxyRotator is PackageProxyRotator
 

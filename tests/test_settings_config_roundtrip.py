@@ -1,7 +1,7 @@
 """SettingsManager YAML round-trip: configure() loads, merges, and validates config sections."""
 
-import yaml
 import pytest
+import yaml
 
 from scrape_kit.errors import SettingsError
 from scrape_kit.fetcher.web_fetcher import WebFetcher
