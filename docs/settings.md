@@ -141,7 +141,7 @@ spider:
   autothrottle_max_delay: 60.0
   autothrottle_target_concurrency: 1.0
   robots_txt_obey: true
-  crawl_strategy: "breadth"
+  crawl_strategy: "bfs"
   crawldir: ""
   development_mode: false
 ```
@@ -154,7 +154,7 @@ spider:
 - `autothrottle_max_delay` (float): Maximum download delay for AutoThrottle (seconds). Default: `60.0`.
 - `autothrottle_target_concurrency` (float): Target concurrency for AutoThrottle. Default: `1.0`.
 - `robots_txt_obey` (bool): Respect `robots.txt` rules. Default: `true`.
-- `crawl_strategy` (string): `"breadth"` or `"depth"`. Default: `"breadth"`.
+- `crawl_strategy` (string): `"bfs"` or `"dfs"`. Default: `"bfs"`.
 - `crawldir` (string): Directory for crawl persistence. Default: `""`.
 - `development_mode` (bool): Enable development features (verbose logging, etc.). Default: `false`.
 
@@ -202,7 +202,7 @@ scraper_config:
     autothrottle_max_delay: 60.0
     autothrottle_target_concurrency: 1.0
     robots_txt_obey: true
-    crawl_strategy: "breadth"
+    crawl_strategy: "bfs"
     crawldir: "/tmp/crawl"
     development_mode: false
 ```
@@ -225,3 +225,4 @@ Entries are either proxy URL strings or mappings with `server`, `username`, and 
 
 - [Fetching](fetcher.md) for `configure()`.
 - [Errors](errors.md) for `SettingsError`.
+- [Spiders](spiders.md) for spider migration guide and YAML `spider:` section.

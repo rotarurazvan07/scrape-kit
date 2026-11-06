@@ -282,3 +282,4 @@ Class factories `WebFetcher.configure(...)` and `WebFetcher.configure_defaults(.
 
 - [Errors](errors.md) for `FetcherError.url`.
 - [Settings](settings.md) for the YAML directory `configure()` reads.
+- [Spiders](spiders.md) for migrating `scrape()` patterns to Scrapling's spider framework.
