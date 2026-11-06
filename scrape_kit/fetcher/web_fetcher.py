@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Any, ClassVar, Final
 
-from scrapling.fetchers import Fetcher, StealthySession
+from scrapling.fetchers import Fetcher, ProxyRotator, StealthySession
 
 from ..errors import FetcherError, SettingsError
 from ..logger import get_logger
@@ -175,6 +175,10 @@ class WebFetcher(BatchScraperMixin):
         block_indicators: list[str] | None = None,
         *,
         status_retries: dict[int, int | None] | None = None,
+        parser_config: dict[str, Any] | None = None,
+        browser_config: dict[str, Any] | None = None,
+        spider_config: dict[str, Any] | None = None,
+        proxy_config: list[str | dict[str, str]] | None = None,
     ) -> None:
         """Initialize a WebFetcher with custom retry and block indicators.
 
@@ -186,6 +190,10 @@ class WebFetcher(BatchScraperMixin):
                 of extra attempts for that status; 0 opts the status out of
                 retrying. Merged over the class defaults, so unlisted codes keep
                 their default entry. Defaults to None (the legacy behavior).
+            parser_config: Parser configuration (adaptive, adaptive_domain, markdown).
+            browser_config: Browser configuration (block_ads, dns_over_https, etc.).
+            spider_config: Spider configuration (concurrent_requests, download_delay, etc.).
+            proxy_config: List of proxy strings or dicts for ProxyRotator.
         """
         self.retry_indicators = retry_indicators if retry_indicators is not None else []
         self.block_indicators = block_indicators if block_indicators is not None else []
@@ -195,6 +203,11 @@ class WebFetcher(BatchScraperMixin):
         # The codes the consumer explicitly configured, kept apart
         # from the merged map so a default entry is never mistaken for intent.
         self._configured_status_retries = parsed
+        # Parser/browser/spider config sections from YAML (for future use and browser() defaults)
+        self._parser_config = parser_config if parser_config is not None else {}
+        self._browser_config = browser_config if browser_config is not None else {}
+        self._spider_config = spider_config if spider_config is not None else {}
+        self._proxy_config = proxy_config if proxy_config is not None else []
         # Private status observation slot: the fast path cannot see the response
         # object (fetch returns HTML), so the attempt loop records the signal
         # Here for the batch cooldown layer to consume.
@@ -323,6 +336,34 @@ class WebFetcher(BatchScraperMixin):
             block_indicators:
               - "cf-browser-verification"
               - "Access Denied"
+            parser:
+              adaptive: true
+              adaptive_domain: "example.com"
+              markdown:
+                main_content_only: false
+            browser:
+              block_ads: false
+              dns_over_https: false
+              blocked_domains: []
+              pierce_shadow: false
+              record_requests: false
+              max_recorded_requests: 1000
+              user_data_dir: ""
+              save_state_path: ""
+              load_state_path: ""
+              extra_flags: []
+            spider:
+              concurrent_requests: 16
+              concurrent_requests_per_domain: 8
+              download_delay: 0.25
+              autothrottle_enabled: true
+              autothrottle_start_delay: 5.0
+              autothrottle_max_delay: 60.0
+              autothrottle_target_concurrency: 1.0
+              robots_txt_obey: true
+              crawl_strategy: "breadth"
+              crawldir: ""
+              development_mode: false
 
         Args:
             config_path: Path to config directory (or file) passed to SettingsManager.
@@ -351,7 +392,34 @@ class WebFetcher(BatchScraperMixin):
         # A malformed map is rejected here, like any other broken YAML.
         status_retries = _parse_status_retries(cfg.get("status_retries"))
 
-        instance = cls(retry_indicators=retry, block_indicators=block, status_retries=status_retries)
+        # Parse new config sections (parser, browser, spider)
+        parser_config = cfg.get("parser", {})
+        browser_config = cfg.get("browser", {})
+        spider_config = cfg.get("spider", {})
+        proxy_config = cfg.get("proxies", [])
+
+        # Process browser config: convert blocked_domains list to set, omit empty user_data_dir
+        if browser_config:
+            browser_config = dict(browser_config)  # shallow copy
+            # blocked_domains: list -> set for Scrapling
+            if "blocked_domains" in browser_config and isinstance(browser_config["blocked_domains"], list):
+                browser_config["blocked_domains"] = set(browser_config["blocked_domains"])
+            # user_data_dir: omit when empty string (never pass None to Scrapling)
+            if browser_config.get("user_data_dir") == "":
+                browser_config.pop("user_data_dir", None)
+            # save_state_path and load_state_path are NOT constructor kwargs for StealthySession
+            # They are instance methods (save_state/load_state), so we keep them in config
+            # but _merge_browser_kwargs will exclude them from session kwargs
+
+        instance = cls(
+            retry_indicators=retry,
+            block_indicators=block,
+            status_retries=status_retries,
+            parser_config=parser_config,
+            browser_config=browser_config,
+            spider_config=spider_config,
+            proxy_config=proxy_config,
+        )
         logger.info(
             "WebFetcher configured from '%s' (%d retry / %d block indicators)",
             config_path,
@@ -382,6 +450,10 @@ class WebFetcher(BatchScraperMixin):
         instance = cls(
             retry_indicators=list(cls._DEFAULT_RETRY),  # copy: never alias the class-level list
             block_indicators=list(cls._DEFAULT_BLOCK),
+            parser_config={},
+            browser_config={},
+            spider_config={},
+            proxy_config=[],
         )
         if set_shared:
             _set_shared(instance)
@@ -667,6 +739,16 @@ class WebFetcher(BatchScraperMixin):
         headless: bool = True,
         solve_cloudflare: bool = False,
         interactive: bool = True,
+        *,
+        record_requests: bool | None = None,
+        max_recorded_requests: int | None = None,
+        pierce_shadow: bool | None = None,
+        block_ads: bool | None = None,
+        dns_over_https: bool | None = None,
+        blocked_domains: set[str] | list[str] | None = None,
+        user_data_dir: str | None = None,
+        extra_flags: list[str] | None = None,
+        proxy_rotator: ProxyRotator | None = None,
         **kwargs: Any,
     ) -> InteractiveSession:
         """Create an interactive browser session.
@@ -675,24 +757,162 @@ class WebFetcher(BatchScraperMixin):
             headless: Whether to run in headless mode. Defaults to True.
             solve_cloudflare: Enable Cloudflare challenge solving. Defaults to False.
             interactive: Enable interactive features. Defaults to True.
+            record_requests: Enable network request recording. Defaults to None (Scrapling default).
+            max_recorded_requests: Maximum requests to record (>=1). Defaults to None (Scrapling default 1000).
+            pierce_shadow: Include open Shadow DOM content in response HTML. Defaults to None (Scrapling default False).
+            block_ads: Block ~3,500 known ad/tracking domains. Defaults to None (Scrapling default False).
+            dns_over_https: Route DNS through Cloudflare DoH. Defaults to None (Scrapling default False).
+            blocked_domains: Set of domains to block (subdomains matched). Accepts set or list. Defaults to None.
+            user_data_dir: Path to User Data Directory for session persistence. Defaults to None (temp dir).
+            extra_flags: Additional browser launch flags (e.g., low-memory flags). Defaults to low-memory flags.
+            proxy_rotator: ProxyRotator instance for proxy rotation. Defaults to None.
             **kwargs: Additional arguments passed to the Scrapling session.
 
         Returns:
             An InteractiveSession instance.
+
+        Security:
+            - record_requests=True captures Authorization headers, cookies, and PII in network traffic.
+            - user_data_dir persists browser profile including cookies, localStorage, and credentials.
+            - save_state()/load_state() serialize full browser state including sensitive data.
         """
         is_heavy = interactive or solve_cloudflare
         defaults = {
             "disable_resources": not is_heavy,
             "network_idle": is_heavy,
-            "wait_until": "load",
         }
         for key, value in defaults.items():
             kwargs.setdefault(key, value)
 
-        low_mem_flags = {"--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"}
-        kwargs["args"] = list(set(kwargs.get("args", [])) | low_mem_flags)
+        # Merge explicit keyword arguments into kwargs for StealthySession pass-through
+        self._merge_browser_kwargs(
+            kwargs,
+            record_requests=record_requests,
+            max_recorded_requests=max_recorded_requests,
+            pierce_shadow=pierce_shadow,
+            block_ads=block_ads,
+            dns_over_https=dns_over_https,
+            blocked_domains=blocked_domains,
+            user_data_dir=user_data_dir,
+            extra_flags=extra_flags,
+            proxy_rotator=proxy_rotator,
+        )
 
         session: StealthySession
         session = StealthySession(headless=headless, solve_cloudflare=solve_cloudflare, **kwargs)
 
         return InteractiveSession(session)
+
+    def _merge_browser_kwargs(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        record_requests: bool | None = None,
+        max_recorded_requests: int | None = None,
+        pierce_shadow: bool | None = None,
+        block_ads: bool | None = None,
+        dns_over_https: bool | None = None,
+        blocked_domains: set[str] | list[str] | None = None,
+        user_data_dir: str | None = None,
+        extra_flags: list[str] | None = None,
+        proxy_rotator: ProxyRotator | None = None,
+        **_ignored: Any,
+    ) -> None:
+        """Merge browser keyword arguments into kwargs for StealthySession pass-through.
+
+        Implements depth-first fallback: call kwarg > configured > Scrapling default.
+        Delegates to focused helpers to keep cyclomatic complexity low.
+
+        Only the keys named above reach the ``StealthySession`` constructor.
+        Anything else — notably ``save_state_path`` / ``load_state_path`` —
+        is accepted and deliberately dropped here.
+
+        Args:
+            kwargs: The kwargs dict to update in place.
+            record_requests: Enable network request recording.
+            max_recorded_requests: Maximum requests to record (>=1).
+            pierce_shadow: Include open Shadow DOM content in response HTML.
+            block_ads: Block ~3,500 known ad/tracking domains.
+            dns_over_https: Route DNS through Cloudflare DoH.
+            blocked_domains: Set of domains to block (subdomains matched).
+            user_data_dir: Path to User Data Directory for session persistence.
+            extra_flags: Additional browser launch flags.
+            proxy_rotator: ProxyRotator instance for proxy rotation.
+            **_ignored: Non-constructor keys (e.g. save_state_path, load_state_path).
+        """
+        self._merge_passthrough_kwargs(
+            kwargs, record_requests, max_recorded_requests, pierce_shadow, block_ads, dns_over_https
+        )
+        self._merge_blocked_domains(kwargs, blocked_domains)
+        self._merge_user_data_dir(kwargs, user_data_dir)
+        self._merge_proxy_rotator(kwargs, proxy_rotator)
+        self._merge_extra_flags(kwargs, extra_flags)
+
+    def _merge_passthrough_kwargs(
+        self,
+        kwargs: dict[str, Any],
+        record_requests: bool | None,
+        max_recorded_requests: int | None,
+        pierce_shadow: bool | None,
+        block_ads: bool | None,
+        dns_over_https: bool | None,
+    ) -> None:
+        """Merge simple boolean/int pass-through options."""
+        for call_value, session_key, config_key in [
+            (record_requests, "record_requests", "record_requests"),
+            (max_recorded_requests, "max_recorded_requests", "max_recorded_requests"),
+            (pierce_shadow, "pierce_shadow", "pierce_shadow"),
+            (block_ads, "block_ads", "block_ads"),
+            (dns_over_https, "dns_over_https", "dns_over_https"),
+        ]:
+            if call_value is not None:
+                kwargs[session_key] = call_value
+            elif config_key in self._browser_config:
+                kwargs[session_key] = self._browser_config[config_key]
+
+    def _merge_blocked_domains(
+        self,
+        kwargs: dict[str, Any],
+        blocked_domains: set[str] | list[str] | None,
+    ) -> None:
+        """Merge blocked_domains: list -> set conversion."""
+        if blocked_domains is not None:
+            kwargs["blocked_domains"] = set(blocked_domains) if isinstance(blocked_domains, list) else blocked_domains
+        elif "blocked_domains" in self._browser_config:
+            kwargs["blocked_domains"] = self._browser_config["blocked_domains"]
+
+    def _merge_user_data_dir(
+        self,
+        kwargs: dict[str, Any],
+        user_data_dir: str | None,
+    ) -> None:
+        """Merge user_data_dir: omit empty/None."""
+        user_dir = user_data_dir if user_data_dir is not None else self._browser_config.get("user_data_dir")
+        if user_dir:
+            kwargs["user_data_dir"] = user_dir
+
+    def _merge_proxy_rotator(
+        self,
+        kwargs: dict[str, Any],
+        proxy_rotator: ProxyRotator | None,
+    ) -> None:
+        """Merge proxy_rotator: build from _proxy_config if needed."""
+        proxy = proxy_rotator if proxy_rotator is not None else self._browser_config.get("proxy_rotator")
+        if proxy is None and self._proxy_config:
+            proxy = ProxyRotator(self._proxy_config)
+        if proxy is not None:
+            kwargs["proxy"] = proxy
+
+    def _merge_extra_flags(
+        self,
+        kwargs: dict[str, Any],
+        extra_flags: list[str] | None,
+    ) -> None:
+        """Merge extra_flags with low-memory defaults."""
+        low_mem_flags = {"--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--disable-setuid-sandbox"}
+        user_extra_flags = set()
+        if "extra_flags" in self._browser_config:
+            user_extra_flags.update(self._browser_config["extra_flags"])
+        if extra_flags is not None:
+            user_extra_flags.update(extra_flags)
+        kwargs["extra_flags"] = list(user_extra_flags | low_mem_flags)

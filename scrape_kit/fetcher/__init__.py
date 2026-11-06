@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from typing import Any
 
+from scrapling.fetchers import ProxyRotator
+
 from . import _state
 from ._state import reset_shared
 from .batch import RetryHook, ScrapeMode
@@ -114,6 +116,7 @@ __all__ = [
     "InteractiveSession",
     "ScrapeMode",
     "RetryHook",
+    "ProxyRotator",
     "fetch",
     "is_blocked",
     "browser",

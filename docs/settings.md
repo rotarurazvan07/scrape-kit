@@ -73,6 +73,154 @@ status_retries:
 
 See the [fetcher guide](fetcher.md#per-status-retry-budgets) for how the budgets affect waits, the batch cooldown, and the browser path.
 
+## Parser configuration
+
+The `parser` section configures the HTML parsing behavior (used by the `scrape_kit.parse` module).
+
+```yaml
+parser:
+  adaptive: true
+  adaptive_domain: "example.com"
+  markdown:
+    main_content_only: false
+```
+
+- `adaptive` (bool): Enable adaptive parsing that adjusts selectors based on page structure. Default: `false`.
+- `adaptive_domain` (string): Domain hint for adaptive parsing to improve accuracy. Default: `""`.
+- `markdown.main_content_only` (bool): When converting to markdown, extract only the main content area. Default: `false`.
+
+All keys are optional. The section is stored and made available to the parse module; `WebFetcher.configure()` does not validate its contents.
+
+## Browser configuration
+
+The `browser` section provides defaults for `WebFetcher.browser()` calls. Each key maps directly to a `browser()` keyword argument. Call-time arguments override configured values, which in turn override Scrapling defaults (depth-first fallback).
+
+```yaml
+browser:
+  block_ads: false
+  dns_over_https: false
+  blocked_domains: []
+  pierce_shadow: false
+  record_requests: false
+  max_recorded_requests: 1000
+  user_data_dir: ""
+  save_state_path: ""
+  load_state_path: ""
+  extra_flags: []
+```
+
+- `block_ads` (bool): Block ~3,500 known ad/tracking domains. Default: Scrapling default (`false`).
+- `dns_over_https` (bool): Route DNS through Cloudflare DoH. Default: Scrapling default (`false`).
+- `blocked_domains` (list of strings): Domains to block (subdomains matched). Converted to a set for Scrapling. Default: Scrapling default (empty).
+- `pierce_shadow` (bool): Include open Shadow DOM content in response HTML. Default: Scrapling default (`false`).
+- `record_requests` (bool): Enable network request recording. Default: Scrapling default (`false`).
+- `max_recorded_requests` (int, >=1): Maximum requests to record when `record_requests=true`. Default: Scrapling default (`1000`).
+- `user_data_dir` (string): Path to User Data Directory for session persistence. Empty string is omitted (never passed as `None` to Scrapling). Default: Scrapling default (temporary directory).
+- `save_state_path` (string): Path for `session.save_state(path)` auto-save. **Not** a `StealthySession` constructor argument; used by application code after session creation. Default: `""` (no auto-save).
+- `load_state_path` (string): Path for `session.load_state(path)` auto-load. **Not** a `StealthySession` constructor argument; used by application code after session creation. Default: `""` (no auto-load).
+- `extra_flags` (list of strings): Additional browser launch flags (e.g., `"--custom-flag"`). Merged with built-in low-memory flags (`--disable-dev-shm-usage`, `--disable-gpu`, `--no-sandbox`, `--disable-setuid-sandbox`). Default: low-memory flags only.
+
+All keys are optional. Missing keys fall back to Scrapling defaults.
+
+**Security notes:**
+- `record_requests=true` captures Authorization headers, cookies, and PII in network traffic.
+- `user_data_dir` persists browser profile including cookies, localStorage, and credentials.
+- `save_state()`/`load_state()` serialize full browser state including sensitive data.
+
+## Spider configuration
+
+The `spider` section configures the crawling behavior (used by the `scrape_kit.spiders` module).
+
+```yaml
+spider:
+  concurrent_requests: 16
+  concurrent_requests_per_domain: 8
+  download_delay: 0.25
+  autothrottle_enabled: true
+  autothrottle_start_delay: 5.0
+  autothrottle_max_delay: 60.0
+  autothrottle_target_concurrency: 1.0
+  robots_txt_obey: true
+  crawl_strategy: "breadth"
+  crawldir: ""
+  development_mode: false
+```
+
+- `concurrent_requests` (int): Maximum concurrent requests globally. Default: `16`.
+- `concurrent_requests_per_domain` (int): Maximum concurrent requests per domain. Default: `8`.
+- `download_delay` (float): Base delay between requests to the same domain (seconds). Default: `0.25`.
+- `autothrottle_enabled` (bool): Enable AutoThrottle extension. Default: `true`.
+- `autothrottle_start_delay` (float): Initial download delay for AutoThrottle (seconds). Default: `5.0`.
+- `autothrottle_max_delay` (float): Maximum download delay for AutoThrottle (seconds). Default: `60.0`.
+- `autothrottle_target_concurrency` (float): Target concurrency for AutoThrottle. Default: `1.0`.
+- `robots_txt_obey` (bool): Respect `robots.txt` rules. Default: `true`.
+- `crawl_strategy` (string): `"breadth"` or `"depth"`. Default: `"breadth"`.
+- `crawldir` (string): Directory for crawl persistence. Default: `""`.
+- `development_mode` (bool): Enable development features (verbose logging, etc.). Default: `false`.
+
+All keys are optional. The section is stored and made available to the spider module; `WebFetcher.configure()` does not validate its contents.
+
+## Complete example
+
+```yaml
+scraper_config:
+  retry_indicators:
+    - "Just a moment"
+    - "403 Forbidden"
+  block_indicators:
+    - "cf-browser-verification"
+    - "Access Denied"
+  status_retries:
+    429: 5
+    503: 3
+    403: 0
+  parser:
+    adaptive: true
+    adaptive_domain: "example.com"
+    markdown:
+      main_content_only: false
+  browser:
+    block_ads: true
+    dns_over_https: true
+    blocked_domains:
+      - "ads.example.com"
+      - "tracker.example.com"
+    pierce_shadow: true
+    record_requests: true
+    max_recorded_requests: 500
+    user_data_dir: "/tmp/browser-profile"
+    save_state_path: "/tmp/state.json"
+    load_state_path: "/tmp/state.json"
+    extra_flags:
+      - "--custom-flag"
+  spider:
+    concurrent_requests: 16
+    concurrent_requests_per_domain: 8
+    download_delay: 0.25
+    autothrottle_enabled: true
+    autothrottle_start_delay: 5.0
+    autothrottle_max_delay: 60.0
+    autothrottle_target_concurrency: 1.0
+    robots_txt_obey: true
+    crawl_strategy: "breadth"
+    crawldir: "/tmp/crawl"
+    development_mode: false
+```
+
+## Proxy configuration
+
+The `proxies` section provides the proxy pool used by `ProxyRotator`. When set, `WebFetcher.browser()` builds a `ProxyRotator` from the list and passes it to the session automatically.
+
+```yaml
+proxies:
+  - "http://proxy1.example.com:8080"
+  - server: "http://proxy2.example.com:8080"
+    username: "user"
+    password: "pass"
+```
+
+Entries are either proxy URL strings or mappings with `server`, `username`, and `password`. An empty or absent list means no proxy rotation. Call-time `browser(proxy_rotator=...)` takes precedence over the configured list.
+
 ## Related guides
 
 - [Fetching](fetcher.md) for `configure()`.

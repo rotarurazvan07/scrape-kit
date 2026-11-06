@@ -53,6 +53,7 @@ __all__ = [
     "InteractiveSession",
     "ScrapeMode",
     "RetryHook",
+    "ProxyRotator",
     # Fetcher — module-level proxies (use after configure())
     "fetch",
     "is_blocked",
@@ -89,6 +90,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "InteractiveSession": "fetcher",
     "ScrapeMode": "fetcher",
     "RetryHook": "fetcher",
+    "ProxyRotator": "fetcher",
     "fetch": "fetcher",
     "is_blocked": "fetcher",
     "browser": "fetcher",
