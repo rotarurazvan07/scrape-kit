@@ -67,7 +67,7 @@ status_retries:
 
 - Keys are HTTP status codes; integers and numeric strings are accepted.
 - Values are a non-negative integer or `null`. An integer is that status's retry count, which replaces the call-time `retries` argument for that status only; `null` inherits the call-time argument.
-- Configured entries merge over the built-in defaults (`403`, `429`, `503`), so listing one status never removes another's behavior.
+- Configured entries merge over the built-in defaults (`401`, `403`, `407`, `429`, `444`, `500`, `502`, `503`, `504`), which apply to every fetch path, so listing one status never removes another's behavior.
 - `0` opts a status out of retrying, and its response body is delivered instead of retried.
 - Invalid keys or values raise `SettingsError` when `configure()` reads the file.
 

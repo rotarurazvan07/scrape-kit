@@ -434,14 +434,13 @@ class TestStatusRetryBudgets:
 
     @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
     @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
-    def test_normal_unlisted_non_default_code_delivered(self, mock_fetcher, mock_sleep):
-        """An unlisted non-default status behaves exactly like 200."""
+    def test_normal_unlisted_default_code_retries(self, mock_fetcher, mock_sleep):
+        """An unlisted code keeps its default entry, so 500 retries like its default peers."""
         mock_fetcher.get.return_value = make_page("<html>server error</html>", status=500)
         fetcher = WebFetcher(status_retries={429: 5})
-        with patch("scrape_kit.fetcher.web_fetcher.logger"):
-            result = fetcher.fetch(URL, retries=3, backoff=0.0)
-        assert result == "<html>server error</html>"
-        assert mock_fetcher.get.call_count == 1
+        with patch("scrape_kit.fetcher.web_fetcher.logger"), pytest.raises(FetcherError, match="after 3 attempts"):
+            fetcher.fetch(URL, retries=3, backoff=0.0)
+        assert mock_fetcher.get.call_count == 3
 
     @patch("scrape_kit.fetcher.web_fetcher.time.sleep")
     @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
@@ -519,19 +518,25 @@ class TestStatusRetryEscalation:
         with patch.object(fetcher, "browser", return_value=browser_session), patch("scrape_kit.fetcher.web_fetcher.logger"):
             assert fetcher._escalate_to_browser(URL, "just a moment") == "<html>slow</html>"
 
-    def test_normal_unconfigured_code_delivered(self):
-        """An unconfigured non-default status still delivers."""
+    def test_normal_unconfigured_code_blocked(self):
+        """An unconfigured default status is never delivered on the browser path."""
         fetcher = WebFetcher(status_retries={429: 5})
         browser_session = self._browser_session("<html>error</html>", 500)
-        with patch.object(fetcher, "browser", return_value=browser_session):
-            assert fetcher._escalate_to_browser(URL, "just a moment") == "<html>error</html>"
+        with (
+            patch.object(fetcher, "browser", return_value=browser_session),
+            pytest.raises(FetcherError, match="Blocked with status 500"),
+        ):
+            fetcher._escalate_to_browser(URL, "just a moment")
 
-    def test_normal_absent_key_403_still_delivered(self):
-        """With no configuration a 403 body is still delivered as before."""
+    def test_normal_absent_key_403_blocked(self):
+        """With no configuration a 403 body is blocked on the browser path."""
         fetcher = WebFetcher()
         browser_session = self._browser_session("<html>forbidden</html>", 403)
-        with patch.object(fetcher, "browser", return_value=browser_session):
-            assert fetcher._escalate_to_browser(URL, "just a moment") == "<html>forbidden</html>"
+        with (
+            patch.object(fetcher, "browser", return_value=browser_session),
+            pytest.raises(FetcherError, match="Blocked with status 403"),
+        ):
+            fetcher._escalate_to_browser(URL, "just a moment")
 
     def test_normal_absent_key_429_still_blocked(self):
         """With no configuration 429 is still never delivered."""

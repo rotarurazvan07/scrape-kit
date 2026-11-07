@@ -316,19 +316,26 @@ class TestFetchTimeoutBackoff:
 class TestStatusRetryGate:
     """status_retries replaces the hard-coded blocked-status sets."""
 
-    def test_normal_default_gate_matches_legacy_set(self):
-        """Without configuration the gate is exactly 403/429/503."""
+    def test_normal_default_gate_matches_default_set(self):
+        """Without configuration the gate is exactly the engine blocked-code set."""
         fetcher = WebFetcher()
-        assert fetcher._is_retryable_status(403) is True
-        assert fetcher._is_retryable_status(429) is True
-        assert fetcher._is_retryable_status(503) is True
-        assert fetcher._is_retryable_status(500) is False
-        assert fetcher._is_retryable_status(200) is False
+        retried = {s for s in (200, 301, 401, 403, 407, 429, 444, 500, 502, 503, 504, 418) if fetcher._is_retryable_status(s)}
+        assert retried == {401, 403, 407, 429, 444, 500, 502, 503, 504}
 
-    def test_normal_default_map_is_three_none_entries(self):
-        """The resolved default map holds None budgets for the legacy codes."""
+    def test_normal_default_map_is_nine_none_entries(self):
+        """The resolved default map holds None budgets for every default code."""
         fetcher = WebFetcher()
-        assert fetcher.status_retries == {403: None, 429: None, 503: None}
+        assert fetcher.status_retries == {
+            401: None,
+            403: None,
+            407: None,
+            429: None,
+            444: None,
+            500: None,
+            502: None,
+            503: None,
+            504: None,
+        }
 
     def test_normal_explicit_zero_removes_code_from_gate(self):
         """Budget 0 opts that status out of retrying entirely."""
@@ -342,12 +349,23 @@ class TestStatusRetryGate:
         fetcher = WebFetcher(status_retries={500: 2})
         assert fetcher._is_retryable_status(500) is True
         assert fetcher._is_retryable_status(429) is True
-        assert fetcher.status_retries == {403: None, 429: None, 503: None, 500: 2}
+        assert fetcher.status_retries == {
+            401: None,
+            403: None,
+            407: None,
+            429: None,
+            444: None,
+            500: 2,
+            502: None,
+            503: None,
+            504: None,
+        }
 
-    def test_normal_unlisted_non_default_code_not_retryable(self):
-        """A non-default code absent from the map is never retried."""
+    def test_normal_unlisted_code_keeps_default_membership(self):
+        """An unlisted code keeps its default entry, so 500 stays retryable."""
         fetcher = WebFetcher(status_retries={429: 5})
-        assert fetcher._is_retryable_status(500) is False
+        assert fetcher._is_retryable_status(500) is True
+        assert fetcher._is_retryable_status(200) is False
 
     def test_normal_budget_overrides_call_time_for_that_code(self):
         """An explicit budget wins over the call-time retries argument."""
@@ -366,12 +384,14 @@ class TestStatusRetryGate:
         fetcher = WebFetcher(status_retries={429: 5})
         assert fetcher._status_budget(500, 3) == 3
 
-    def test_normal_escalation_gate_defaults_to_429_503(self):
-        """The browser gate keeps 429/503 and still delivers 403."""
+    def test_normal_escalation_gate_defaults_to_blocked_code_set(self):
+        """The browser gate blocks the engine default set, delivers clean statuses."""
         fetcher = WebFetcher()
         assert fetcher._escalation_blocked(429) is True
         assert fetcher._escalation_blocked(503) is True
-        assert fetcher._escalation_blocked(403) is False
+        assert fetcher._escalation_blocked(403) is True
+        assert fetcher._escalation_blocked(200) is False
+        assert fetcher._escalation_blocked(418) is False
 
     def test_normal_escalation_gate_gains_configured_code(self):
         """A configured retryable status is never delivered as a bypass."""
@@ -387,7 +407,8 @@ class TestStatusRetryGate:
     def test_normal_escalation_gate_keeps_none_entry_membership(self):
         """Naming a code with null cannot un-gate it."""
         fetcher = WebFetcher(status_retries={"429": None})
-        assert fetcher.status_retries == {403: None, 429: None, 503: None}
+        assert set(fetcher.status_retries.values()) == {None}
+        assert set(fetcher.status_retries) == {401, 403, 407, 429, 444, 500, 502, 503, 504}
         assert fetcher._escalation_blocked(429) is True
 
     def test_normal_keyword_only_param_with_positional_compat(self):
