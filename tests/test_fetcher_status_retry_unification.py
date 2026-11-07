@@ -82,6 +82,17 @@ class TestUnconfiguredFetcherBlocksExactlyNineCodes:
         assert blocked == CANON
         assert budget == 3
 
+    def test_normal_stealth_gate_blocks_exactly_the_nine_codes(self):
+        """The real spider gate blocks every default code and delivers clean statuses."""
+        fetcher = WebFetcher()
+        spider_cls = engine_adapter_module.build_spider_class({**fetcher._engine_adapter._config, "mode": "stealth"})
+        blocked = {
+            status
+            for status in (200, 301, 401, 403, 407, 429, 444, 500, 502, 503, 504, 418)
+            if asyncio.run(spider_cls.is_blocked(SimpleNamespace(), SimpleNamespace(status=status)))
+        }
+        assert blocked == CANON
+
 
 class TestConfiguredMapReachesEngine:
     """A configured budget reaches the STEALTH spider through the adapter wiring."""
