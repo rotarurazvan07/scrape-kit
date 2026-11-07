@@ -10,8 +10,7 @@ import yaml
 from scrape_kit.errors import SettingsError
 from scrape_kit.fetcher import engine_adapter as engine_adapter_module
 from scrape_kit.fetcher.engine_adapter import ScraplingEngineAdapter
-from scrape_kit.fetcher.web_fetcher import WebFetcher
-from scrape_kit.fetcher.web_fetcher import _DEFAULT_ESCALATION_BLOCKED, _DEFAULT_STATUS_RETRIES
+from scrape_kit.fetcher.web_fetcher import _DEFAULT_ESCALATION_BLOCKED, _DEFAULT_STATUS_RETRIES, WebFetcher
 
 pytestmark = pytest.mark.p0
 
