@@ -18,7 +18,7 @@ from scrape_kit.fetcher import browser as module_browser
 from scrape_kit.fetcher import fetch as module_fetch
 from scrape_kit.fetcher import is_blocked as module_is_blocked
 from scrape_kit.fetcher import scrape as module_scrape
-from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.batch_types import ScrapeMode
 from scrape_kit.fetcher.session import InteractiveSession
 from scrape_kit.fetcher.web_fetcher import WebFetcher
 
@@ -152,12 +152,12 @@ class TestModuleProxies:
         session = module_browser()
         assert isinstance(session, InteractiveSession)
 
-    @patch.object(WebFetcher, "_scrape_fast")
-    def test_normal_module_scrape_delegates_to_shared(self, mock_fast):
+    @patch.object(WebFetcher, "scrape", autospec=True)
+    def test_normal_module_scrape_delegates_to_shared(self, mock_scrape):
         fetcher = WebFetcher()
         fetcher_module._state._set_shared(fetcher)
         module_scrape(["http://a.com"], callback=MagicMock(), mode=ScrapeMode.FAST)
-        mock_fast.assert_called_once()
+        mock_scrape.assert_called_once()
 
     @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
     def test_normal_configure_then_proxy_uses_configured_indicators(self, MockFetcher, tmp_path):

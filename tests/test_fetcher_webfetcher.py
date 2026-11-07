@@ -10,7 +10,7 @@ from conftest import (
 )
 
 from scrape_kit.errors import FetcherError
-from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.batch_types import ScrapeMode
 from scrape_kit.fetcher.session import InteractiveSession
 from scrape_kit.fetcher.web_fetcher import WebFetcher
 

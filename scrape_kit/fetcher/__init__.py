@@ -7,7 +7,7 @@ from scrapling.fetchers import ProxyRotator
 
 from . import _state
 from ._state import reset_shared
-from .batch import RetryHook, ScrapeMode
+from .batch_types import RetryHook, ScrapeMode
 from .session import InteractiveSession
 from .web_fetcher import WebFetcher
 
