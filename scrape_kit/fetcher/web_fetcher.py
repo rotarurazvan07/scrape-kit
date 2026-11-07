@@ -3,6 +3,7 @@
 import random
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, ClassVar, Final
 
 from scrapling.fetchers import Fetcher, ProxyRotator, StealthySession
@@ -11,7 +12,8 @@ from ..errors import FetcherError, SettingsError
 from ..logger import get_logger
 from ..settings import SettingsManager
 from ._state import _set_shared
-from .batch import BatchScraperMixin
+from .batch_types import ScrapeMode, RetryHook
+from .engine_adapter import ScraplingEngineAdapter
 from .session import InteractiveSession, _retry_after_seconds
 
 logger = get_logger(__name__)
@@ -119,7 +121,7 @@ class _RateLimit:
         self.observed_at = observed_at
 
 
-class WebFetcher(BatchScraperMixin):
+class WebFetcher:
     """Anti-detection web fetching framework wrapping scrapling.
 
     Two equivalent usage tiers:
@@ -213,6 +215,10 @@ class WebFetcher(BatchScraperMixin):
         # Here for the batch cooldown layer to consume.
         self._rate_limit_signal: _RateLimit | None = None
         self._rate_limit_lock = threading.Lock()
+        # Scrapling engine adapter: always present so scrape() dispatches
+        # through the single engine, with spider_config supplying its knobs.
+        self._engine_adapter = ScraplingEngineAdapter(spider_config or {})
+        self._engine_adapter.set_fetcher_instance(self)
 
     def _is_retryable_status(self, status: int) -> bool:
         """Return whether a status code is retried instead of delivered.
@@ -916,3 +922,56 @@ class WebFetcher(BatchScraperMixin):
         if extra_flags is not None:
             user_extra_flags.update(extra_flags)
         kwargs["extra_flags"] = list(user_extra_flags | low_mem_flags)
+
+    def scrape(
+        self,
+        urls: list[str],
+        callback: Callable[[str, str], None],
+        mode: str = ScrapeMode.FAST,
+        max_concurrency: int = 1,
+        *,
+        retry_hook: RetryHook | None = None,
+        max_retries: int = 0,
+    ) -> None:
+        """Scrape multiple URLs using the Scrapling engine adapter.
+
+        Args:
+            urls: List of URLs to scrape.
+            callback: Function to call with (url, html) for each successful fetch.
+            mode: Scraping mode - "fast" or "stealth" (ScrapeMode values).
+            max_concurrency: Maximum concurrent requests.
+            retry_hook: Optional quality gate consulted after each successful,
+                non-blocked fetch. Returning a non-empty reason string defers
+                that URL to another pass; None accepts the page.
+                Ignored when max_retries is 0.
+            max_retries: Additional full retry passes for hook-flagged URLs.
+                Defaults to 0 (no hook retries). Ignored when retry_hook is None.
+
+        Raises:
+            ValueError: If mode is unsupported or max_concurrency < 1.
+            FetcherError: If scraping encounters fetch failures.
+            RuntimeError: If STEALTH is requested from a running event loop.
+        """
+        if self._engine_adapter is not None:
+            self._engine_adapter.scrape(
+                urls,
+                callback,
+                mode=mode,
+                max_concurrency=max_concurrency,
+                retry_hook=retry_hook,
+                max_retries=max_retries,
+            )
+            return
+        # No engine adapter configured - delegate to engine adapter with defaults
+        from .engine_adapter import ScraplingEngineAdapter
+
+        default_adapter = ScraplingEngineAdapter(self._spider_config)
+        default_adapter.set_fetcher_instance(self)
+        default_adapter.scrape(
+            urls,
+            callback,
+            mode=mode,
+            max_concurrency=max_concurrency,
+            retry_hook=retry_hook,
+            max_retries=max_retries,
+        )
