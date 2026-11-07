@@ -12,7 +12,7 @@ from ..errors import FetcherError, SettingsError
 from ..logger import get_logger
 from ..settings import SettingsManager
 from ._state import _set_shared
-from .batch_types import ScrapeMode, RetryHook
+from .batch_types import RetryHook, ScrapeMode
 from .engine_adapter import ScraplingEngineAdapter
 from .session import InteractiveSession, _retry_after_seconds
 
