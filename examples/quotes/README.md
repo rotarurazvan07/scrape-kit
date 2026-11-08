@@ -25,6 +25,11 @@ fetch/web channels, parses them with `scrape_kit.Selector`, deduplicates with
 python examples/quotes/scrape_quotes.py --pages 2 --out quotes.sqlite --csv quotes.csv
 ```
 
+Flags: `--pages N` (how many listing pages to fetch, default 1), `--out PATH`
+(SQLite output path, default `quotes.sqlite`), `--csv PATH` (optional CSV export
+of the stored rows), `--js` (escalate to the browser channel instead of plain
+HTTP fetch). Settings come from `scraper_config.yaml` via `scrape_kit.configure()`.
+
 ## Run offline (no network required)
 
 ```bash

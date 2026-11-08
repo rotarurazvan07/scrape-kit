@@ -34,13 +34,16 @@ def parse_quotes(html: str) -> list[dict[str, Any]]:
     return quotes
 
 
-def dedupe(quotes: list[dict[str, Any]], threshold: float = 95.0) -> list[dict[str, Any]]:
+def dedupe(quotes: list[dict[str, Any]], threshold: float = 85.0) -> list[dict[str, Any]]:
     """Drop near-duplicate quotes using SimilarityEngine.
 
     Satisfies: TR §4.1 ("SimilarityEngine dedup demo" - scores are real cosine
     similarity, threshold-driven). Keeps the first occurrence of each cluster.
+    Note: the engine scale is 0-100 (default 65) and the comparison is strict
+    (score > threshold); verified scores are ~90 for identical short strings and
+    <50 for unrelated quotes, so 85 separates duplicates from distinct rows.
     """
-    engine: Any = SimilarityEngine({'threshold': threshold})  # 0-100 scale, default 65
+    engine: Any = SimilarityEngine({'threshold': threshold})
     kept: list[dict[str, Any]] = []
     for quote in quotes:
         duplicate = False

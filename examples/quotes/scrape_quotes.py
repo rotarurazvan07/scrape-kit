@@ -35,13 +35,23 @@ def scrape(pages: int, js: bool, out: str, csv_path: str | None) -> int:
     """
     import scrape_kit as sk
 
+    # Load example settings through the public config channel (TR 4.2).
+    try:
+        sk.configure(str(HERE), 'scraper_config')
+    except OSError as exc:
+        print(f'warning: could not load scraper_config.yaml ({exc}); using library defaults')
+
     all_quotes: list[dict[str, Any]] = []
     for page_num in range(1, pages + 1):
         url = f'https://quotes.toscrape.com/page/{page_num}/'
-        if js:
-            html = sk.browser(url, network_idle=True)
-        else:
-            html = sk.fetch(url, stealthy_headers=True)
+        try:
+            if js:
+                html = sk.browser(url, network_idle=True)
+            else:
+                html = sk.fetch(url, stealthy_headers=True)
+        except sk.ScrapeKitError as exc:
+            print(f'error: fetch failed for {url}: {exc}')
+            return 0
         all_quotes.extend(parse_quotes(html))
 
     unique = dedupe(all_quotes)

@@ -45,7 +45,13 @@ def main() -> int:
     if len(expected) != len(quotes):
         print(f'FAIL: expected {len(expected)} rows, got {len(quotes)}')
         return 1
-    print(f'PASS: {len(quotes)} quotes match golden fixture')
+    for index, (want, got) in enumerate(zip(expected, quotes)):
+        if (want['text'], want['author'], want['tags']) != (got['text'], got['author'], got['tags']):
+            print(f'FAIL: row {index} mismatch')
+            print(f'  expected: text={want["text"]!r} author={want["author"]!r} tags={want["tags"]!r}')
+            print(f'  got:      text={got["text"]!r} author={got["author"]!r} tags={got["tags"]!r}')
+            return 1
+    print(f'PASS: {len(quotes)} quotes match golden fixture field-by-field')
     return 0
 
 
