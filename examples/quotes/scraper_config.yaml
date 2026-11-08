@@ -1,0 +1,20 @@
+# App-specific settings for examples/quotes.
+# Keys are validated by scrape_kit.settings (see tests/test_settings_config_roundtrip.py).
+# Load with: scrape_kit.configure(<this directory>, "scraper_config")
+retry_indicators:
+  - "status 429"
+  - "status 503"
+block_indicators:
+  - "status 403"
+parser:
+  adaptive: true
+  adaptive_domain: quotes.toscrape.com
+  markdown:
+    main_content_only: false
+browser:
+  block_ads: true
+spider:
+  concurrent_requests: 4
+  concurrent_requests_per_domain: 2
+  download_delay: 0.5
+  autothrottle_enabled: true

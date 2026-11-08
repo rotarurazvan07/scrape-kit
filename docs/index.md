@@ -14,7 +14,6 @@ These pages document the public installable API for integrators. Import from `sc
 | --- | --- |
 | [Fetching](fetcher.md) | `configure`, `configure_defaults`, `WebFetcher`, `fetch`, `browser`, `scrape`, `is_blocked`, `reset_shared`, `InteractiveSession`, `ScrapeMode`, `RetryHook` |
 | [Parsing](parse.md) | `Selector`, `Selectors`, `adaptive_select`, `relocate`, `follow_links`, `extract_links`, `ParseError` |
-| [Spiders](spiders.md) | `CrawlSpider`, `SitemapSpider`, `SiteToMarkdownSpider`, `CrawlRule`, `Request`, `Response` |
 | [Matching](matching.md) | `SimilarityEngine` |
 | [Storage](storage.md) | `BaseStorageManager`, `BufferedStorageManager`, `MergeReport` |
 | [Settings](settings.md) | `SettingsManager` |
@@ -27,7 +26,6 @@ These pages document the public installable API for integrators. Import from `sc
 - Fetch one page: [Fetching](fetcher.md#fetch-one-url).
 - Drive a browser: [Fetching](fetcher.md#open-a-browser-session).
 - Batch URLs: [Fetching](fetcher.md#scrape-many-urls).
-- Migrate to spiders: [Spiders](spiders.md#quick-start-crawlspider-replaces-scrapeurls-callback).
 - Compare entity names: [Matching](matching.md).
 - Persist rows in SQLite: [Storage](storage.md).
 - Read and write YAML: [Settings](settings.md).

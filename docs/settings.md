@@ -129,7 +129,7 @@ All keys are optional. Missing keys fall back to Scrapling defaults.
 
 ## Spider configuration
 
-The `spider` section configures the crawling behavior (used by the `scrape_kit.spiders` module).
+The `spider` section configures crawling behavior passed through to the Scrapling spider engine.
 
 ```yaml
 spider:
@@ -225,4 +225,3 @@ Entries are either proxy URL strings or mappings with `server`, `username`, and 
 
 - [Fetching](fetcher.md) for `configure()`.
 - [Errors](errors.md) for `SettingsError`.
-- [Spiders](spiders.md) for spider migration guide and YAML `spider:` section.
