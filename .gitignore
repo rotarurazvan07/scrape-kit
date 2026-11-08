@@ -222,3 +222,7 @@ graphify-out/
 
 # CI auto-fix bot scratch file (written/read by CI.yml, never committed)
 autofix-files.txt
+
+# example runtime artifacts
+examples/quotes/quotes.db
+examples/quotes/quotes.sqlite
