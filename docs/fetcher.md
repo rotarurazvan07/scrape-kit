@@ -236,7 +236,7 @@ Batch `scrape()`:
 
 ### Per-status retry budgets
 
-By default `403`, `429`, and `503` are retried with whatever `retries=` you pass. Add a `status_retries` map to set a budget per status, and that budget replaces the call-time argument for that status only.
+By default the engine blocked-code set (`401`, `403`, `407`, `429`, `444`, `500`, `502`, `503`, `504`) is retried with whatever `retries=` you pass, on every fetch path. Add a `status_retries` map to set a budget per status, and that budget replaces the call-time argument for that status only.
 
 ```yaml
 retry_indicators:
@@ -282,4 +282,3 @@ Class factories `WebFetcher.configure(...)` and `WebFetcher.configure_defaults(.
 
 - [Errors](errors.md) for `FetcherError.url`.
 - [Settings](settings.md) for the YAML directory `configure()` reads.
-- [Spiders](spiders.md) for migrating `scrape()` patterns to Scrapling's spider framework.

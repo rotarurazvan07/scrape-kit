@@ -103,7 +103,8 @@ class TestConfigRoundtripNormal:
         assert instance._parser_config == {}
         assert instance._browser_config == {}
         assert instance._spider_config == {}
-        assert instance.status_retries == {403: None, 429: None, 503: None}
+        assert set(instance.status_retries) == {401, 403, 407, 429, 444, 500, 502, 503, 504}
+        assert set(instance.status_retries.values()) == {None}
 
     def test_normal_status_retries_merges_over_defaults(self, tmp_path):
         """status_retries merges over class defaults."""
@@ -114,7 +115,9 @@ class TestConfigRoundtripNormal:
         }
         cfg_dir = _write_scraper_config(tmp_path, config)
         instance = WebFetcher.configure(cfg_dir, set_shared=False)
-        assert instance.status_retries == {403: None, 429: 5, 503: None, 500: 2}
+        assert instance.status_retries[429] == 5
+        assert instance.status_retries[500] == 2
+        assert set(instance.status_retries) == {401, 403, 407, 429, 444, 500, 502, 503, 504}
 
 
 # ── Edge: partial sections, missing keys, null values, unknown keys ────────────

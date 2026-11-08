@@ -18,7 +18,7 @@ from scrape_kit.fetcher import browser as module_browser
 from scrape_kit.fetcher import fetch as module_fetch
 from scrape_kit.fetcher import is_blocked as module_is_blocked
 from scrape_kit.fetcher import scrape as module_scrape
-from scrape_kit.fetcher.batch import ScrapeMode
+from scrape_kit.fetcher.batch_types import ScrapeMode
 from scrape_kit.fetcher.session import InteractiveSession
 from scrape_kit.fetcher.web_fetcher import WebFetcher
 
@@ -152,12 +152,12 @@ class TestModuleProxies:
         session = module_browser()
         assert isinstance(session, InteractiveSession)
 
-    @patch.object(WebFetcher, "_scrape_fast")
-    def test_normal_module_scrape_delegates_to_shared(self, mock_fast):
+    @patch.object(WebFetcher, "scrape", autospec=True)
+    def test_normal_module_scrape_delegates_to_shared(self, mock_scrape):
         fetcher = WebFetcher()
         fetcher_module._state._set_shared(fetcher)
         module_scrape(["http://a.com"], callback=MagicMock(), mode=ScrapeMode.FAST)
-        mock_fast.assert_called_once()
+        mock_scrape.assert_called_once()
 
     @patch("scrape_kit.fetcher.web_fetcher.Fetcher")
     def test_normal_configure_then_proxy_uses_configured_indicators(self, MockFetcher, tmp_path):
@@ -465,28 +465,59 @@ class TestStatusRetriesConfig:
     """configure() parses, merges, and validates the status_retries map."""
 
     def test_normal_absent_key_uses_class_defaults(self, tmp_path):
-        """Without the key the resolved map is the three-code default."""
+        """Without the key the resolved map is the nine-code default."""
         cfg_dir = _write_scraper_config(tmp_path)
         instance = WebFetcher.configure(cfg_dir, set_shared=False)
-        assert instance.status_retries == {403: None, 429: None, 503: None}
+        assert instance.status_retries == {
+            401: None,
+            403: None,
+            407: None,
+            429: None,
+            444: None,
+            500: None,
+            502: None,
+            503: None,
+            504: None,
+        }
 
     def test_normal_merges_over_defaults(self, tmp_path):
         """A listed code merges over the defaults, others keep None."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={429: 5})
         instance = WebFetcher.configure(cfg_dir, set_shared=False)
-        assert instance.status_retries == {403: None, 429: 5, 503: None}
+        assert instance.status_retries == {
+            401: None,
+            403: None,
+            407: None,
+            429: 5,
+            444: None,
+            500: None,
+            502: None,
+            503: None,
+            504: None,
+        }
 
     def test_normal_explicit_zero_keeps_other_entries(self, tmp_path):
         """An explicit 0 is opt-out for one code only."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={503: 0, 429: 2})
         instance = WebFetcher.configure(cfg_dir, set_shared=False)
-        assert instance.status_retries == {403: None, 429: 2, 503: 0}
+        assert instance.status_retries == {
+            401: None,
+            403: None,
+            407: None,
+            429: 2,
+            444: None,
+            500: None,
+            502: None,
+            503: 0,
+            504: None,
+        }
 
     def test_normal_new_code_added(self, tmp_path):
         """A new code is added alongside the defaults."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={500: 2})
         instance = WebFetcher.configure(cfg_dir, set_shared=False)
-        assert instance.status_retries == {403: None, 429: None, 503: None, 500: 2}
+        assert instance.status_retries[500] == 2
+        assert set(instance.status_retries) == {401, 403, 407, 429, 444, 500, 502, 503, 504}
 
     def test_normal_string_key_parsed_to_int(self, tmp_path):
         """A numeric string key parses to its integer status."""
@@ -498,7 +529,8 @@ class TestStatusRetriesConfig:
         """Listing a code with null resolves to the default entry."""
         cfg_dir = _write_scraper_config(tmp_path, status_retries={"429": None})
         instance = WebFetcher.configure(cfg_dir, set_shared=False)
-        assert instance.status_retries == {403: None, 429: None, 503: None}
+        assert set(instance.status_retries.values()) == {None}
+        assert set(instance.status_retries) == {401, 403, 407, 429, 444, 500, 502, 503, 504}
 
     def test_error_negative_value_raises_settings_error(self, tmp_path):
         """A negative budget is rejected at configure() time."""
@@ -533,7 +565,8 @@ class TestStatusRetriesConfig:
     def test_normal_configure_defaults_passes_default_map(self):
         """The zero-config path resolves to the same default map."""
         instance = WebFetcher.configure_defaults(set_shared=False)
-        assert instance.status_retries == {403: None, 429: None, 503: None}
+        assert set(instance.status_retries) == {401, 403, 407, 429, 444, 500, 502, 503, 504}
+        assert set(instance.status_retries.values()) == {None}
 
     def test_normal_absent_key_keeps_log_lines_unchanged(self, tmp_path):
         """The two configure() log lines stay byte-identical without the key."""

@@ -67,7 +67,7 @@ status_retries:
 
 - Keys are HTTP status codes; integers and numeric strings are accepted.
 - Values are a non-negative integer or `null`. An integer is that status's retry count, which replaces the call-time `retries` argument for that status only; `null` inherits the call-time argument.
-- Configured entries merge over the built-in defaults (`403`, `429`, `503`), so listing one status never removes another's behavior.
+- Configured entries merge over the built-in defaults (`401`, `403`, `407`, `429`, `444`, `500`, `502`, `503`, `504`), which apply to every fetch path, so listing one status never removes another's behavior.
 - `0` opts a status out of retrying, and its response body is delivered instead of retried.
 - Invalid keys or values raise `SettingsError` when `configure()` reads the file.
 
@@ -129,7 +129,7 @@ All keys are optional. Missing keys fall back to Scrapling defaults.
 
 ## Spider configuration
 
-The `spider` section configures the crawling behavior (used by the `scrape_kit.spiders` module).
+The `spider` section configures crawling behavior passed through to the Scrapling spider engine.
 
 ```yaml
 spider:
@@ -225,4 +225,3 @@ Entries are either proxy URL strings or mappings with `server`, `username`, and 
 
 - [Fetching](fetcher.md) for `configure()`.
 - [Errors](errors.md) for `SettingsError`.
-- [Spiders](spiders.md) for spider migration guide and YAML `spider:` section.

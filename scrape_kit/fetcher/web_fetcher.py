@@ -3,6 +3,7 @@
 import random
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, ClassVar, Final
 
 from scrapling.fetchers import Fetcher, ProxyRotator, StealthySession
@@ -11,17 +12,19 @@ from ..errors import FetcherError, SettingsError
 from ..logger import get_logger
 from ..settings import SettingsManager
 from ._state import _set_shared
-from .batch import BatchScraperMixin
+from .batch_types import RetryHook, ScrapeMode
+from .engine_adapter import _BLOCKED_CODES, ScraplingEngineAdapter, translate_status_retries
 from .session import InteractiveSession, _retry_after_seconds
 
 logger = get_logger(__name__)
 
 _DEFAULT_FAST_TIMEOUT = 30
-# Per-status retry budgets. None means "inherit the call-time retries argument",
-# which reproduces the legacy (403, 429, 503) behavior exactly.
-_DEFAULT_STATUS_RETRIES: Final[dict[int, int | None]] = {403: None, 429: None, 503: None}
-# Legacy escalation gate: browser statuses never delivered as a successful bypass.
-_DEFAULT_ESCALATION_BLOCKED: Final[frozenset[int]] = frozenset({429, 503})
+# Per-status retry budgets. None means "inherit the call-time retries argument".
+# Both scrape-kit-side defaults derive from the engine adapter's blocked-code
+# set, which is the one canonical default shared by every fetch path.
+_DEFAULT_STATUS_RETRIES: Final[dict[int, int | None]] = dict.fromkeys(_BLOCKED_CODES, None)
+# Escalation gate: browser statuses never delivered as a successful bypass.
+_DEFAULT_ESCALATION_BLOCKED: Final[tuple[int, ...]] = tuple(_DEFAULT_STATUS_RETRIES)
 
 
 def _parse_status_retry_entry(key: Any, value: Any) -> tuple[int, int | None]:
@@ -119,7 +122,7 @@ class _RateLimit:
         self.observed_at = observed_at
 
 
-class WebFetcher(BatchScraperMixin):
+class WebFetcher:
     """Anti-detection web fetching framework wrapping scrapling.
 
     Two equivalent usage tiers:
@@ -189,7 +192,7 @@ class WebFetcher(BatchScraperMixin):
                 call-time ``retries`` argument"; a non-negative int is the number
                 of extra attempts for that status; 0 opts the status out of
                 retrying. Merged over the class defaults, so unlisted codes keep
-                their default entry. Defaults to None (the legacy behavior).
+                their default entry. Defaults to None.
             parser_config: Parser configuration (adaptive, adaptive_domain, markdown).
             browser_config: Browser configuration (block_ads, dns_over_https, etc.).
             spider_config: Spider configuration (concurrent_requests, download_delay, etc.).
@@ -213,12 +216,20 @@ class WebFetcher(BatchScraperMixin):
         # Here for the batch cooldown layer to consume.
         self._rate_limit_signal: _RateLimit | None = None
         self._rate_limit_lock = threading.Lock()
+        # Scrapling engine adapter: always present so scrape() dispatches
+        # through the single engine. spider_config supplies its knobs; the
+        # translated merged status map (defaults plus explicit budgets) is
+        # applied last so the engine gate matches the fast-path policy.
+        self._engine_adapter = ScraplingEngineAdapter(
+            {**(spider_config or {}), **translate_status_retries(self.status_retries)}
+        )
+        self._engine_adapter.set_fetcher_instance(self)
 
     def _is_retryable_status(self, status: int) -> bool:
         """Return whether a status code is retried instead of delivered.
 
         Satisfies: with no configuration the gate is
-        exactly the legacy (403, 429, 503) set; an explicit 0 removes a code,
+        exactly the engine blocked-code set; an explicit 0 removes a code,
         an explicit positive budget adds one, and an unlisted non-default code
         is never gated.
 
@@ -274,10 +285,11 @@ class WebFetcher(BatchScraperMixin):
     def _escalation_blocked(self, status: int) -> bool:
         """Return whether a browser status must never be delivered as success.
 
-        Satisfies: the gate is exactly (429, 503) when nothing is
-        configured, gains every code with an explicit positive budget, and loses
-        any code whose budget is explicitly 0. A listed-but-None code keeps its
-        default membership, so naming a code cannot un-gate it.
+        Satisfies: the gate is exactly the engine blocked-code set when
+        nothing is configured, gains every code with an explicit positive
+        budget, and loses any code whose budget is explicitly 0. A
+        listed-but-None code keeps its default membership, so naming a code
+        cannot un-gate it.
 
         Args:
             status: The HTTP status code of the browser navigation.
@@ -708,8 +720,8 @@ class WebFetcher(BatchScraperMixin):
         except Exception as browser_e:
             logger.error("Browser escalation failed for %s: %s", url, browser_e)
             raise FetcherError(f"Escalation failed: {browser_e}", url=url) from browser_e
-        # The gate is (429, 503) by default and follows the
-        # configured status_retries map when one is set. A status of None
+        # The gate is the engine blocked-code set by default and
+        # follows the configured status_retries map when one is set. A status of None
         # (no usable navigation response) is delivered exactly as before.
         if status is not None and self._escalation_blocked(status):
             hinted = status == 429 or status in self._configured_status_retries
@@ -916,3 +928,43 @@ class WebFetcher(BatchScraperMixin):
         if extra_flags is not None:
             user_extra_flags.update(extra_flags)
         kwargs["extra_flags"] = list(user_extra_flags | low_mem_flags)
+
+    def scrape(
+        self,
+        urls: list[str],
+        callback: Callable[[str, str], None],
+        mode: str = ScrapeMode.FAST,
+        max_concurrency: int = 1,
+        *,
+        retry_hook: RetryHook | None = None,
+        max_retries: int = 0,
+    ) -> None:
+        """Scrape multiple URLs using the Scrapling engine adapter.
+
+        Args:
+            urls: List of URLs to scrape.
+            callback: Function to call with (url, html) for each successful fetch.
+            mode: Scraping mode - "fast" or "stealth" (ScrapeMode values).
+            max_concurrency: Maximum concurrent requests.
+            retry_hook: Optional quality gate consulted after each successful,
+                non-blocked fetch. Returning a non-empty reason string defers
+                that URL to another pass; None accepts the page.
+                Ignored when max_retries is 0.
+            max_retries: Additional full retry passes for hook-flagged URLs.
+                Defaults to 0 (no hook retries). Ignored when retry_hook is None.
+
+        Raises:
+            ValueError: If mode is unsupported or max_concurrency < 1.
+            FetcherError: If scraping encounters fetch failures.
+            RuntimeError: If STEALTH is requested from a running event loop.
+        """
+        # The adapter is always built in __init__, so every scrape() pass
+        # dispatches through the single engine with the merged status policy.
+        self._engine_adapter.scrape(
+            urls,
+            callback,
+            mode=mode,
+            max_concurrency=max_concurrency,
+            retry_hook=retry_hook,
+            max_retries=max_retries,
+        )
